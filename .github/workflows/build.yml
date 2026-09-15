@@ -56,6 +56,12 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      # The runner's Visual Studio is what picks the CMake generator; when
+      # Flutter cannot see it, it silently falls back to a VS 2019 generator
+      # that is not installed. Print what Flutter found so a failure here is
+      # diagnosable from the log alone.
+      - name: Report toolchain
+        run: flutter doctor -v
       - run: flutter build windows --release
       - uses: actions/upload-artifact@v4
         with:
