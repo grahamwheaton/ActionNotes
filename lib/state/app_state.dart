@@ -151,11 +151,13 @@ class AppState extends ChangeNotifier {
         return project.copyWith(items: items);
       });
 
+  /// Moves an item to [newIndex], which is the index it should end up at once
+  /// the item has been lifted out — what ReorderableListView's onReorderItem
+  /// already gives us, so no off-by-one adjustment is needed here.
   Future<void> reorderItems(String slug, int oldIndex, int newIndex) =>
       _mutate(slug, (project) {
         final items = [...project.items];
-        final target = newIndex > oldIndex ? newIndex - 1 : newIndex;
-        items.insert(target, items.removeAt(oldIndex));
+        items.insert(newIndex, items.removeAt(oldIndex));
         return project.copyWith(items: items);
       });
 

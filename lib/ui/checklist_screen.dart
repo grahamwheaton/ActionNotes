@@ -68,7 +68,7 @@ class _ChecklistScreenState extends State<ChecklistScreen> {
                 : ReorderableListView.builder(
                     padding: const EdgeInsets.only(bottom: 8),
                     itemCount: project.items.length,
-                    onReorder: (oldIndex, newIndex) => context
+                    onReorderItem: (oldIndex, newIndex) => context
                         .read<AppState>()
                         .reorderItems(widget.slug, oldIndex, newIndex),
                     itemBuilder: (context, index) => _ItemTile(

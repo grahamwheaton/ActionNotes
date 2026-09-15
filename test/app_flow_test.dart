@@ -104,6 +104,33 @@ void main() {
     expect(store.saved['groceries']!.items.single.done, isTrue);
   });
 
+  testWidgets('reordering moves an item to the index it was dropped at',
+      (tester) async {
+    final store = FakeLocalStore();
+    final state = await pumpApp(tester, store);
+
+    await state.createProject('Packing');
+    for (final item in ['Socks', 'Shirts', 'Shoes']) {
+      await state.addItem('packing', item);
+    }
+
+    // Drag the first item to the end, as onReorderItem reports it.
+    await state.reorderItems('packing', 0, 2);
+
+    expect(
+      store.saved['packing']!.items.map((i) => i.text),
+      ['Shirts', 'Shoes', 'Socks'],
+    );
+
+    // And back to the front.
+    await state.reorderItems('packing', 2, 0);
+
+    expect(
+      store.saved['packing']!.items.map((i) => i.text),
+      ['Socks', 'Shirts', 'Shoes'],
+    );
+  });
+
   testWidgets('the list shows progress for each project', (tester) async {
     final store = FakeLocalStore();
     final state = await pumpApp(tester, store);
