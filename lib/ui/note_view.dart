@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../markdown/project_links.dart';
 import '../state/app_state.dart';
 import '../storage/attachment_store.dart';
+import 'theme.dart';
 
 /// Renders an item's notes as markdown, resolving image references against the
 /// attachment cache.
@@ -36,6 +37,7 @@ class NoteView extends StatelessWidget {
     return MarkdownBody(
       data: rendered,
       selectable: selectable,
+      styleSheet: _styleSheet(context),
       imageBuilder: (uri, title, alt) => _NoteImage(
         reference: uri.toString(),
         alt: alt,
@@ -59,6 +61,58 @@ class NoteView extends StatelessWidget {
       },
     );
   }
+}
+
+/// The rendered note's look, built from the same type scale the editor uses.
+MarkdownStyleSheet _styleSheet(BuildContext context) {
+  final theme = Theme.of(context);
+  final scheme = theme.colorScheme;
+  final body = NoteTypography.body(theme);
+
+  final mono = body.copyWith(
+    fontFamily: 'monospace',
+    fontSize: NoteTypography.size - 1.5,
+    height: 1.45,
+  );
+
+  return MarkdownStyleSheet(
+    p: body,
+    h1: NoteTypography.heading(theme, 1),
+    h2: NoteTypography.heading(theme, 2),
+    h3: NoteTypography.heading(theme, 3),
+    h4: NoteTypography.heading(theme, 4),
+    h5: NoteTypography.heading(theme, 5),
+    h6: NoteTypography.heading(theme, 6),
+    h1Padding: EdgeInsets.only(top: NoteTypography.spaceAbove(1)),
+    h2Padding: EdgeInsets.only(top: NoteTypography.spaceAbove(2)),
+    h3Padding: EdgeInsets.only(top: NoteTypography.spaceAbove(3)),
+    h4Padding: EdgeInsets.only(top: NoteTypography.spaceAbove(4)),
+    a: body.copyWith(color: scheme.primary),
+    strong: body.copyWith(fontWeight: FontWeight.w700),
+    em: body.copyWith(fontStyle: FontStyle.italic),
+    listBullet: body,
+    // A quote is marked by a bar beside it rather than a box around it, which
+    // keeps the text on the same rhythm as the prose above it.
+    blockquote: body.copyWith(color: scheme.onSurfaceVariant),
+    blockquotePadding: const EdgeInsets.fromLTRB(16, 2, 0, 2),
+    blockquoteDecoration: BoxDecoration(
+      border: Border(
+        left: BorderSide(color: scheme.primary.withValues(alpha: 0.4), width: 3),
+      ),
+    ),
+    code: mono.copyWith(
+      backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: 0.8),
+    ),
+    codeblockPadding: const EdgeInsets.all(12),
+    codeblockDecoration: BoxDecoration(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    horizontalRuleDecoration: BoxDecoration(
+      border: Border(top: BorderSide(color: scheme.outlineVariant)),
+    ),
+    blockSpacing: 10,
+  );
 }
 
 /// An image inside a note. Attachments live in a private repo, so they are
