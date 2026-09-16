@@ -9,6 +9,7 @@ import 'inline_format.dart';
 import 'markdown_text_controller.dart';
 import 'note_history.dart';
 import 'note_view.dart';
+import 'theme.dart';
 
 /// One editable row, holding the controller and focus that belong to a block
 /// for as long as that block exists.
@@ -41,9 +42,14 @@ class NoteBlocksEditor extends StatefulWidget {
     required this.onChanged,
     this.onOpenProject,
     this.onRequestLink,
+    this.shrinkWrap = false,
   });
 
   final String initialMarkdown;
+
+  /// Lays the blocks out at their natural height instead of scrolling, for
+  /// when the note is embedded in a list that scrolls for it.
+  final bool shrinkWrap;
 
   /// Fires whenever the note's markdown changes, so the host can save it.
   final ValueChanged<String> onChanged;
@@ -68,6 +74,19 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
   /// Guards against the `[[` handler firing again while the picker is up.
   bool _pickerOpen = false;
+
+  /// Rows picked out together, so a block-type change lands on all of them.
+  /// Empty when the caret is simply sitting in one row.
+  final Set<int> _selectedIds = {};
+
+  /// Where a shift-extended selection started, so extending it again grows
+  /// from the same end rather than from wherever the caret drifted to.
+  int? _anchorId;
+
+  /// The end that moves. Kept apart from the anchor so shift and an arrow
+  /// back the way you came shrinks the selection instead of sitting still.
+  int? _reachId;
+
 
   late final NoteHistory _history = NoteHistory(widget.initialMarkdown);
 
@@ -109,6 +128,81 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
       if (row.focus!.hasFocus) _activeId = row.id;
     });
     return row;
+  }
+
+  void _clearRowSelection() {
+    if (_selectedIds.isEmpty && _anchorId == null) return;
+    setState(() {
+      _selectedIds.clear();
+      _anchorId = null;
+      _reachId = null;
+    });
+  }
+
+  /// Selects every row between [fromId] and [toId], whichever way round.
+  void _selectRange(int fromId, int toId) {
+    final from = _indexOfId(fromId);
+    final to = _indexOfId(toId);
+    if (from < 0 || to < 0) return;
+
+    final first = from < to ? from : to;
+    final last = from < to ? to : from;
+    setState(() {
+      _selectedIds
+        ..clear()
+        ..addAll([for (var i = first; i <= last; i++) _rows[i].id]);
+    });
+  }
+
+  /// Grows the selection by one row, the way shift and an arrow key do in a
+  /// list. Starts one from the row the caret is in.
+  void _extendRows(_Row row, int delta) {
+    final anchor = _anchorId ?? row.id;
+    final next = _indexOfId(_reachId ?? row.id) + delta;
+    if (next < 0 || next >= _rows.length) return;
+
+    _anchorId = anchor;
+    _reachId = _rows[next].id;
+    _selectRange(anchor, _reachId!);
+
+    // Follow the selection with the caret, so a further shift-arrow keeps
+    // going from the end it just reached. Focus is only asked for here, not
+    // taken as a sign the person clicked away — that is what a tap is for.
+    final target = _rows[next];
+    if (target.block.isText) target.focus?.requestFocus();
+  }
+
+  /// Shift-clicking a handle reaches from wherever the caret was to that row.
+  void _extendTo(_Row row) {
+    final anchor = _anchorId ?? _activeId ?? row.id;
+    _anchorId = anchor;
+    _reachId = row.id;
+    _selectRange(anchor, row.id);
+  }
+
+  /// Applies a block type to the whole selection when [row] is part of one,
+  /// and to that row alone otherwise.
+  void _applyBlockType(_Row row, NoteBlock kind) {
+    final selected = _selectedIds.contains(row.id)
+        ? _rows.where((r) => _selectedIds.contains(r.id) && r.block.isText)
+        : const Iterable<_Row>.empty();
+
+    // A rule holds no text, so turning a run of lines into one would throw
+    // the lines away. That stays a single-row change.
+    if (selected.length < 2 || kind.type == NoteBlockType.divider) {
+      _setBlockType(row, kind);
+      return;
+    }
+
+    setState(() {
+      for (final target in selected) {
+        target.block = target.block.copyWith(
+          type: kind.type,
+          level: kind.level,
+        );
+      }
+    });
+    _emit(structural: true);
   }
 
   String get markdown => NoteBlocks.serialize(
@@ -175,6 +269,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
   /// Turns a typed marker into the block it names, and `[[` into a link.
   void _onTextChanged(_Row row) {
+    _clearRowSelection();
     final text = row.controller!.text;
 
     // A phone's keyboard sends Enter through the text connection rather than
@@ -438,8 +533,10 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   @override
   Widget build(BuildContext context) {
     // A note is prose, so it gets a readable measure rather than running the
-    // full width of a desktop window.
-    return Center(
+    // full width of a desktop window — but it sits against the left margin,
+    // under the title, rather than floating in the middle of a wide one.
+    return Align(
+      alignment: Alignment.topLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
         child: _buildList(),
@@ -449,7 +546,12 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
   Widget _buildList() {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+      shrinkWrap: widget.shrinkWrap,
+      physics:
+          widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
+      padding: widget.shrinkWrap
+          ? const EdgeInsets.fromLTRB(16, 0, 0, 0)
+          : const EdgeInsets.fromLTRB(16, 10, 16, 10),
       itemCount: _rows.length,
       itemBuilder: (context, index) {
         final row = _rows[index];
@@ -468,7 +570,11 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
                 onChanged: () => _onTextChanged(row),
                 onSplit: () => _splitAt(row),
                 onBackspaceAtStart: () => _backspaceAtStart(row),
-                onSetType: (kind) => _setBlockType(row, kind),
+                selected: _selectedIds.contains(row.id),
+                onSetType: (kind) => _applyBlockType(row, kind),
+                onExtendRows: (delta) => _extendRows(row, delta),
+                onExtendTo: () => _extendTo(row),
+                onClearSelection: _clearRowSelection,
                 onMark: (mark) => _applyMark(row, mark),
                 onClearMarks: () => _clearMarks(row),
                 onIndent: (delta) => _nudgeIndent(row, delta),
@@ -503,6 +609,10 @@ class _TextBlock extends StatelessWidget {
     required this.onClearMarks,
     required this.onIndent,
     required this.onToggleTask,
+    required this.selected,
+    required this.onExtendRows,
+    required this.onExtendTo,
+    required this.onClearSelection,
     this.onRequestLink,
   });
 
@@ -515,18 +625,20 @@ class _TextBlock extends StatelessWidget {
   final VoidCallback onClearMarks;
   final ValueChanged<int> onIndent;
   final VoidCallback onToggleTask;
+
+  /// Whether this row is part of a run picked out for a block-type change.
+  final bool selected;
+  final ValueChanged<int> onExtendRows;
+  final VoidCallback onExtendTo;
+  final VoidCallback onClearSelection;
   final Future<void> Function()? onRequestLink;
 
   TextStyle _styleFor(ThemeData theme) {
-    final text = theme.textTheme;
+    // The same scale the rendered note uses, so a heading does not change
+    // size the moment you stop editing it.
     final style = switch (row.block.type) {
-      NoteBlockType.heading => switch (row.block.level) {
-          1 => text.headlineSmall!.copyWith(fontWeight: FontWeight.w700),
-          2 => text.titleLarge!.copyWith(fontWeight: FontWeight.w700),
-          3 => text.titleMedium!.copyWith(fontWeight: FontWeight.w700),
-          _ => text.titleSmall!.copyWith(fontWeight: FontWeight.w700),
-        },
-      _ => text.bodyMedium!,
+      NoteBlockType.heading => NoteTypography.heading(theme, row.block.level),
+      _ => NoteTypography.body(theme),
     };
 
     if (row.block.type == NoteBlockType.task && row.block.done) {
@@ -589,6 +701,29 @@ class _TextBlock extends StatelessWidget {
       }
     }
 
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      onClearSelection();
+      return KeyEventResult.handled;
+    }
+
+    // Shift and an arrow key select whole rows, but only once the caret has
+    // run out of text to select in this one — so shift-selecting inside a
+    // wrapped paragraph still works the way it does anywhere else.
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      final down = event.logicalKey == LogicalKeyboardKey.arrowDown;
+      final up = event.logicalKey == LogicalKeyboardKey.arrowUp;
+      if (down || up) {
+        final selection = row.controller!.selection;
+        final atEdge = selected ||
+            (down && selection.extentOffset >= row.controller!.text.length) ||
+            (up && selection.extentOffset <= 0);
+        if (atEdge) {
+          onExtendRows(down ? 1 : -1);
+          return KeyEventResult.handled;
+        }
+      }
+    }
+
     if (event.logicalKey == LogicalKeyboardKey.tab) {
       onIndent(HardwareKeyboard.instance.isShiftPressed ? -1 : 1);
       return KeyEventResult.handled;
@@ -615,12 +750,31 @@ class _TextBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return _RowReveal(focus: row.focus, builder: _buildRow);
+  }
+
+  Widget _buildRow(BuildContext context, bool revealed) {
     final theme = Theme.of(context);
     final block = row.block;
 
-    return Padding(
+    final style = _styleFor(theme);
+
+    // Every marker beside the text — the handle, a bullet, a checkbox — is
+    // centred on a box exactly one line tall, so they all sit on the first
+    // line of the text instead of each being nudged into place by hand.
+    final lineHeight = (style.fontSize ?? 14) * (style.height ?? 1.4);
+
+    return Container(
+      decoration: selected
+          ? BoxDecoration(
+              color: theme.colorScheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(4),
+            )
+          : null,
       padding: EdgeInsets.only(
-        top: block.type == NoteBlockType.heading ? 12 : 1,
+        top: block.type == NoteBlockType.heading
+            ? NoteTypography.spaceAbove(block.level)
+            : 1,
         bottom: 1,
         // Each nesting level steps the whole row across, marker included.
         left: block.indent * 20,
@@ -628,26 +782,36 @@ class _TextBlock extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ParagraphButton(row: row, onSetType: onSetType),
+          _ParagraphButton(
+            row: row,
+            onSetType: onSetType,
+            onExtendTo: onExtendTo,
+            lineHeight: lineHeight,
+            // A selected row keeps its handle showing, so a run of them reads
+            // as one thing rather than a gap with one mark in it.
+            revealed: revealed || selected,
+          ),
           if (block.type == NoteBlockType.bullet)
-            Padding(
-              // Nudged to sit on the first line's centre rather than above it.
-              padding: const EdgeInsets.only(top: 11, right: 10, left: 2),
-              child: Icon(
-                block.indent.isEven ? Icons.circle : Icons.circle_outlined,
-                size: 5,
-                color: theme.colorScheme.onSurfaceVariant,
+            SizedBox(
+              width: 18,
+              height: lineHeight,
+              child: Center(
+                child: Icon(
+                  block.indent.isEven ? Icons.circle : Icons.circle_outlined,
+                  size: 5,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
           if (block.type == NoteBlockType.task)
-            Padding(
-              padding: const EdgeInsets.only(right: 2),
-              child: SizedBox(
-                width: 30,
-                height: 30,
+            SizedBox(
+              width: 28,
+              height: lineHeight,
+              child: Center(
                 child: Checkbox(
                   value: block.done,
                   visualDensity: VisualDensity.compact,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   onChanged: (_) => onToggleTask(),
                 ),
               ),
@@ -658,17 +822,18 @@ class _TextBlock extends StatelessWidget {
               child: TextField(
                 controller: row.controller,
                 focusNode: row.focus,
-                style: _styleFor(theme),
+                style: style,
                 maxLines: null,
                 // Enter is intercepted above to split the block, so the field
                 // itself never needs to insert a newline.
                 keyboardType: TextInputType.multiline,
                 textCapitalization: TextCapitalization.sentences,
+                onTap: onClearSelection,
                 decoration: InputDecoration(
                   isDense: true,
                   filled: false,
                   border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 4),
+                  contentPadding: EdgeInsets.zero,
                   hintText: row.block.type == NoteBlockType.heading
                       ? 'Heading'
                       : null,
@@ -717,12 +882,72 @@ class _TextBlock extends StatelessWidget {
   }
 }
 
+/// Gives a row the hover and focus state its handle needs.
+///
+/// A wrapper rather than making the whole block stateful, so hovering rebuilds
+/// one row and nothing else.
+class _RowReveal extends StatefulWidget {
+  const _RowReveal({required this.focus, required this.builder});
+
+  final FocusNode? focus;
+  final Widget Function(BuildContext context, bool revealed) builder;
+
+  @override
+  State<_RowReveal> createState() => _RowRevealState();
+}
+
+class _RowRevealState extends State<_RowReveal> {
+  bool _hovered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.focus?.addListener(_onFocus);
+  }
+
+  @override
+  void dispose() {
+    widget.focus?.removeListener(_onFocus);
+    super.dispose();
+  }
+
+  void _onFocus() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      // The caret being in a row counts as reaching for it, so the handle is
+      // there for the block you are actually editing.
+      child: widget.builder(
+        context,
+        _hovered || (widget.focus?.hasFocus ?? false),
+      ),
+    );
+  }
+}
+
 /// The ¶ handle beside a block, which opens the block-type menu.
+///
+/// It keeps its space whether or not it is shown, so revealing it on hover
+/// does not shuffle the text sideways.
 class _ParagraphButton extends StatelessWidget {
-  const _ParagraphButton({required this.row, required this.onSetType});
+  const _ParagraphButton({
+    required this.row,
+    required this.onSetType,
+    required this.onExtendTo,
+    required this.lineHeight,
+    required this.revealed,
+  });
 
   final _Row row;
   final ValueChanged<NoteBlock> onSetType;
+  final VoidCallback onExtendTo;
+  final double lineHeight;
+  final bool revealed;
 
   /// Headings say which level they are; everything else shows the same
   /// handle. A bullet used to show a dot here, which read as a second bullet
@@ -734,12 +959,20 @@ class _ParagraphButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 2, right: 2),
+    return AnimatedOpacity(
+      opacity: revealed ? 1 : 0,
+      duration: const Duration(milliseconds: 120),
       child: Builder(
         builder: (buttonContext) => InkWell(
           borderRadius: BorderRadius.circular(6),
           onTap: () async {
+            // Shift and a handle reaches from wherever you were down to here,
+            // the way shift-clicking a list does.
+            if (HardwareKeyboard.instance.isShiftPressed) {
+              onExtendTo();
+              return;
+            }
+
             final box = buttonContext.findRenderObject() as RenderBox?;
             if (box == null) return;
 
@@ -750,8 +983,8 @@ class _ParagraphButton extends StatelessWidget {
             if (kind != null) onSetType(kind);
           },
           child: SizedBox(
-            width: 22,
-            height: 28,
+            width: 24,
+            height: lineHeight,
             child: Center(
               child: Text(
                 _label,

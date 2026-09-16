@@ -1,10 +1,14 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/checklist_item.dart';
+import '../markdown/project_links.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
 import 'context_menu.dart';
+import 'note_blocks_editor.dart';
 import 'note_editor.dart';
 import 'note_view.dart';
 import 'text_prompt.dart';
@@ -29,8 +33,86 @@ class _ChecklistViewState extends State<ChecklistView> {
   final _newItemFocus = FocusNode();
   bool _completedExpanded = true;
 
+  /// Items whose notes are open in place, keyed by the item's text.
+  ///
+  /// Not by index: a new item goes to the top of the list and a deletion
+  /// closes a gap, so an index stops meaning the same row the moment the list
+  /// changes. Keeping the text means a row that moves keeps its open note.
+  final Set<String> _expandedNotes = {};
+
+  void _toggleNotes(int index, String itemText) {
+    // Closing a note is a good moment to be sure it is written, rather than
+    // trusting the pause timer to have fired first.
+    if (_expandedNotes.contains(itemText)) _flushNotes(itemText);
+    setState(() {
+      if (!_expandedNotes.remove(itemText)) _expandedNotes.add(itemText);
+    });
+  }
+
+  /// Notes edited in place but not yet written, keyed by the item's text.
+  ///
+  /// Writing on every keystroke would push a commit per letter, so an edit
+  /// settles for a moment first — the same bargain the note editor's history
+  /// makes with undo.
+  ///
+  /// The key is the item's text rather than its index for the same reason as
+  /// above, and here it matters more than tidiness: an index captured when
+  /// the edit started could point at a different item by the time the timer
+  /// fires, and the note would be written over that item's notes instead.
+  /// Adding an item is enough to cause it, since a new item is prepended.
+  ///
+  /// Two items in one project with identical text share a buffer. That is
+  /// worth the trade: it is unusual, and the failure is two rows agreeing
+  /// rather than a note landing on an unrelated item.
+  final Map<String, String> _pendingNotes = {};
+  final Map<String, Timer> _noteTimers = {};
+
+  void _notesChanged(String itemText, String markdown) {
+    _pendingNotes[itemText] = markdown;
+    _noteTimers[itemText]?.cancel();
+    _noteTimers[itemText] =
+        Timer(const Duration(milliseconds: 700), () => _flushNotes(itemText));
+  }
+
+  void _flushNotes(String itemText) {
+    _noteTimers.remove(itemText)?.cancel();
+    final markdown = _pendingNotes.remove(itemText);
+    if (markdown == null) return;
+
+    // Find where the item is now, rather than where it was when the edit
+    // started. If it has gone — deleted, or its text edited — the note is
+    // dropped, which is better than writing it onto whichever item has since
+    // taken that position.
+    final project = _state.projectBySlug(widget.slug);
+    if (project == null) return;
+
+    final index = project.items.indexWhere((item) => item.text == itemText);
+    if (index < 0) return;
+
+    // Wikilinks become portable markdown on the way out, as they do when the
+    // note is saved from its own screen.
+    _state.setItemNotes(
+      widget.slug,
+      index,
+      ProjectLinks.normalize(markdown, _state.projects),
+    );
+  }
+
+  /// Held so a note still in hand can be written while this view is going
+  /// away, when reading the state off the context is no longer allowed.
+  late AppState _state;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _state = context.read<AppState>();
+  }
+
   @override
   void dispose() {
+    for (final itemText in _pendingNotes.keys.toList()) {
+      _flushNotes(itemText);
+    }
     _newItemController.dispose();
     _newItemFocus.dispose();
     super.dispose();
@@ -110,6 +192,14 @@ class _ChecklistViewState extends State<ChecklistView> {
                               index: index,
                               item: project.items[index],
                               dragPosition: position,
+                              notesExpanded: _expandedNotes.contains(project.items[index].text),
+                              onToggleNotes: () =>
+                                  _toggleNotes(index, project.items[index].text),
+                              onNotesChanged: (notes) =>
+                                  _notesChanged(
+                                    project.items[index].text,
+                                    notes,
+                                  ),
                             );
                           },
                         ),
@@ -130,6 +220,14 @@ class _ChecklistViewState extends State<ChecklistView> {
                             index: index,
                             item: project.items[index],
                             dragPosition: position,
+                            notesExpanded: _expandedNotes.contains(project.items[index].text),
+                            onToggleNotes: () =>
+                                  _toggleNotes(index, project.items[index].text),
+                              onNotesChanged: (notes) =>
+                                  _notesChanged(
+                                    project.items[index].text,
+                                    notes,
+                                  ),
                           );
                         },
                       ),
@@ -153,6 +251,14 @@ class _ChecklistViewState extends State<ChecklistView> {
                               slug: widget.slug,
                               index: index,
                               item: project.items[index],
+                              notesExpanded: _expandedNotes.contains(project.items[index].text),
+                              onToggleNotes: () =>
+                                  _toggleNotes(index, project.items[index].text),
+                              onNotesChanged: (notes) =>
+                                  _notesChanged(
+                                    project.items[index].text,
+                                    notes,
+                                  ),
                             );
                           },
                         ),
@@ -226,6 +332,9 @@ class _ItemTile extends StatelessWidget {
     required this.slug,
     required this.index,
     required this.item,
+    required this.notesExpanded,
+    required this.onToggleNotes,
+    required this.onNotesChanged,
     this.dragPosition,
   });
 
@@ -238,6 +347,13 @@ class _ItemTile extends StatelessWidget {
 
   /// Position within the draggable open items, or null for a completed item.
   final int? dragPosition;
+
+  /// Whether this item's notes are showing under it.
+  final bool notesExpanded;
+  final VoidCallback onToggleNotes;
+
+  /// Fires as the notes are edited in place, for the view to save.
+  final ValueChanged<String> onNotesChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -291,61 +407,41 @@ class _ItemTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            // Anywhere on the row opens the note. The checkbox, star, notes
+            // marker and drag handle sit on top and take their own taps.
+            InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => NoteEditor.open(
+                context,
+                slug: slug,
+                index: index,
+                title: item.text,
+                initialNotes: item.notes,
+              ),
+              child: Row(
               children: [
                 Checkbox(
                   value: item.done,
                   onChanged: (_) => state.toggleItem(slug, index),
                 ),
                 Expanded(
-                  child: InkWell(
-                    onTap: () => NoteEditor.open(
-                      context,
-                      slug: slug,
-                      index: index,
-                      title: item.text,
-                      initialNotes: item.notes,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            item.text,
-                            style: theme.textTheme.bodyLarge?.copyWith(
-                              decoration:
-                                  item.done ? TextDecoration.lineThrough : null,
-                              color:
-                                  item.done ? theme.colorScheme.outline : null,
-                            ),
-                          ),
-                          if (item.hasNotes)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.notes,
-                                    size: 13,
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    'Notes',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color:
-                                          theme.colorScheme.onSurfaceVariant,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      item.text,
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        decoration:
+                            item.done ? TextDecoration.lineThrough : null,
+                        color: item.done ? theme.colorScheme.outline : null,
                       ),
                     ),
                   ),
                 ),
+                if (item.hasNotes)
+                  _NotesToggle(
+                    expanded: notesExpanded,
+                    onTap: onToggleNotes,
+                  ),
                 IconButton(
                   tooltip: item.starred ? 'Remove star' : 'Star',
                   icon: Icon(
@@ -373,8 +469,55 @@ class _ItemTile extends StatelessWidget {
                   ),
               ],
             ),
+            ),
+            if (notesExpanded && item.hasNotes)
+              Padding(
+                // Indented to start under the item's text, not its checkbox.
+                padding: const EdgeInsets.fromLTRB(36, 0, 12, 10),
+                child: NoteBlocksEditor(
+                  // Keyed by the item so that editing one note and opening
+                  // another does not hand the second the first one's blocks.
+                  // By text, not index: an index is reused by whichever row
+                  // moves into it, which would hand the editor's blocks to a
+                  // different item's note.
+                  key: ValueKey('notes-$slug-${item.text}'),
+                  initialMarkdown: item.notes,
+                  shrinkWrap: true,
+                  onChanged: onNotesChanged,
+                  onOpenProject: (slug) =>
+                      context.read<AppState>().select(slug),
+                ),
+              ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Opens an item's notes underneath it.
+///
+/// Sits with the star at the right-hand end of the row, so the controls are
+/// together and the item's text is left to be text.
+class _NotesToggle extends StatelessWidget {
+  const _NotesToggle({required this.expanded, required this.onTap});
+
+  final bool expanded;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return IconButton(
+      tooltip: expanded ? 'Hide notes' : 'Show notes',
+      onPressed: onTap,
+      icon: Icon(
+        expanded ? Icons.expand_less : Icons.notes,
+        size: 20,
+        color: expanded
+            ? theme.colorScheme.primary
+            : theme.colorScheme.onSurfaceVariant,
       ),
     );
   }

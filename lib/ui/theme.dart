@@ -50,3 +50,54 @@ class AppTheme {
     );
   }
 }
+
+/// How a note's text reads, shared by the editor and the rendered view so
+/// that writing and reading agree rather than each guessing.
+///
+/// Taken from Obsidian: a line tall enough to read down, a clear step between
+/// heading levels so structure is visible without markers, and colour spent
+/// only on links and the bar beside a quote.
+class NoteTypography {
+  NoteTypography._();
+
+  /// Roomier than the app's default. Prose is read, not scanned.
+  static const height = 1.6;
+  static const size = 15.5;
+
+  static TextStyle body(ThemeData theme) => theme.textTheme.bodyLarge!.copyWith(
+        fontSize: size,
+        height: height,
+        color: theme.colorScheme.onSurface,
+      );
+
+  /// Each level steps down enough to tell apart at a glance. Levels past four
+  /// stop shrinking and go quiet instead, rather than becoming unreadable.
+  static TextStyle heading(ThemeData theme, int level) {
+    final (double fontSize, FontWeight weight) = switch (level) {
+      1 => (27, FontWeight.w700),
+      2 => (22, FontWeight.w700),
+      3 => (18.5, FontWeight.w600),
+      4 => (16.5, FontWeight.w600),
+      _ => (size, FontWeight.w600),
+    };
+
+    return theme.textTheme.bodyLarge!.copyWith(
+      fontSize: fontSize,
+      fontWeight: weight,
+      height: 1.3,
+      letterSpacing: -0.2,
+      color: level >= 5
+          ? theme.colorScheme.onSurfaceVariant
+          : theme.colorScheme.onSurface,
+    );
+  }
+
+  /// The space above a heading, which is what separates one section from the
+  /// last. Bigger headings get more of it.
+  static double spaceAbove(int level) => switch (level) {
+        1 => 22,
+        2 => 20,
+        3 => 16,
+        _ => 12,
+      };
+}

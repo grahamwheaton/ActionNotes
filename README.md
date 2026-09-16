@@ -28,7 +28,12 @@ pasting one file — or by pointing the model at the repo.
 - Search across every project's titles, items and notes, saying where each
   hit came from.
 - Per-item notes in markdown, with images pasted, dropped or picked from disk
-  and stored in the repo.
+  and stored in the repo. An item carrying notes says so, and opens them
+  underneath itself in the list — as the editor itself, so a checkbox in a note
+  ticks and the text can be changed without going anywhere. Edits settle for a
+  moment and then save, and closing the note writes it at once.
+- Anywhere on an item opens its notes full-screen: the checkbox, star, notes
+  marker and drag handle keep their own taps.
 - Links between projects: type `[[` for a picker, or write a normal markdown
   link. Tap one in the preview to jump there.
 - Right-click (or long-press) an item or a project for star, notes, rename and
@@ -54,10 +59,21 @@ An item's notes are a markdown document. In the editor:
 - **Lists nest.** `- ` makes a bullet, `- [ ] ` a checklist row with a real
   checkbox, and Tab moves a row in a level so a list can sit inside a list.
   Return continues the list; Return on an empty row leaves it.
+- **A run of lines changes together.** Shift with up or down reaches into the
+  next row once the caret has run out of text in this one, and shift-clicking
+  a ¶ handle reaches from where you were to there. The selected rows highlight,
+  and a block type — from the menu, or Ctrl+T for checkboxes, Ctrl+L for
+  bullets — lands on all of them, which is how a handful of typed lines becomes
+  a checklist. Escape, a click or typing gives the selection up. Because each
+  block is its own field, this selects whole rows rather than text across them:
+  copying or bolding across a line break is still one block at a time.
 - **Inline markdown styles as you type** — `**bold**` looks bold, `*italic*`
-  italic, `` `code` `` monospaced, a link's label underlined. The markers stay
-  visible but dimmed: hiding them would put the caret out of step with the
-  text, which breaks editing far worse than a grey asterisk.
+  italic, `` `code` `` monospaced, a link shows its label rather than its
+  target. The markers collapse to nothing until the caret enters the span they
+  belong to, then appear dimmed so they can be edited. The text painter lays
+  out the same spans the caret is measured against, so a hidden marker and the
+  caret still agree about where everything sits; the only cost is that arrowing
+  across one takes a keypress that moves nothing visible.
 - **Undo and redo**, with Ctrl+Z and Ctrl+Shift+Z or the toolbar. History is
   kept over the whole note, so it covers the edits a text box cannot undo on
   its own: splitting a block, merging two with backspace, changing a row's
@@ -68,15 +84,18 @@ An item's notes are a markdown document. In the editor:
 
 - **A ¶ handle beside every block** opens a block-type menu, in the shape
   MarkText uses: the kinds grouped, each with the markdown it writes and its
-  shortcut. The handle shows what the block currently is — `¶`, `H2`, `•`.
+  shortcut. The handle shows what the block currently is — `¶`, `H2` — and
+  fades in when the pointer is over that row or the caret is in it, so a note
+  being read is just the note. It keeps its space while hidden, so revealing
+  it never shuffles the text sideways.
 - **Selecting text brings up a formatting toolbar** at the selection with
   bold, italic, strikethrough, code, link and clear, alongside the usual copy
   and paste.
 - **Keyboard**: Ctrl+0 paragraph, Ctrl+1 to Ctrl+6 headers, Ctrl+L bullet,
   Ctrl+- horizontal line, Ctrl+B bold, Ctrl+I italic.
 
-What this is not: the markers are dimmed rather than hidden, so it is not
-quite Word. Backlinks, tags and the graph view are not here either.
+What this is not: the markers reappear whenever the caret is among them, so it
+is not quite Word. Backlinks, tags and the graph view are not here either.
 
 ## When the same project changes in two places
 
@@ -121,14 +140,24 @@ will see it.
 
 1. Create a GitHub repo to hold your notes. It can be private — an empty repo is
    fine, the app creates `projects/` on first save.
-2. Create a fine-grained personal access token at
-   <https://github.com/settings/tokens?type=beta>, scoped to that one repo, with
-   **Contents: Read and write**.
-3. Install the app, open **Settings**, and enter owner, repo, branch and token.
+2. Install the ActionNotes GitHub App on that repo, from the app's page on
+   github.com. This is what grants access, and it reaches only the repos you
+   tick.
+3. Open **Settings**, hit **Sign in**, and approve the code it shows you in the
+   browser. Then fill in owner, repo and branch.
 4. Hit sync. Projects you create appear in the repo as markdown files.
 
-The token is held in the platform keystore (Android Keystore / Windows DPAPI)
-via `flutter_secure_storage`, not in plain preferences.
+Signing in uses GitHub's device flow: the app shows a short code, you approve it
+on github.com, and a token comes back. No password is ever typed into the app,
+and the client ID it ships with is public by design — the device flow is built
+for apps that cannot keep a secret, so there is none to leak.
+
+If you would rather mint your own token, **Use a personal access token instead**
+in Settings still takes a fine-grained token scoped to the one repo with
+**Contents: Read and write**.
+
+Either way the token is held in the platform keystore (Android Keystore /
+Windows DPAPI) via `flutter_secure_storage`, not in plain preferences.
 
 ## Building
 
