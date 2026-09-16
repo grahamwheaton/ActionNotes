@@ -58,6 +58,26 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
       - run: flutter pub get
+      # A plugin builds native code through JNI, so Gradle downloads CMake
+      # mid-build. That download arrived corrupt once and failed the release
+      # four minutes in, so install it up front where a bad download can be
+      # retried instead of taking the build down with it.
+      - name: Install the CMake the native build needs
+        run: |
+          set -uo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          for attempt in 1 2 3; do
+            if yes | "$sdkmanager" 'cmake;3.22.1' >/dev/null 2>&1; then
+              echo "CMake installed on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed; clearing any partial download"
+            rm -rf "$ANDROID_HOME/cmake/3.22.1" "$HOME/.android/cache"
+            sleep $((attempt * 5))
+          done
+          echo 'Could not install cmake;3.22.1' >&2
+          exit 1
+
       - run: flutter build apk --debug
       - uses: actions/upload-artifact@v4
         with:
@@ -93,6 +113,26 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
       - run: flutter pub get
+
+      # A plugin builds native code through JNI, so Gradle downloads CMake
+      # mid-build. That download arrived corrupt once and failed the release
+      # four minutes in, so install it up front where a bad download can be
+      # retried instead of taking the build down with it.
+      - name: Install the CMake the native build needs
+        run: |
+          set -uo pipefail
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          for attempt in 1 2 3; do
+            if yes | "$sdkmanager" 'cmake;3.22.1' >/dev/null 2>&1; then
+              echo "CMake installed on attempt $attempt"
+              exit 0
+            fi
+            echo "Attempt $attempt failed; clearing any partial download"
+            rm -rf "$ANDROID_HOME/cmake/3.22.1" "$HOME/.android/cache"
+            sleep $((attempt * 5))
+          done
+          echo 'Could not install cmake;3.22.1' >&2
+          exit 1
 
       - name: Set up release signing
         if: env.ANDROID_KEYSTORE_BASE64 != ''
