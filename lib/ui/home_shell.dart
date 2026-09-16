@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
@@ -22,10 +23,17 @@ class HomeShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) => constraints.maxWidth >= sidebarBreakpoint
-          ? const _TwoPaneLayout()
-          : const _SinglePaneLayout(),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyK, control: true): () =>
+            SearchScreen.open(context),
+      },
+      child: LayoutBuilder(
+        builder: (context, constraints) =>
+            constraints.maxWidth >= sidebarBreakpoint
+                ? const _TwoPaneLayout()
+                : const _SinglePaneLayout(),
+      ),
     );
   }
 }
@@ -158,7 +166,7 @@ class _SinglePaneLayout extends StatelessWidget {
 }
 
 /// The left-hand list of projects. Doubles as the whole screen on a phone.
-class ProjectSidebar extends StatelessWidget {
+class ProjectSidebar extends StatefulWidget {
   const ProjectSidebar({
     super.key,
     required this.selectedSlug,
@@ -171,6 +179,33 @@ class ProjectSidebar extends StatelessWidget {
   final bool pushOnTap;
 
   @override
+  State<ProjectSidebar> createState() => _ProjectSidebarState();
+}
+
+class _ProjectSidebarState extends State<ProjectSidebar> {
+  final _filter = TextEditingController();
+  final _filterFocus = FocusNode();
+
+  @override
+  void dispose() {
+    _filter.dispose();
+    _filterFocus.dispose();
+    super.dispose();
+  }
+
+  /// Narrows the list as you type. Only titles: searching inside items and
+  /// notes is what the full search screen is for, and mixing the two would
+  /// make this box answer a question it did not ask.
+  List<Project> _visible(List<Project> projects) {
+    final query = _filter.text.trim().toLowerCase();
+    if (query.isEmpty) return projects;
+    return [
+      for (final project in projects)
+        if (project.title.toLowerCase().contains(query)) project,
+    ];
+  }
+
+  @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
 
@@ -178,9 +213,19 @@ class ProjectSidebar extends StatelessWidget {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final projects = _visible(state.projects);
+
     return Column(
       children: [
-        if (!pushOnTap) const _SidebarHeader(),
+        if (!widget.pushOnTap) ...[
+          const _SidebarHeader(),
+          _SidebarSearch(
+            controller: _filter,
+            focusNode: _filterFocus,
+            onChanged: () => setState(() {}),
+          ),
+          const _SidebarLabel('Projects'),
+        ],
         for (final conflict in state.conflicts)
           _ConflictBar(conflict: conflict),
         if (state.message != null) _MessageBar(message: state.message!),
@@ -188,21 +233,143 @@ class ProjectSidebar extends StatelessWidget {
         Expanded(
           child: state.projects.isEmpty
               ? const _NoProjects()
-              : RefreshIndicator(
-                  onRefresh: state.sync,
-                  child: ListView.builder(
-                    padding: EdgeInsets.only(bottom: pushOnTap ? 96 : 12),
-                    itemCount: state.projects.length,
-                    itemBuilder: (context, index) => _ProjectTile(
-                      project: state.projects[index],
-                      selected: state.projects[index].slug == selectedSlug,
-                      pushOnTap: pushOnTap,
+              : projects.isEmpty
+                  ? const _NoMatches()
+                  : RefreshIndicator(
+                      onRefresh: state.sync,
+                      child: ListView.builder(
+                        padding:
+                            EdgeInsets.only(bottom: widget.pushOnTap ? 96 : 12),
+                        itemCount: projects.length,
+                        itemBuilder: (context, index) => _ProjectTile(
+                          project: projects[index],
+                          selected: projects[index].slug == widget.selectedSlug,
+                          pushOnTap: widget.pushOnTap,
+                        ),
+                      ),
+                    ),
+        ),
+        if (!widget.pushOnTap) const _SidebarFooter(),
+      ],
+    );
+  }
+}
+
+/// A quiet section heading, in the shape Obsidian's sidebar uses: small,
+/// spaced, and not competing with the names under it.
+class _SidebarLabel extends StatelessWidget {
+  const _SidebarLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 10, 20, 6),
+        child: Text(
+          text.toUpperCase(),
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+            letterSpacing: 0.8,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SidebarSearch extends StatelessWidget {
+  const _SidebarSearch({
+    required this.controller,
+    required this.focusNode,
+    required this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: TextField(
+        controller: controller,
+        focusNode: focusNode,
+        onChanged: (_) => onChanged(),
+        style: theme.textTheme.bodyMedium,
+        decoration: InputDecoration(
+          isDense: true,
+          hintText: 'Search projects...',
+          hintStyle: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+          prefixIcon: Icon(
+            Icons.search,
+            size: 18,
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+          prefixIconConstraints: const BoxConstraints(minWidth: 36),
+          contentPadding: const EdgeInsets.symmetric(vertical: 10),
+          // Everything beyond the title lives in the full search screen, and
+          // the shortcut that opens it is worth saying out loud.
+          suffixIcon: Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: Tooltip(
+              message: 'Search',
+              child: GestureDetector(
+              onTap: () => SearchScreen.open(context),
+              child: Center(
+                widthFactor: 1,
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'Ctrl K',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
                 ),
+              ),
+            ),
+            ),
+          ),
         ),
-        if (!pushOnTap) const _SidebarFooter(),
-      ],
+      ),
+    );
+  }
+}
+
+class _NoMatches extends StatelessWidget {
+  const _NoMatches();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Text(
+          'No project by that name.',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
     );
   }
 }
@@ -215,25 +382,21 @@ class _SidebarHeader extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 20, 8, 12),
+      padding: const EdgeInsets.fromLTRB(20, 18, 10, 12),
       child: Row(
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'ActionNotes',
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w700),
-                ),
-                const AppVersionLabel(),
-              ],
+            child: Text(
+              'ActionNotes',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
+              ),
             ),
           ),
-          const _SearchAction(),
+          // Search and settings have their own places below now; syncing is
+          // the one thing you reach for from anywhere.
           const _SyncAction(),
-          const _SettingsAction(),
         ],
       ),
     );
@@ -288,17 +451,58 @@ class _SidebarFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-      child: SizedBox(
-        width: double.infinity,
-        child: TextButton.icon(
-          onPressed: () => createProject(context),
-          icon: const Icon(Icons.add),
-          label: const Text('New project'),
-          style: TextButton.styleFrom(alignment: Alignment.centerLeft),
+    final theme = Theme.of(context);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+          child: SizedBox(
+            width: double.infinity,
+            child: TextButton.icon(
+              onPressed: () => createProject(context),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('New project'),
+              style: TextButton.styleFrom(
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                backgroundColor:
+                    theme.colorScheme.surfaceContainerHighest.withValues(
+                  alpha: 0.5,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ),
         ),
-      ),
+        Divider(height: 1, color: theme.colorScheme.outlineVariant),
+        // Settings sits at the foot of the sidebar rather than among the
+        // icons at the top: it is the thing you open least.
+        InkWell(
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 16, 14),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Settings',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                const AppVersionLabel(),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -354,14 +558,14 @@ class _ProjectTile extends StatelessWidget {
         ),
       ],
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
         child: Material(
           color: selected
-              ? theme.colorScheme.secondaryContainer
+              ? theme.colorScheme.primary.withValues(alpha: 0.13)
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(6),
           child: InkWell(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(6),
             onTap: () {
               if (pushOnTap) {
                 Navigator.of(context).push(
@@ -373,45 +577,71 @@ class _ProjectTile extends StatelessWidget {
                 state.select(project.slug);
               }
             },
-            child: Padding(
-              padding: EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: pushOnTap ? 16 : 10,
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.checklist,
-                    size: pushOnTap ? 22 : 18,
-                    color: theme.colorScheme.onSurfaceVariant,
+            child: Row(
+              children: [
+                // A bar down the selected row, the way a vault's file list
+                // marks the open note. Always laid out, so the titles line up
+                // whether or not a row is selected.
+                Container(
+                  width: 2,
+                  height: pushOnTap ? 40 : 30,
+                  decoration: BoxDecoration(
+                    color: selected
+                        ? theme.colorScheme.primary
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(2),
                   ),
-                  SizedBox(width: pushOnTap ? 16 : 12),
-                  Expanded(
-                    child: Text(
-                      project.title,
-                      overflow: TextOverflow.ellipsis,
-                      style: titleStyle,
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(
+                      12,
+                      pushOnTap ? 14 : 7,
+                      10,
+                      pushOnTap ? 14 : 7,
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            project.title,
+                            overflow: TextOverflow.ellipsis,
+                            style: titleStyle,
+                          ),
+                        ),
+                        if (project.dirty)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Icon(
+                              Icons.cloud_upload_outlined,
+                              size: 14,
+                              color: theme.colorScheme.outline,
+                            ),
+                          )
+                        else if (open > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 1,
+                            ),
+                            decoration: BoxDecoration(
+                              color: theme
+                                  .colorScheme.surfaceContainerHighest
+                                  .withValues(alpha: 0.7),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '$open',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  if (project.dirty)
-                    Padding(
-                      padding: const EdgeInsets.only(left: 4),
-                      child: Icon(
-                        Icons.cloud_upload_outlined,
-                        size: 14,
-                        color: theme.colorScheme.outline,
-                      ),
-                    )
-                  else if (open > 0)
-                    Text(
-                      '$open',
-                      style: (pushOnTap
-                              ? theme.textTheme.bodyLarge
-                              : theme.textTheme.bodySmall)
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                    ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
