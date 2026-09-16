@@ -75,6 +75,10 @@ class _NoteEditorState extends State<NoteEditor> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  void _undo() => setState(() => _editor.currentState?.undo());
+
+  void _redo() => setState(() => _editor.currentState?.redo());
+
   Future<void> _linkToProject() async {
     final snippet = await _pickLink();
     if (snippet != null) _editor.currentState?.insertInline(snippet);
@@ -176,6 +180,20 @@ class _NoteEditorState extends State<NoteEditor> {
           ),
           actions: [
             IconButton(
+              tooltip: 'Undo',
+              icon: const Icon(Icons.undo),
+              onPressed: _editor.currentState?.canUndo ?? false
+                  ? () => setState(() => _editor.currentState?.undo())
+                  : null,
+            ),
+            IconButton(
+              tooltip: 'Redo',
+              icon: const Icon(Icons.redo),
+              onPressed: _editor.currentState?.canRedo ?? false
+                  ? () => setState(() => _editor.currentState?.redo())
+                  : null,
+            ),
+            IconButton(
               tooltip: 'Link to a project',
               icon: const Icon(Icons.link),
               onPressed: _linkToProject,
@@ -212,11 +230,28 @@ class _NoteEditorState extends State<NoteEditor> {
         // uploaded instead of silently doing nothing.
         const SingleActivator(LogicalKeyboardKey.keyV, control: true): _paste,
         const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _paste,
+        const SingleActivator(LogicalKeyboardKey.keyZ, control: true): _undo,
+        const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): _undo,
+        const SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          control: true,
+          shift: true,
+        ): _redo,
+        const SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          meta: true,
+          shift: true,
+        ): _redo,
+        const SingleActivator(LogicalKeyboardKey.keyY, control: true): _redo,
       },
       child: NoteBlocksEditor(
         key: _editor,
         initialMarkdown: widget.initialNotes,
-        onChanged: (markdown) => _markdown = markdown,
+        onChanged: (markdown) {
+          _markdown = markdown;
+          // Keeps the undo and redo buttons in step with the history.
+          if (mounted) setState(() {});
+        },
         onRequestLink: _pickLink,
         onOpenProject: (slug) async {
           // Leave the note before switching, so the editor is not left
@@ -268,8 +303,8 @@ class _Hint extends StatelessWidget {
         child: Align(
           alignment: Alignment.centerLeft,
           child: Text(
-            'Type "# " for a heading, "- " for a bullet · [[ links a project · '
-            'paste or drop an image · back saves',
+            'Type "# " heading · "- " bullet · "- [ ] " checkbox · Tab nests · '
+            '[[ links a project · Ctrl+Z undoes · back saves',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),

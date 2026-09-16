@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -5,6 +7,7 @@ import '../markdown/note_blocks.dart';
 import 'block_type_menu.dart';
 import 'inline_format.dart';
 import 'markdown_text_controller.dart';
+import 'note_history.dart';
 import 'note_view.dart';
 
 /// One editable row, holding the controller and focus that belong to a block
@@ -66,6 +69,18 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   /// Guards against the `[[` handler firing again while the picker is up.
   bool _pickerOpen = false;
 
+  late final NoteHistory _history = NoteHistory(widget.initialMarkdown);
+
+  /// Typing is coalesced, so undo steps over a word rather than a letter.
+  Timer? _historyTimer;
+
+  /// Set while restoring, so rebuilding the rows does not record the restore
+  /// as a fresh edit.
+  bool _restoring = false;
+
+  bool get canUndo => _history.canUndo;
+  bool get canRedo => _history.canRedo;
+
   @override
   void initState() {
     super.initState();
@@ -81,6 +96,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
   @override
   void dispose() {
+    _historyTimer?.cancel();
     for (final row in _rows) {
       row.dispose();
     }
@@ -104,7 +120,56 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
         ],
       );
 
-  void _emit() => widget.onChanged(markdown);
+  void _emit({bool structural = false}) {
+    final current = markdown;
+    widget.onChanged(current);
+    if (_restoring) return;
+
+    _historyTimer?.cancel();
+    if (structural) {
+      // Splitting, merging, changing a row's kind: worth a step of its own,
+      // recorded at once so undo lands exactly before it.
+      _history.record(current);
+      setState(() {});
+      return;
+    }
+
+    // Typing settles into one step per pause rather than one per keystroke.
+    _historyTimer = Timer(const Duration(milliseconds: 600), () {
+      if (!mounted) return;
+      _history.record(markdown);
+      setState(() {});
+    });
+  }
+
+  /// Puts the note back to a recorded state, rebuilding the rows from it.
+  void _restore(String? markdown) {
+    if (markdown == null) return;
+
+    _historyTimer?.cancel();
+    _restoring = true;
+
+    for (final row in _rows) {
+      row.dispose();
+    }
+    _rows.clear();
+    _activeId = null;
+
+    for (final block in NoteBlocks.parse(markdown)) {
+      _rows.add(_row(block));
+    }
+    if (_rows.every((row) => !row.block.isText)) {
+      _rows.add(_row(const NoteBlock.paragraph('')));
+    }
+
+    setState(() {});
+    widget.onChanged(markdown);
+    _restoring = false;
+  }
+
+  void undo() => _restore(_history.undo());
+
+  void redo() => _restore(_history.redo());
 
   int _indexOfId(int id) => _rows.indexWhere((row) => row.id == id);
 
@@ -129,7 +194,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
         text: shortcut.text,
         selection: TextSelection.collapsed(offset: shortcut.text.length),
       );
-      _emit();
+      _emit(structural: true);
       return;
     }
 
@@ -207,7 +272,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     if (row.block.isListRow && row.controller!.text.isEmpty) {
       // Return on an empty list row drops out of the list.
       setState(() => row.block = const NoteBlock.paragraph(''));
-      _emit();
+      _emit(structural: true);
       return;
     }
 
@@ -223,7 +288,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
       next.focus?.requestFocus();
       next.controller?.selection = const TextSelection.collapsed(offset: 0);
     });
-    _emit();
+    _emit(structural: true);
   }
 
   /// Tab and Shift+Tab nest a list row and lift it back out.
@@ -233,12 +298,12 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
           indent: (row.block.indent + delta).clamp(0, 5),
         ));
     row.focus?.requestFocus();
-    _emit();
+    _emit(structural: true);
   }
 
   void _toggleTask(_Row row) {
     setState(() => row.block = row.block.copyWith(done: !row.block.done));
-    _emit();
+    _emit(structural: true);
   }
 
   /// Backspace at the very start: first give a heading or bullet back its
@@ -249,7 +314,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
             type: NoteBlockType.paragraph,
             level: 1,
           ));
-      _emit();
+      _emit(structural: true);
       return true;
     }
 
@@ -264,7 +329,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
         _rows.removeAt(index - 1);
       });
       previous.dispose();
-      _emit();
+      _emit(structural: true);
       return true;
     }
 
@@ -276,7 +341,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
     previous.focus!.requestFocus();
     previous.controller!.selection = TextSelection.collapsed(offset: joinAt);
-    _emit();
+    _emit(structural: true);
     return true;
   }
 
@@ -292,7 +357,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       trailing.focus?.requestFocus();
     });
-    _emit();
+    _emit(structural: true);
   }
 
   /// Puts text into the focused block at its caret, for a link.
@@ -334,7 +399,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
           setState(() => _rows.add(_row(const NoteBlock.paragraph(''))));
         }
       }
-      _emit();
+      _emit(structural: true);
       return;
     }
 
@@ -343,7 +408,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
           level: kind.level,
         ));
     row.focus?.requestFocus();
-    _emit();
+    _emit(structural: true);
   }
 
   void _applyMark(_Row row, InlineMark mark) {
@@ -367,7 +432,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
       final fresh = _row(const NoteBlock.paragraph(''));
       setState(() => _rows.add(fresh));
     }
-    _emit();
+    _emit(structural: true);
   }
 
   @override

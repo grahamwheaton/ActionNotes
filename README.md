@@ -56,6 +56,11 @@ An item's notes are a markdown document. In the editor:
   italic, `` `code` `` monospaced, a link's label underlined. The markers stay
   visible but dimmed: hiding them would put the caret out of step with the
   text, which breaks editing far worse than a grey asterisk.
+- **Undo and redo**, with Ctrl+Z and Ctrl+Shift+Z or the toolbar. History is
+  kept over the whole note, so it covers the edits a text box cannot undo on
+  its own: splitting a block, merging two with backspace, changing a row's
+  kind, removing an image. Typing settles into one step per pause rather than
+  one per keystroke.
 - **Leaving saves.** Back — the arrow or Android's system back — writes the
   note, as does Save. Only an unchanged note writes nothing.
 

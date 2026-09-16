@@ -669,6 +669,119 @@ void main() {
     });
   });
 
+  group('undo in the note editor', () {
+    Future<AppState> openWithNotes(
+      WidgetTester tester,
+      FakeLocalStore store,
+      String notes,
+    ) async {
+      final state = await pumpShell(tester, store);
+      await state.createProject('List');
+      await state.addItem('list', 'Item');
+      if (notes.isNotEmpty) await state.setItemNotes('list', 0, notes);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Item'));
+      await tester.pumpAndSettle();
+      return state;
+    }
+
+    testWidgets('a backspace that merges two blocks can be taken back',
+        (tester) async {
+      final store = FakeLocalStore();
+      await openWithNotes(tester, store, 'First block\n\nSecond block');
+
+      // The accident: caret at the start of the second block, backspace
+      // joins it onto the first, and there was no way back.
+      final second = find.byType(TextField).at(1);
+      await tester.tap(second);
+      await tester.pumpAndSettle();
+      tester.widget<TextField>(second).controller!.selection =
+          const TextSelection.collapsed(offset: 0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TextField), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TextField), findsNWidgets(2));
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(
+        store.saved['list']!.items.single.notes,
+        'First block\n\nSecond block',
+      );
+    });
+
+    testWidgets('undo is unavailable until something changes',
+        (tester) async {
+      final store = FakeLocalStore();
+      await openWithNotes(tester, store, 'Some text');
+
+      // byTooltip finds the Tooltip; the button is its ancestor.
+      IconButton buttonFor(String tooltip) => tester.widget<IconButton>(
+            find.ancestor(
+              of: find.byTooltip(tooltip),
+              matching: find.byType(IconButton),
+            ),
+          );
+
+      expect(buttonFor('Undo').onPressed, isNull);
+      expect(buttonFor('Redo').onPressed, isNull);
+    });
+
+    testWidgets('redo puts a change back', (tester) async {
+      final store = FakeLocalStore();
+      await openWithNotes(tester, store, 'Heading here');
+
+      // Converting a block is one step.
+      await tester.enterText(find.byType(TextField).first, '# Heading here');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Redo'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(store.saved['list']!.items.single.notes, '# Heading here');
+    });
+
+    testWidgets('removing an image can be undone', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+      await state.createProject('List');
+      await state.addItem('list', 'Item');
+      await state.setItemNotes(
+        'list',
+        0,
+        'Before\n\n![shot](../attachments/list/shot.png)\n\nAfter',
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Item'));
+
+      // An unresolved image shows a spinner, which never stops animating, so
+      // this test pumps by hand rather than waiting for the tree to settle.
+      // Long enough for the push transition to finish.
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byTooltip('Remove image'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('Remove image'));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byTooltip('Remove image'), findsNothing);
+
+      await tester.tap(find.byTooltip('Undo'));
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.byTooltip('Remove image'), findsOneWidget);
+    });
+  });
+
   group('lists in a note', () {
     Future<AppState> openNoteFor(
       WidgetTester tester,
