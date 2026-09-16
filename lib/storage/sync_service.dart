@@ -1,3 +1,4 @@
+import '../markdown/project_links.dart';
 import '../markdown/project_markdown.dart';
 import '../markdown/project_merge.dart';
 import '../models/project.dart';
@@ -247,11 +248,77 @@ class SyncService {
         sha: project.sha!,
         message: 'Delete ${project.title}',
       );
+      // The project's images have nothing left referring to them.
+      await _deleteAttachmentDirectory(client, project);
       return null;
     } on GitHubException catch (error) {
       return 'Removed here, but GitHub still has the file: ${error.message}';
     } catch (_) {
       return 'Removed here, but GitHub could not be reached.';
+    } finally {
+      client.dispose();
+    }
+  }
+
+  /// Removes every attachment belonging to a deleted project.
+  ///
+  /// Failures here are deliberately swallowed: the project file is already
+  /// gone, and a leftover image is untidy rather than broken, so it is not
+  /// worth reporting an error over.
+  Future<void> _deleteAttachmentDirectory(
+    GitHubClient client,
+    Project project,
+  ) async {
+    try {
+      final files = await client.listDirectory(
+        '${GitHubClient.attachmentsDir}/${project.slug}',
+      );
+      for (final entry in files.entries) {
+        await client.deleteFile(
+          path: entry.key,
+          sha: entry.value,
+          message: 'Remove unused attachment ${entry.key.split('/').last}',
+        );
+      }
+    } catch (_) {
+      // Left behind; the next sweep can pick it up.
+    }
+  }
+
+  /// Deletes attachments of [project] that nothing in it references any more.
+  ///
+  /// Called after an edit, so removing an image from a note takes the file
+  /// with it instead of leaving it in the repo for good.
+  Future<void> pruneAttachments(
+    GitHubConfig config,
+    Project project,
+  ) async {
+    if (!config.isComplete) return;
+
+    final referenced = <String>{};
+    for (final item in project.items) {
+      referenced.addAll(ProjectLinks.attachmentNames(item.notes));
+    }
+    referenced.addAll(ProjectLinks.attachmentNames(project.notes));
+
+    final client = _clientFactory(config);
+    try {
+      final files = await client.listDirectory(
+        '${GitHubClient.attachmentsDir}/${project.slug}',
+      );
+
+      for (final entry in files.entries) {
+        final name = entry.key.split('/').last;
+        if (referenced.contains(name)) continue;
+
+        await client.deleteFile(
+          path: entry.key,
+          sha: entry.value,
+          message: 'Remove unused attachment $name',
+        );
+      }
+    } catch (_) {
+      // Tidying is best effort; the notes themselves are already correct.
     } finally {
       client.dispose();
     }

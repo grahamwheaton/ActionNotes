@@ -77,6 +77,25 @@ class GitHubClient {
     }
   }
 
+  /// Lists a directory's files, with their SHAs, which a delete needs.
+  /// An absent directory is not an error.
+  Future<Map<String, String>> listDirectory(String path) async {
+    final response = await _client.get(_contentsUri(path), headers: _headers);
+    if (response.statusCode == 404) return const {};
+    if (response.statusCode != 200) {
+      throw GitHubException(response.statusCode, _errorMessage(response));
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List) return const {};
+
+    return {
+      for (final entry in decoded.whereType<Map<String, dynamic>>())
+        if (entry['type'] == 'file')
+          entry['path'] as String: entry['sha'] as String,
+    };
+  }
+
   /// Lists the markdown files in `projects/`. An absent directory is not an
   /// error — it just means nothing has been saved yet.
   Future<List<String>> listProjectPaths() async {

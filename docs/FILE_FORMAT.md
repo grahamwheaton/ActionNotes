@@ -95,6 +95,12 @@ BMP under a `.png` name — which GitHub and Obsidian both refuse to render,
 since they go by the extension, and which appears upside down because a BMP's
 rows run bottom-up.
 
+An attachment nothing refers to is removed: after a note is saved, files in
+that project's attachment directory with no reference left pointing at them
+are deleted, and deleting a project takes its whole attachment directory with
+it. Tidying is best effort — a file left behind is untidy rather than broken,
+so a failure here is never reported as an error.
+
 Because the repo is usually private, the app cannot load these images by URL.
 It fetches them through the API and caches them on the device, so a note opened
 once renders offline afterwards.

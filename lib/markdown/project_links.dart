@@ -76,6 +76,16 @@ class ProjectLinks {
     return null;
   }
 
+  /// The attachment filenames [notes] refers to, for spotting files in the
+  /// repo that nothing points at any more.
+  static Set<String> attachmentNames(String notes) {
+    return {
+      for (final match
+          in RegExp(r'attachments/[^/)\s]+/([^)\s]+)').allMatches(notes))
+        match.group(1)!,
+    };
+  }
+
   /// Every project [notes] links to, for showing what a note points at.
   static List<String> outgoingSlugs(String notes) {
     final slugs = <String>{};

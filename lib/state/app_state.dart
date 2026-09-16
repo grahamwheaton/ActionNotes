@@ -365,6 +365,10 @@ class AppState extends ChangeNotifier {
       final pushed = await _syncService.push(_config, project);
       if (pushed.dirty) return; // Still pending; the next sync will retry.
 
+      // An image dropped from a note leaves its file behind, so tidy up once
+      // the note itself has landed.
+      unawaited(_syncService.pruneAttachments(_config, pushed));
+
       final latest = projectBySlug(slug);
       if (latest == null) return;
       // Only clear the flag if nothing was edited while the push was in flight.
