@@ -56,15 +56,22 @@ the workflow run's artifacts.
 
 ### Releases
 
-Pushing a version tag publishes a release APK as a downloadable asset:
+Pushing a version tag publishes an Android APK and a Windows build as release
+assets:
 
 ```sh
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The asset is a plain `.apk`, so it installs straight from the phone browser —
+The APK is a plain `.apk`, so it installs straight from the phone browser —
 unlike a CI artifact, which arrives zipped.
+
+The Windows asset is a zip of the built app. There is no installer: unzip it
+anywhere and run `actionnotes.exe`. It needs no admin rights, but the
+executable has to keep its DLLs and `data` folder beside it, so run it from the
+unzipped folder rather than moving the exe out on its own. Windows may warn
+about an unrecognised app, as the build is not code-signed.
 
 ### Release signing
 
