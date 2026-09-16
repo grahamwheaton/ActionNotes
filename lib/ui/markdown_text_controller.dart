@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 
 /// A controller that draws inline markdown as it is typed: `**bold**` appears
-/// bold, `*italic*` italic, `` `code` `` monospaced, and a link's label
-/// underlined.
+/// bold, `*italic*` italic, `` `code` `` monospaced, and a link shows its
+/// label rather than its target.
 ///
-/// The markers stay in the text rather than being hidden. Hiding them would
-/// make the caret and selection offsets disagree with the string, which breaks
-/// editing in ways that are much worse than a visible asterisk — so they are
-/// dimmed instead, which keeps them quiet without lying about the content.
+/// The markers are collapsed to nothing until the caret enters the span they
+/// belong to, then shown dimmed so they can be edited. This keeps a note
+/// looking like the document it is, without the older problem of hiding a
+/// marker the caret still has to travel through: the text painter lays out
+/// the very spans built here, so a collapsed marker and the caret agree about
+/// where everything sits. The one cost is that arrowing across a hidden
+/// marker takes a keypress that moves nothing visible.
 class MarkdownTextController extends TextEditingController {
   MarkdownTextController({super.text});
 
@@ -20,6 +23,18 @@ class MarkdownTextController extends TextEditingController {
     r'|\[([^\]]*)\]\(([^)\s]*)\)',
   );
 
+  /// True when the selection touches [start]..[end], so the markers there
+  /// should be visible to be edited.
+  ///
+  /// The bounds are inclusive: a caret resting just after a closing `**` is
+  /// still editing that span, and having the markers blink away underneath it
+  /// would be worse than leaving them.
+  bool _isEditing(int start, int end) {
+    final selection = this.selection;
+    if (!selection.isValid) return false;
+    return selection.start <= end && selection.end >= start;
+  }
+
   @override
   TextSpan buildTextSpan({
     required BuildContext context,
@@ -29,7 +44,15 @@ class MarkdownTextController extends TextEditingController {
     final base = style ?? const TextStyle();
     final dim = base.color?.withValues(alpha: 0.35) ??
         Theme.of(context).colorScheme.outline;
-    final marker = base.copyWith(color: dim);
+    final shown = base.copyWith(color: dim);
+
+    // A marker that is not being edited is laid out at no width at all rather
+    // than merely made transparent, so it takes up no room on the line.
+    final hidden = base.copyWith(
+      color: const Color(0x00000000),
+      fontSize: 0.01,
+      letterSpacing: 0,
+    );
 
     final spans = <InlineSpan>[];
     var cursor = 0;
@@ -38,6 +61,8 @@ class MarkdownTextController extends TextEditingController {
       if (match.start > cursor) {
         spans.add(TextSpan(text: text.substring(cursor, match.start), style: base));
       }
+
+      final marker = _isEditing(match.start, match.end) ? shown : hidden;
 
       if (match.group(2) != null) {
         final fence = match.group(1)!;
@@ -69,7 +94,8 @@ class MarkdownTextController extends TextEditingController {
           ))
           ..add(TextSpan(text: '`', style: marker));
       } else {
-        // A link: show the label as a link and keep the target quiet.
+        // A link: show the label as a link and keep the target out of the way
+        // until somebody goes to edit it.
         spans
           ..add(TextSpan(text: '[', style: marker))
           ..add(TextSpan(
