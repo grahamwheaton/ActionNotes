@@ -5,6 +5,7 @@ import 'package:actionnotes/ui/home_shell.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -142,7 +143,7 @@ void main() {
       await state.toggleItem('list', 3);
 
       // Move C before A.
-      await state.reorderOpenItems('list', 1, 0);
+      await state.reorderSlots('list', [0, 2], 1, 0);
 
       final items = store.saved['list']!.items;
       expect(items.map((i) => i.text), ['C', 'B', 'A', 'D']);
@@ -159,7 +160,7 @@ void main() {
         await state.addItem('list', text);
       }
 
-      await state.reorderOpenItems('list', 0, 2);
+      await state.reorderSlots('list', [0, 1, 2], 0, 2);
 
       expect(store.saved['list']!.items.map((i) => i.text), ['B', 'C', 'A']);
     });
@@ -431,48 +432,204 @@ void main() {
     });
   });
 
-  group('markdown preview', () {
-    testWidgets('a wide editor shows the preview beside the text',
-        (tester) async {
-      final store = FakeLocalStore();
+  group('the note editor writes markdown', () {
+    Future<AppState> openNoteOn(
+      WidgetTester tester,
+      FakeLocalStore store,
+    ) async {
       final state = await pumpShell(tester, store);
       await state.createProject('List');
       await state.addItem('list', 'Item');
       await tester.pumpAndSettle();
-
       await tester.tap(find.text('Item'));
       await tester.pumpAndSettle();
+      return state;
+    }
 
-      // No toggle is offered, because both panes are already visible.
-      expect(find.byIcon(Icons.visibility_outlined), findsNothing);
+    Finder blockField(int index) => find.byType(TextField).at(index);
 
-      await tester.enterText(find.byType(TextField).first, '# A heading');
+    testWidgets('typing "# " makes a heading and takes the marker away',
+        (tester) async {
+      final store = FakeLocalStore();
+      await openNoteOn(tester, store);
+
+      await tester.enterText(blockField(0), '# ');
       await tester.pumpAndSettle();
 
-      // The preview renders as you type, without a save or a toggle.
-      expect(find.text('A heading'), findsOneWidget);
+      // The marker is gone from the text; the block carries it instead.
+      expect(tester.widget<TextField>(blockField(0)).controller!.text, '');
+
+      await tester.enterText(blockField(0), 'A heading');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(store.saved['list']!.items.single.notes, '# A heading');
     });
 
-    testWidgets('a narrow editor keeps the preview toggle', (tester) async {
+    testWidgets('typing "- " makes a bullet', (tester) async {
       final store = FakeLocalStore();
-      final state = await pumpShell(tester, store, size: const Size(420, 900));
-      await state.createProject('List');
-      await state.addItem('list', 'Item');
+      await openNoteOn(tester, store);
+
+      await tester.enterText(blockField(0), '- ');
+      await tester.pumpAndSettle();
+      await tester.enterText(blockField(0), 'a point');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('List'));
+      expect(store.saved['list']!.items.single.notes, '- a point');
+    });
+
+    testWidgets('a heading and a paragraph are separated in the file',
+        (tester) async {
+      final store = FakeLocalStore();
+      await openNoteOn(tester, store);
+
+      await tester.enterText(blockField(0), '# ');
       await tester.pumpAndSettle();
+      await tester.enterText(blockField(0), 'Title');
+      await tester.pumpAndSettle();
+
+      // Enter splits the block, leaving a paragraph below the heading.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      await tester.enterText(blockField(1), 'Body text.');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(
+        store.saved['list']!.items.single.notes,
+        '# Title\n\nBody text.',
+      );
+    });
+
+    testWidgets('an existing note opens as its blocks', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+      await state.createProject('List');
+      await state.addItem('list', 'Item');
+      await state.setItemNotes(
+        'list',
+        0,
+        '# Heading\n\nA paragraph.\n\n- one\n- two',
+      );
+      await tester.pumpAndSettle();
+
       await tester.tap(find.text('Item'));
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.visibility_outlined), findsOneWidget);
+      // Four editable blocks, each holding its text without its marker.
+      expect(find.byType(TextField), findsNWidgets(4));
+      expect(
+        tester.widget<TextField>(blockField(0)).controller!.text,
+        'Heading',
+      );
+      expect(
+        tester.widget<TextField>(blockField(2)).controller!.text,
+        'one',
+      );
+    });
 
-      await tester.enterText(find.byType(TextField).first, '# A heading');
-      await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.visibility_outlined));
+    testWidgets('reopening a note does not change the file', (tester) async {
+      final store = FakeLocalStore();
+      const original = '# Heading\n\nA paragraph.\n\n- one\n- two';
+
+      final state = await pumpShell(tester, store);
+      await state.createProject('List');
+      await state.addItem('list', 'Item');
+      await state.setItemNotes('list', 0, original);
       await tester.pumpAndSettle();
 
-      expect(find.text('A heading'), findsOneWidget);
+      await tester.tap(find.text('Item'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+
+      expect(store.saved['list']!.items.single.notes, original);
+    });
+  });
+
+  group('starred items pin to the top', () {
+    testWidgets('a starred item is drawn above the unstarred ones',
+        (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('List');
+      for (final text in ['First', 'Second', 'Third']) {
+        await state.addItem('list', text);
+      }
+      await state.toggleStar('list', 2);
+      await tester.pumpAndSettle();
+
+      final starredY = tester.getTopLeft(find.text('Third')).dy;
+      final firstY = tester.getTopLeft(find.text('First')).dy;
+      expect(starredY, lessThan(firstY));
+    });
+
+    testWidgets('pinning does not reorder the file', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('List');
+      for (final text in ['First', 'Second', 'Third']) {
+        await state.addItem('list', text);
+      }
+      await state.toggleStar('list', 2);
+      await tester.pumpAndSettle();
+
+      // Only the view changes; the markdown keeps the order it had.
+      expect(
+        store.saved['list']!.items.map((i) => i.text),
+        ['First', 'Second', 'Third'],
+      );
+    });
+
+    testWidgets('unstarring drops it back among the others', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('List');
+      await state.addItem('list', 'First');
+      await state.addItem('list', 'Second');
+      await state.toggleStar('list', 1);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getTopLeft(find.text('Second')).dy,
+        lessThan(tester.getTopLeft(find.text('First')).dy),
+      );
+
+      await state.toggleStar('list', 1);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getTopLeft(find.text('First')).dy,
+        lessThan(tester.getTopLeft(find.text('Second')).dy),
+      );
+    });
+
+    test('reordering one group leaves the other groups alone', () async {
+      final store = FakeLocalStore();
+      final state = newTestState(store);
+      await state.init();
+
+      await state.createProject('List');
+      for (final text in ['A', 'B', 'C', 'D']) {
+        await state.addItem('list', text);
+      }
+      await state.toggleStar('list', 1); // B starred
+      await state.toggleStar('list', 3); // D starred
+
+      // Swap the two starred items, which sit at slots 1 and 3.
+      await state.reorderSlots('list', [1, 3], 1, 0);
+
+      final items = store.saved['list']!.items;
+      expect(items.map((i) => i.text), ['A', 'D', 'C', 'B']);
+      expect(items.map((i) => i.starred), [false, true, false, true]);
     });
   });
 

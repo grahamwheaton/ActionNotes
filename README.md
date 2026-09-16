@@ -23,7 +23,8 @@ pasting one file — or by pointing the model at the repo.
   two shapes.
 - Checklists group open items first, with completed ones collapsed under a
   header at the bottom.
-- Star any item, the way Microsoft To Do does.
+- Star any item, the way Microsoft To Do does. Starred items pin above the
+  rest of the open ones, while the file keeps its own order.
 - Per-item notes in markdown, with images pasted, dropped or picked from disk
   and stored in the repo.
 - Links between projects: type `[[` for a picker, or write a normal markdown
@@ -43,14 +44,29 @@ An item's notes are a markdown document. In the editor:
 - **Paste an image** with Ctrl+V and it uploads to `attachments/` and appears
   inline. Pasting text still pastes text.
 - **Drop an image file** onto the editor on the desktop to do the same.
-- **A wide window shows the preview beside the editor**, updating as you type.
-  Narrow windows keep a toggle instead, since there is no room for two panes.
+- **One view, no preview pane.** A note is a stack of blocks drawn the way
+  they read: headings at heading size, bullets with their marker, images as
+  the picture. Typing `# ` turns a line into a heading and takes the hashes
+  away; `- ` makes a bullet. Enter starts a new block, backspace at the start
+  of a heading turns it back into a paragraph.
+- **Inline markdown styles as you type** — `**bold**` looks bold, `*italic*`
+  italic, `` `code` `` monospaced, a link's label underlined. The markers stay
+  visible but dimmed: hiding them would put the caret out of step with the
+  text, which breaks editing far worse than a grey asterisk.
 - **Leaving saves.** Back — the arrow or Android's system back — writes the
   note, as does Save. Only an unchanged note writes nothing.
 
-What this is not: Obsidian's live preview, where the text itself renders in
-place as you type. Here the rendering happens in the pane beside it. Backlinks,
-tags and the graph view are not here either.
+- **A ¶ handle beside every block** opens a block-type menu, in the shape
+  MarkText uses: the kinds grouped, each with the markdown it writes and its
+  shortcut. The handle shows what the block currently is — `¶`, `H2`, `•`.
+- **Selecting text brings up a formatting toolbar** at the selection with
+  bold, italic, strikethrough, code, link and clear, alongside the usual copy
+  and paste.
+- **Keyboard**: Ctrl+0 paragraph, Ctrl+1 to Ctrl+6 headers, Ctrl+L bullet,
+  Ctrl+- horizontal line, Ctrl+B bold, Ctrl+I italic.
+
+What this is not: the markers are dimmed rather than hidden, so it is not
+quite Word. Backlinks, tags and the graph view are not here either.
 
 ## When the same project changes in two places
 

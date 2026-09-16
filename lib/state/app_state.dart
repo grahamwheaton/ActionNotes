@@ -271,26 +271,27 @@ class AppState extends ChangeNotifier {
         return project.copyWith(items: items);
       });
 
-  /// Reorders the open items among themselves. Both indices count only open
-  /// items, since that is what the grouped list shows as draggable, and
-  /// [newIndex] is the destination index — what onReorderItem already gives
-  /// us, so no off-by-one adjustment is needed here.
+  /// Reorders the items occupying [slots], which are positions in the
+  /// project's own item list, ascending. [newIndex] counts within [slots] and
+  /// is the destination index — what onReorderItem already gives us, so no
+  /// off-by-one adjustment is needed here.
   ///
-  /// Completed items keep their positions in the file, so reordering what you
-  /// can see never quietly reshuffles what is collapsed out of sight.
-  Future<void> reorderOpenItems(String slug, int oldIndex, int newIndex) =>
+  /// The view passes the slots it is actually showing, so dragging within one
+  /// group never disturbs items in another — a completed item, or an
+  /// unstarred one, stays where it is in the file.
+  Future<void> reorderSlots(
+    String slug,
+    List<int> slots,
+    int oldIndex,
+    int newIndex,
+  ) =>
       _mutate(slug, (project) {
-        final openSlots = <int>[];
-        for (var i = 0; i < project.items.length; i++) {
-          if (!project.items[i].done) openSlots.add(i);
-        }
-
-        final openItems = [for (final slot in openSlots) project.items[slot]];
-        openItems.insert(newIndex, openItems.removeAt(oldIndex));
+        final picked = [for (final slot in slots) project.items[slot]];
+        picked.insert(newIndex, picked.removeAt(oldIndex));
 
         final items = [...project.items];
-        for (var i = 0; i < openSlots.length; i++) {
-          items[openSlots[i]] = openItems[i];
+        for (var i = 0; i < slots.length; i++) {
+          items[slots[i]] = picked[i];
         }
         return project.copyWith(items: items);
       });

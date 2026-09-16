@@ -69,6 +69,9 @@ Four parts, in this order:
 - A blank line inside a note block is kept, so notes can have paragraphs.
 - The first unindented line after a note block ends it.
 
+The app draws starred items above the other open ones, but pinning is a view,
+not a rewrite: the file keeps the order you gave it.
+
 Item order in the file is the item order in the app. The app displays open
 items first and groups completed ones under a collapsible header, but it does
 not rewrite the file to match that view: reordering in the app moves open items
@@ -95,6 +98,24 @@ once renders offline afterwards.
   stay small and reviewable.
 - Anything the app does not understand in the front matter is round-tripped
   unchanged rather than dropped.
+
+## What the note editor understands
+
+Notes are edited as blocks, and these are the line kinds it models:
+
+| Markdown | Editor |
+| --- | --- |
+| `# ` to `###### ` | heading, drawn at size with the hashes hidden |
+| `- ` | bullet, drawn with a dot |
+| `![alt](path)` alone on a line | the image itself |
+| `---`, `***` or `___` | a horizontal rule |
+| anything else | a paragraph |
+
+Inline markdown — bold, italic, code, links — is never rewritten; it is styled
+where it sits. An image with text on the same line stays a paragraph rather
+than being split out, so nothing you wrote gets rearranged. Anything the
+editor does not model, a table or a code fence say, is kept as paragraphs and
+written back as it was found.
 
 ## Links between projects
 

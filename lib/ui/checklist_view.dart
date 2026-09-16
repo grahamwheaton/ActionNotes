@@ -59,11 +59,20 @@ class _ChecklistViewState extends State<ChecklistView> {
     }
 
     // Indices are into project.items, so edits address the right line even
-    // though the view is grouped.
+    // though the view is grouped. Starred items are pinned above the rest of
+    // the open ones; each group keeps its own order from the file.
+    final starred = <int>[];
     final open = <int>[];
     final done = <int>[];
     for (var i = 0; i < project.items.length; i++) {
-      (project.items[i].done ? done : open).add(i);
+      final item = project.items[i];
+      if (item.done) {
+        done.add(i);
+      } else if (item.starred) {
+        starred.add(i);
+      } else {
+        open.add(i);
+      }
     }
 
     return Scaffold(
@@ -80,13 +89,39 @@ class _ChecklistViewState extends State<ChecklistView> {
                 ? const _EmptyChecklist()
                 : CustomScrollView(
                     slivers: [
-                      // Only open items are draggable; the completed group
-                      // below is a plain list.
+                      // Starred first, each group draggable within itself so a
+                      // drag cannot silently unstar or unpin something.
+                      if (starred.isNotEmpty)
+                        SliverReorderableList(
+                          itemCount: starred.length,
+                          onReorderItem: (oldIndex, newIndex) => context
+                              .read<AppState>()
+                              .reorderSlots(
+                                widget.slug,
+                                starred,
+                                oldIndex,
+                                newIndex,
+                              ),
+                          itemBuilder: (context, position) {
+                            final index = starred[position];
+                            return _ItemTile(
+                              key: ValueKey('starred-${widget.slug}-$index'),
+                              slug: widget.slug,
+                              index: index,
+                              item: project.items[index],
+                              dragPosition: position,
+                            );
+                          },
+                        ),
                       SliverReorderableList(
                         itemCount: open.length,
-                        onReorderItem: (oldIndex, newIndex) => context
-                            .read<AppState>()
-                            .reorderOpenItems(widget.slug, oldIndex, newIndex),
+                        onReorderItem: (oldIndex, newIndex) =>
+                            context.read<AppState>().reorderSlots(
+                                  widget.slug,
+                                  open,
+                                  oldIndex,
+                                  newIndex,
+                                ),
                         itemBuilder: (context, position) {
                           final index = open[position];
                           return _ItemTile(

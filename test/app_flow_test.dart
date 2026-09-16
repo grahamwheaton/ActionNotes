@@ -123,7 +123,7 @@ void main() {
     }
 
     // Drag the first item to the end, as onReorderItem reports it.
-    await state.reorderOpenItems('packing', 0, 2);
+    await state.reorderSlots('packing', [0, 1, 2], 0, 2);
 
     expect(
       store.saved['packing']!.items.map((i) => i.text),
@@ -131,7 +131,7 @@ void main() {
     );
 
     // And back to the front.
-    await state.reorderOpenItems('packing', 2, 0);
+    await state.reorderSlots('packing', [0, 1, 2], 2, 0);
 
     expect(
       store.saved['packing']!.items.map((i) => i.text),
