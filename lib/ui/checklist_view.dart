@@ -33,39 +33,61 @@ class _ChecklistViewState extends State<ChecklistView> {
   final _newItemFocus = FocusNode();
   bool _completedExpanded = true;
 
-  /// Items whose notes are open in place, by index into the project's list.
-  /// Held here rather than in the tile so a tile rebuilt by a reorder or a
-  /// sync does not forget it was open.
-  final Set<int> _expandedNotes = {};
+  /// Items whose notes are open in place, keyed by the item's text.
+  ///
+  /// Not by index: a new item goes to the top of the list and a deletion
+  /// closes a gap, so an index stops meaning the same row the moment the list
+  /// changes. Keeping the text means a row that moves keeps its open note.
+  final Set<String> _expandedNotes = {};
 
-  void _toggleNotes(int index) {
+  void _toggleNotes(int index, String itemText) {
     // Closing a note is a good moment to be sure it is written, rather than
     // trusting the pause timer to have fired first.
-    if (_expandedNotes.contains(index)) _flushNotes(index);
+    if (_expandedNotes.contains(itemText)) _flushNotes(itemText);
     setState(() {
-      if (!_expandedNotes.remove(index)) _expandedNotes.add(index);
+      if (!_expandedNotes.remove(itemText)) _expandedNotes.add(itemText);
     });
   }
 
-  /// Notes edited in place but not yet written, by item index.
+  /// Notes edited in place but not yet written, keyed by the item's text.
   ///
   /// Writing on every keystroke would push a commit per letter, so an edit
   /// settles for a moment first — the same bargain the note editor's history
   /// makes with undo.
-  final Map<int, String> _pendingNotes = {};
-  final Map<int, Timer> _noteTimers = {};
+  ///
+  /// The key is the item's text rather than its index for the same reason as
+  /// above, and here it matters more than tidiness: an index captured when
+  /// the edit started could point at a different item by the time the timer
+  /// fires, and the note would be written over that item's notes instead.
+  /// Adding an item is enough to cause it, since a new item is prepended.
+  ///
+  /// Two items in one project with identical text share a buffer. That is
+  /// worth the trade: it is unusual, and the failure is two rows agreeing
+  /// rather than a note landing on an unrelated item.
+  final Map<String, String> _pendingNotes = {};
+  final Map<String, Timer> _noteTimers = {};
 
-  void _notesChanged(int index, String markdown) {
-    _pendingNotes[index] = markdown;
-    _noteTimers[index]?.cancel();
-    _noteTimers[index] =
-        Timer(const Duration(milliseconds: 700), () => _flushNotes(index));
+  void _notesChanged(String itemText, String markdown) {
+    _pendingNotes[itemText] = markdown;
+    _noteTimers[itemText]?.cancel();
+    _noteTimers[itemText] =
+        Timer(const Duration(milliseconds: 700), () => _flushNotes(itemText));
   }
 
-  void _flushNotes(int index) {
-    _noteTimers.remove(index)?.cancel();
-    final markdown = _pendingNotes.remove(index);
+  void _flushNotes(String itemText) {
+    _noteTimers.remove(itemText)?.cancel();
+    final markdown = _pendingNotes.remove(itemText);
     if (markdown == null) return;
+
+    // Find where the item is now, rather than where it was when the edit
+    // started. If it has gone — deleted, or its text edited — the note is
+    // dropped, which is better than writing it onto whichever item has since
+    // taken that position.
+    final project = _state.projectBySlug(widget.slug);
+    if (project == null) return;
+
+    final index = project.items.indexWhere((item) => item.text == itemText);
+    if (index < 0) return;
 
     // Wikilinks become portable markdown on the way out, as they do when the
     // note is saved from its own screen.
@@ -88,8 +110,8 @@ class _ChecklistViewState extends State<ChecklistView> {
 
   @override
   void dispose() {
-    for (final index in _pendingNotes.keys.toList()) {
-      _flushNotes(index);
+    for (final itemText in _pendingNotes.keys.toList()) {
+      _flushNotes(itemText);
     }
     _newItemController.dispose();
     _newItemFocus.dispose();
@@ -170,10 +192,14 @@ class _ChecklistViewState extends State<ChecklistView> {
                               index: index,
                               item: project.items[index],
                               dragPosition: position,
-                              notesExpanded: _expandedNotes.contains(index),
-                              onToggleNotes: () => _toggleNotes(index),
+                              notesExpanded: _expandedNotes.contains(project.items[index].text),
+                              onToggleNotes: () =>
+                                  _toggleNotes(index, project.items[index].text),
                               onNotesChanged: (notes) =>
-                                  _notesChanged(index, notes),
+                                  _notesChanged(
+                                    project.items[index].text,
+                                    notes,
+                                  ),
                             );
                           },
                         ),
@@ -194,10 +220,14 @@ class _ChecklistViewState extends State<ChecklistView> {
                             index: index,
                             item: project.items[index],
                             dragPosition: position,
-                            notesExpanded: _expandedNotes.contains(index),
-                            onToggleNotes: () => _toggleNotes(index),
+                            notesExpanded: _expandedNotes.contains(project.items[index].text),
+                            onToggleNotes: () =>
+                                  _toggleNotes(index, project.items[index].text),
                               onNotesChanged: (notes) =>
-                                  _notesChanged(index, notes),
+                                  _notesChanged(
+                                    project.items[index].text,
+                                    notes,
+                                  ),
                           );
                         },
                       ),
@@ -221,10 +251,14 @@ class _ChecklistViewState extends State<ChecklistView> {
                               slug: widget.slug,
                               index: index,
                               item: project.items[index],
-                              notesExpanded: _expandedNotes.contains(index),
-                              onToggleNotes: () => _toggleNotes(index),
+                              notesExpanded: _expandedNotes.contains(project.items[index].text),
+                              onToggleNotes: () =>
+                                  _toggleNotes(index, project.items[index].text),
                               onNotesChanged: (notes) =>
-                                  _notesChanged(index, notes),
+                                  _notesChanged(
+                                    project.items[index].text,
+                                    notes,
+                                  ),
                             );
                           },
                         ),
@@ -443,7 +477,10 @@ class _ItemTile extends StatelessWidget {
                 child: NoteBlocksEditor(
                   // Keyed by the item so that editing one note and opening
                   // another does not hand the second the first one's blocks.
-                  key: ValueKey('notes-$slug-$index'),
+                  // By text, not index: an index is reused by whichever row
+                  // moves into it, which would hand the editor's blocks to a
+                  // different item's note.
+                  key: ValueKey('notes-$slug-${item.text}'),
                   initialMarkdown: item.notes,
                   shrinkWrap: true,
                   onChanged: onNotesChanged,
