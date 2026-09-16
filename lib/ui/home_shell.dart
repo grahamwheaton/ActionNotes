@@ -8,6 +8,7 @@ import '../storage/sync_service.dart';
 import 'checklist_view.dart';
 import 'conflict_dialog.dart';
 import 'context_menu.dart';
+import 'search_screen.dart';
 import 'settings_screen.dart';
 import 'text_prompt.dart';
 
@@ -140,7 +141,11 @@ class _SinglePaneLayout extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [Text('ActionNotes'), AppVersionLabel()],
         ),
-        actions: const [_SyncAction(), _SettingsAction()],
+        actions: const [
+          _SearchAction(),
+          _SyncAction(),
+          _SettingsAction(),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => createProject(context, openAfter: true),
@@ -226,6 +231,7 @@ class _SidebarHeader extends StatelessWidget {
               ],
             ),
           ),
+          const _SearchAction(),
           const _SyncAction(),
           const _SettingsAction(),
         ],
@@ -410,6 +416,19 @@ class _ProjectTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _SearchAction extends StatelessWidget {
+  const _SearchAction();
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Search',
+      icon: const Icon(Icons.search),
+      onPressed: () => SearchScreen.open(context),
     );
   }
 }

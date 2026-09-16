@@ -669,6 +669,67 @@ void main() {
     });
   });
 
+  group('search', () {
+    testWidgets('finds an item in another project and opens it',
+        (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('House move');
+      await state.addItem('house-move', 'Book the van');
+      await state.createProject('Groceries');
+      await state.addItem('groceries', 'Milk');
+      state.select('groceries');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Search'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).first, 'van');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Book the van'), findsOneWidget);
+      expect(find.text('House move'), findsOneWidget);
+
+      await tester.tap(find.text('Book the van'));
+      await tester.pumpAndSettle();
+
+      expect(state.selectedSlug, 'house-move');
+    });
+
+    testWidgets('says so when nothing matches', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+      await state.createProject('House move');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Search'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'zebra');
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Nothing matches'), findsOneWidget);
+    });
+
+    testWidgets('searches inside item notes too', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('House move');
+      await state.addItem('house-move', 'Cancel broadband');
+      await state.setItemNotes('house-move', 0, 'Rang them on Tuesday.');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Search'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, 'tuesday');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Rang them on Tuesday.'), findsOneWidget);
+      expect(find.textContaining('· note'), findsOneWidget);
+    });
+  });
+
   group('undo in the note editor', () {
     Future<AppState> openWithNotes(
       WidgetTester tester,

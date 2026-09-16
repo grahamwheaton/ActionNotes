@@ -25,6 +25,8 @@ pasting one file — or by pointing the model at the repo.
   header at the bottom. New items are added at the top.
 - Star any item, the way Microsoft To Do does. Starred items pin above the
   rest of the open ones, while the file keeps its own order.
+- Search across every project's titles, items and notes, saying where each
+  hit came from.
 - Per-item notes in markdown, with images pasted, dropped or picked from disk
   and stored in the repo.
 - Links between projects: type `[[` for a picker, or write a normal markdown
