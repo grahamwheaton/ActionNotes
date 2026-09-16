@@ -12,6 +12,11 @@ on:
         required: false
         default: ''
 
+# A release run is a pushed version tag, or a manual run naming a version.
+# Repeated rather than shared because Actions has no way to name an expression.
+env:
+  FLUTTER_SDK_VERSION: '3.47.4'
+
 jobs:
   check:
     name: Analyze and test
@@ -20,18 +25,20 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: ${{ env.FLUTTER_SDK_VERSION }}
           channel: stable
           cache: true
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
 
-  android:
-    name: Android APK
+  android-debug:
+    name: Android APK (debug)
     runs-on: ubuntu-latest
     needs: check
-    if: "!startsWith(github.ref, 'refs/tags/')"
+    # A release run builds a release APK instead, so this would be eight
+    # minutes of runner time producing something nobody installs.
+    if: "!(startsWith(github.ref, 'refs/tags/') || inputs.version != '')"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -40,15 +47,88 @@ jobs:
           java-version: '17'
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: ${{ env.FLUTTER_SDK_VERSION }}
           channel: stable
           cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
       - run: flutter pub get
       - run: flutter build apk --debug
       - uses: actions/upload-artifact@v4
         with:
           name: actionnotes-debug-apk
           path: build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+
+  android-release:
+    name: Android APK (release)
+    runs-on: ubuntu-latest
+    needs: check
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
+    env:
+      # Read at job level so the signing step's `if` can see whether the
+      # keystore secret is configured.
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_SDK_VERSION }}
+          channel: stable
+          cache: true
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+      - run: flutter pub get
+
+      - name: Set up release signing
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
+          # storeFile resolves relative to the app module directory.
+          {
+            echo "storeFile=upload-keystore.jks"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > android/key.properties
+
+      - run: flutter build apk --release
+
+      - name: Record whether it was signed
+        env:
+          TAG: ${{ inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+          mv build/app/outputs/flutter-apk/app-release.apk "actionnotes-$TAG.apk"
+          # The publish job cannot see this job's secrets context, so pass the
+          # answer along with the artifact.
+          test -f android/key.properties && echo signed > signing.txt || echo debug > signing.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: actionnotes-release-apk
+          path: |
+            actionnotes-*.apk
+            signing.txt
           if-no-files-found: error
 
   windows:
@@ -59,7 +139,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.47.4'
+          flutter-version: ${{ env.FLUTTER_SDK_VERSION }}
           channel: stable
           cache: true
       - run: flutter pub get
@@ -76,93 +156,47 @@ jobs:
           path: build/windows/x64/runner/Release/
           if-no-files-found: error
 
-  release:
+  publish:
     name: Publish release
     runs-on: ubuntu-latest
-    # The Windows build happens on a Windows runner, so this job takes it as an
-    # artifact rather than building it here.
-    needs: [check, windows]
-    # Either a pushed version tag, or a manual run that names a version. The
-    # manual path exists because pushing a tag needs push access to the repo,
-    # which a release-from-CI flow otherwise makes a prerequisite.
+    # Both builds run in parallel; this only collects and publishes them, so
+    # the slowest build sets the pace rather than the two in series.
+    needs: [android-release, windows]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
     permissions:
       contents: write
-    env:
-      # Read at job level so the signing step's `if` can see whether the
-      # keystore secret is configured.
-      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/download-artifact@v4
         with:
-          distribution: temurin
-          java-version: '17'
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.47.4'
-          channel: stable
-          cache: true
-      - run: flutter pub get
+          name: actionnotes-release-apk
+          path: apk
 
-      - name: Resolve the version
-        id: version
-        env:
-          TAG: ${{ inputs.version || github.ref_name }}
-        run: echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-
-      - name: Set up release signing
-        id: signing
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > android/app/upload-keystore.jks
-          # storeFile resolves relative to the app module directory.
-          {
-            echo "storeFile=upload-keystore.jks"
-            echo "storePassword=$KEYSTORE_PASSWORD"
-            echo "keyAlias=$KEY_ALIAS"
-            echo "keyPassword=$KEY_PASSWORD"
-          } > android/key.properties
-          echo "signed=true" >> "$GITHUB_OUTPUT"
-
-      - run: flutter build apk --release
-
-      - name: Name the APK after the version
-        env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          mv build/app/outputs/flutter-apk/app-release.apk "actionnotes-$TAG.apk"
-
-      - name: Fetch the Windows build
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: actionnotes-windows
           path: windows-build
 
-      - name: Package the Windows build
+      - name: Package the builds
+        id: package
         env:
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: ${{ inputs.version || github.ref_name }}
         run: |
           set -euo pipefail
           # actionnotes.exe needs its DLLs and data/ directory beside it, so
           # ship the whole folder rather than the executable on its own.
           test -f windows-build/actionnotes.exe
           (cd windows-build && zip -qr "../actionnotes-$TAG-windows.zip" .)
+          mv "apk/actionnotes-$TAG.apk" .
+          echo "signing=$(cat apk/signing.txt)" >> "$GITHUB_OUTPUT"
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.version.outputs.tag }}
-          SIGNED: ${{ steps.signing.outputs.signed }}
+          TAG: ${{ inputs.version || github.ref_name }}
+          SIGNING: ${{ steps.package.outputs.signing }}
         run: |
           set -euo pipefail
-          if [ "$SIGNED" = "true" ]; then
+          if [ "$SIGNING" = "signed" ]; then
             signing_note="Signed with the project's upload key, so it installs over a previous release."
           else
             signing_note="**Debug-signed.** No release keystore is configured, and CI generates a fresh debug key each run, so this APK will not install over another build — uninstall the old one first. See the README to set up signing."
