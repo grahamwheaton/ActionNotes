@@ -29,6 +29,35 @@ pasting one file — or by pointing the model at the repo.
 - Right-click (or long-press) an item or a project for star, notes, rename and
   delete.
 - Drag open items to reorder them, by the handle on the right.
+- When a project changes both on a device and on GitHub, the app says so and
+  offers a choice: keep yours, take GitHub's, or merge both.
+
+## When the same project changes in two places
+
+Edit a project on your phone while it also changes on GitHub — from the other
+device, the web editor, or a model — and the push is refused, because
+overwriting blindly would lose whichever change it did not know about.
+
+The app shows a bar naming the project with a **Resolve** button. It puts both
+versions side by side, with a preview of the merge, and offers three outcomes:
+
+| Choice | What happens |
+| --- | --- |
+| **Keep mine** | Your version is written over GitHub's. Theirs stays in the commit history. |
+| **Use GitHub's** | Your local edits are discarded and GitHub's version is taken. |
+| **Merge both** | Every item from either side is kept. |
+
+Merging matches items by their text, ignoring case. An item present on both
+sides is ticked if it was ticked anywhere, starred if it was starred anywhere,
+and if its notes differ both are kept with a `<!-- from GitHub -->` marker
+between them so you can tidy up. Because an item is identified only by its
+text, **an item you deleted on one device reappears if it is still on the
+other** — deletion is indistinguishable from never having existed without a
+history, and an item coming back is easier to notice and undo than one quietly
+disappearing. Choose *Keep mine* when you meant the deletions.
+
+Whichever you pick, the project ends up agreeing with GitHub and syncs
+normally again.
 
 Android and Windows both build in CI. Neither binary has been run by a human
 yet, so treat the first launch on each platform as untested.

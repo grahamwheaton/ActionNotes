@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../markdown/project_merge.dart';
 import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../storage/attachment_store.dart';
@@ -43,6 +44,7 @@ class AppState extends ChangeNotifier {
   bool _syncing = false;
   String? _message;
   String? _selectedSlug;
+  List<ProjectConflict> _conflicts = [];
 
   List<Project> get projects => List.unmodifiable(_projects);
   GitHubConfig get config => _config;
@@ -51,6 +53,16 @@ class AppState extends ChangeNotifier {
   String? get message => _message;
   bool get isConfigured => _config.isComplete;
   int get pendingCount => _projects.where((p) => p.dirty).length;
+
+  /// Projects that changed both here and on GitHub, awaiting a decision.
+  List<ProjectConflict> get conflicts => List.unmodifiable(_conflicts);
+
+  ProjectConflict? conflictFor(String slug) {
+    for (final conflict in _conflicts) {
+      if (conflict.slug == slug) return conflict;
+    }
+    return null;
+  }
 
   /// Which project the desktop layout is showing in its detail pane.
   String? get selectedSlug => _selectedSlug;
@@ -85,7 +97,34 @@ class AppState extends ChangeNotifier {
     final result = await _syncService.sync(_config);
     _projects = result.projects;
     _message = result.error;
+    _conflicts = result.conflicts;
     _syncing = false;
+    notifyListeners();
+  }
+
+  /// Settles a conflict and clears it, so the project can sync again.
+  Future<void> resolveConflict(
+    String slug,
+    ConflictResolution resolution,
+  ) async {
+    final conflict = conflictFor(slug);
+    if (conflict == null) return;
+
+    // Cancel any queued push; it would carry the stale SHA.
+    _pendingPushes.remove(slug)?.cancel();
+
+    final settled = await _syncService.resolve(_config, conflict, resolution);
+
+    _conflicts = _conflicts.where((c) => c.slug != slug).toList();
+    _projects = [
+      for (final project in _projects)
+        if (project.slug == slug) settled else project,
+    ]..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+
+    if (settled.dirty) {
+      _message = 'Resolved "${settled.title}" here, but the push has not gone '
+          'through yet — it will retry on the next sync.';
+    }
     notifyListeners();
   }
 

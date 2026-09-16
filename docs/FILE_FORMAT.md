@@ -96,6 +96,14 @@ once renders offline afterwards.
 - Anything the app does not understand in the front matter is round-tripped
   unchanged rather than dropped.
 
+## Conflicts
+
+Nothing in the format records which device wrote a file, so a project edited in
+two places is reconciled by content: items are matched on their text and the
+union is kept. That is the app's behaviour, not a property of the format — the
+files themselves are ordinary markdown, and a merge done by hand or by git is
+equally valid.
+
 ## Why this shape
 
 It is plain markdown, so GitHub renders it, Claude and ChatGPT can read a whole

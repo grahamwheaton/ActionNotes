@@ -3,7 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../models/project.dart';
 import '../state/app_state.dart';
+import '../storage/sync_service.dart';
 import 'checklist_view.dart';
+import 'conflict_dialog.dart';
 import 'context_menu.dart';
 import 'settings_screen.dart';
 import 'text_prompt.dart';
@@ -169,6 +171,8 @@ class ProjectSidebar extends StatelessWidget {
     return Column(
       children: [
         if (!pushOnTap) const _SidebarHeader(),
+        for (final conflict in state.conflicts)
+          _ConflictBar(conflict: conflict),
         if (state.message != null) _MessageBar(message: state.message!),
         if (!state.isConfigured) const _SetupPrompt(),
         Expanded(
@@ -387,6 +391,41 @@ class _SettingsAction extends StatelessWidget {
       icon: const Icon(Icons.settings_outlined),
       onPressed: () => Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => const SettingsScreen()),
+      ),
+    );
+  }
+}
+
+/// A conflict is a decision, not an error, so it gets an action rather than a
+/// dismiss button — dismissing would leave the project unable to sync.
+class _ConflictBar extends StatelessWidget {
+  const _ConflictBar({required this.conflict});
+
+  final ProjectConflict conflict;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Container(
+      width: double.infinity,
+      color: scheme.tertiaryContainer,
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+      child: Row(
+        children: [
+          Icon(Icons.merge_type, size: 18, color: scheme.onTertiaryContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '"${conflict.local.title}" changed here and on GitHub.',
+              style: TextStyle(color: scheme.onTertiaryContainer, fontSize: 13),
+            ),
+          ),
+          TextButton(
+            onPressed: () => ConflictDialog.show(context, conflict),
+            child: const Text('Resolve'),
+          ),
+        ],
       ),
     );
   }
