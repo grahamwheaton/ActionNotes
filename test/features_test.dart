@@ -552,6 +552,29 @@ void main() {
     });
   });
 
+  group('a long task title', () {
+    testWidgets('wraps instead of being cut off', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      const long = 'I want full markdown syntax on the note - at the moment '
+          'headers not working? I do not want a textbox and then a preview';
+
+      await state.createProject('List');
+      await state.addItem('list', long);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text(long));
+      await tester.pumpAndSettle();
+
+      final title = tester.widget<Text>(
+        find.descendant(of: find.byType(AppBar), matching: find.text(long)),
+      );
+
+      expect(title.maxLines, greaterThan(1));
+    });
+  });
+
   group('starred items pin to the top', () {
     testWidgets('a starred item is drawn above the unstarred ones',
         (tester) async {

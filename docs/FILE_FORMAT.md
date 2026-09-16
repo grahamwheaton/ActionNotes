@@ -85,6 +85,13 @@ referenced from notes **relatively** as
 what makes GitHub render the image when you view `projects/<slug>.md` in the
 browser.
 
+Images are re-encoded to PNG on the way in unless they already carry a sound
+format. This matters for pasting: the Windows clipboard hands over a
+device-independent bitmap, so a paste would otherwise store a multi-megabyte
+BMP under a `.png` name — which GitHub and Obsidian both refuse to render,
+since they go by the extension, and which appears upside down because a BMP's
+rows run bottom-up.
+
 Because the repo is usually private, the app cannot load these images by URL.
 It fetches them through the API and caches them on the device, so a note opened
 once renders offline afterwards.

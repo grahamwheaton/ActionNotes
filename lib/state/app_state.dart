@@ -7,6 +7,7 @@ import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../storage/attachment_store.dart';
 import '../storage/github_client.dart';
+import '../storage/image_encoder.dart';
 import '../storage/local_store.dart';
 import '../storage/settings_store.dart';
 import '../storage/sync_service.dart';
@@ -240,18 +241,21 @@ class AppState extends ChangeNotifier {
       }
     }
 
-    final name = AttachmentStore.uniqueFileName(fileName, taken);
+    // The clipboard hands over bitmaps on Windows, so normalise before
+    // naming: a file called .png has to actually be one.
+    final encoded = ImageEncoder.prepare(fileName, bytes);
+    final name = AttachmentStore.uniqueFileName(encoded.fileName, taken);
     final repoPath = AttachmentStore.repoPath(slug, name);
 
     final client = GitHubClient(_config);
     try {
       await client.writeBytes(
         path: repoPath,
-        bytes: bytes,
+        bytes: encoded.bytes,
         message: 'Add attachment $name to ${project.title}',
       );
       // Cache it so the note renders without a round trip.
-      await attachments.save(repoPath, bytes);
+      await attachments.save(repoPath, encoded.bytes);
       return '![$name](${AttachmentStore.markdownPath(slug, name)})';
     } on GitHubException catch (error) {
       _message = 'Could not upload the image: ${error.message}';

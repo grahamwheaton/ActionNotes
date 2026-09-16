@@ -160,7 +160,20 @@ class _NoteEditorState extends State<NoteEditor> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(widget.title, overflow: TextOverflow.ellipsis),
+          // A task title is a sentence more often than a label, so give it
+          // room to wrap instead of cutting it off mid-word.
+          toolbarHeight: 78,
+          title: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              widget.title,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
           actions: [
             IconButton(
               tooltip: 'Link to a project',

@@ -317,8 +317,19 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
   @override
   Widget build(BuildContext context) {
+    // A note is prose, so it gets a readable measure rather than running the
+    // full width of a desktop window.
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: _buildList(),
+      ),
+    );
+  }
+
+  Widget _buildList() {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
       itemCount: _rows.length,
       itemBuilder: (context, index) {
         final row = _rows[index];
@@ -466,8 +477,8 @@ class _TextBlock extends StatelessWidget {
 
     return Padding(
       padding: EdgeInsets.only(
-        top: row.block.type == NoteBlockType.heading ? 14 : 2,
-        bottom: 2,
+        top: row.block.type == NoteBlockType.heading ? 12 : 1,
+        bottom: 1,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -475,10 +486,10 @@ class _TextBlock extends StatelessWidget {
           _ParagraphButton(row: row, onSetType: onSetType),
           if (isBullet)
             Padding(
-              padding: const EdgeInsets.only(top: 6, right: 8, left: 4),
+              padding: const EdgeInsets.only(top: 9, right: 8),
               child: Icon(
                 Icons.circle,
-                size: 6,
+                size: 5,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
@@ -565,7 +576,7 @@ class _ParagraphButton extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Padding(
-      padding: const EdgeInsets.only(top: 4, right: 4),
+      padding: const EdgeInsets.only(top: 2, right: 2),
       child: Builder(
         builder: (buttonContext) => InkWell(
           borderRadius: BorderRadius.circular(6),
@@ -580,14 +591,16 @@ class _ParagraphButton extends StatelessWidget {
             if (kind != null) onSetType(kind);
           },
           child: SizedBox(
-            width: 28,
-            height: 26,
+            width: 26,
+            height: 28,
             child: Center(
               child: Text(
                 _label,
                 style: theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.outline,
-                  fontWeight: FontWeight.w700,
+                  // Quiet enough to ignore while reading, close enough to
+                  // reach for. The screenshot had these shouting.
+                  color: theme.colorScheme.outlineVariant,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
@@ -638,29 +651,47 @@ class _ImageBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Stack(
-        alignment: Alignment.topRight,
-        children: [
-          // Reuses the note renderer, so an image resolves from the same
-          // attachment cache here as it does in a rendered note.
-          NoteView(
-            markdown: '![${block.imageAlt}](${block.imagePath})',
-            selectable: false,
-            onOpenProject: onOpenProject,
+      padding: const EdgeInsets.only(left: 32, top: 8, bottom: 8),
+      child: Align(
+        // Without this the image floated to the right: a Stack aligns its
+        // non-positioned children too, so topRight moved the picture as well
+        // as the button.
+        alignment: Alignment.centerLeft,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 340),
+          child: Stack(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                // Reuses the note renderer, so an image resolves from the
+                // same attachment cache here as in a rendered note.
+                child: NoteView(
+                  markdown: '![${block.imageAlt}](${block.imagePath})',
+                  selectable: false,
+                  onOpenProject: onOpenProject,
+                ),
+              ),
+              Positioned(
+                top: 4,
+                right: 4,
+                child: Material(
+                  color: theme.colorScheme.surface.withValues(alpha: 0.85),
+                  shape: const CircleBorder(),
+                  child: IconButton(
+                    tooltip: 'Remove image',
+                    iconSize: 16,
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.close),
+                    onPressed: onRemove,
+                  ),
+                ),
+              ),
+            ],
           ),
-          Material(
-            color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.8),
-            shape: const CircleBorder(),
-            child: IconButton(
-              tooltip: 'Remove image',
-              iconSize: 18,
-              icon: const Icon(Icons.close),
-              onPressed: onRemove,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
