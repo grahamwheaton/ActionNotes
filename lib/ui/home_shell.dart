@@ -315,6 +315,16 @@ class _ProjectTile extends StatelessWidget {
     final total = project.items.length;
     final open = total - project.doneCount;
 
+    // The phone list is the whole screen, so it gets a size to match the
+    // apps it sits beside; the desktop sidebar stays compact.
+    final titleStyle = pushOnTap
+        ? theme.textTheme.titleMedium?.copyWith(
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+          )
+        : theme.textTheme.bodyMedium?.copyWith(
+            fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          );
+
     return ItemContextMenu(
       actions: [
         ContextMenuAction(
@@ -358,23 +368,23 @@ class _ProjectTile extends StatelessWidget {
               }
             },
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: pushOnTap ? 16 : 10,
+              ),
               child: Row(
                 children: [
                   Icon(
                     Icons.checklist,
-                    size: 18,
+                    size: pushOnTap ? 22 : 18,
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
-                  const SizedBox(width: 12),
+                  SizedBox(width: pushOnTap ? 16 : 12),
                   Expanded(
                     child: Text(
                       project.title,
                       overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight:
-                            selected ? FontWeight.w600 : FontWeight.w400,
-                      ),
+                      style: titleStyle,
                     ),
                   ),
                   if (project.dirty)
@@ -389,9 +399,10 @@ class _ProjectTile extends StatelessWidget {
                   else if (open > 0)
                     Text(
                       '$open',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
+                      style: (pushOnTap
+                              ? theme.textTheme.bodyLarge
+                              : theme.textTheme.bodySmall)
+                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                     ),
                 ],
               ),

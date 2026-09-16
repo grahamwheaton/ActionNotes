@@ -1,38 +1,11 @@
-import 'package:actionnotes/models/project.dart';
 import 'package:actionnotes/state/app_state.dart';
-import 'package:actionnotes/storage/github_client.dart';
-import 'package:actionnotes/storage/local_store.dart';
-import 'package:actionnotes/storage/settings_store.dart';
-import 'package:actionnotes/storage/sync_service.dart';
 import 'package:actionnotes/ui/home_shell.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-/// Keeps projects in memory so the UI can be driven without a filesystem.
-class FakeLocalStore implements LocalStore {
-  final Map<String, Project> saved = {};
-
-  @override
-  Future<List<Project>> loadAll() async => saved.values.toList();
-
-  @override
-  Future<void> save(Project project) async => saved[project.slug] = project;
-
-  @override
-  Future<void> delete(String slug) async => saved.remove(slug);
-}
-
-/// Reports no repo configured, so nothing tries to reach the network.
-class FakeSettingsStore implements SettingsStore {
-  @override
-  Future<GitHubConfig> load() async =>
-      const GitHubConfig(owner: '', repo: '', branch: 'main', token: '');
-
-  @override
-  Future<void> save(GitHubConfig config) async {}
-}
+import 'support/fakes.dart';
 
 Future<AppState> pumpApp(
   WidgetTester tester,
@@ -43,11 +16,7 @@ Future<AppState> pumpApp(
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 
-  final state = AppState(
-    localStore: store,
-    settingsStore: FakeSettingsStore(),
-    syncService: SyncService(localStore: store),
-  );
+  final state = newTestState(store);
 
   await tester.pumpWidget(
     ChangeNotifierProvider.value(
@@ -118,9 +87,7 @@ void main() {
     final state = await pumpApp(tester, store);
 
     await state.createProject('Packing');
-    for (final item in ['Socks', 'Shirts', 'Shoes']) {
-      await state.addItem('packing', item);
-    }
+    await addItemsInOrder(state, 'packing', ['Socks', 'Shirts', 'Shoes']);
 
     // Drag the first item to the end, as onReorderItem reports it.
     await state.reorderSlots('packing', [0, 1, 2], 0, 2);

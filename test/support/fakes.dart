@@ -40,6 +40,19 @@ class FakeSettingsStore implements SettingsStore {
   Future<void> save(GitHubConfig config) async {}
 }
 
+/// Adds items so the project reads in this order, top first.
+///
+/// addItem puts new items at the top, so they go in bottom-up.
+Future<void> addItemsInOrder(
+  AppState state,
+  String slug,
+  List<String> texts,
+) async {
+  for (final text in texts.reversed) {
+    await state.addItem(slug, text);
+  }
+}
+
 AppState newTestState(
   FakeLocalStore store, {
   GitHubConfig? config,

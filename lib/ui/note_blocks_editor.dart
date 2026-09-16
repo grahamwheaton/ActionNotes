@@ -329,7 +329,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
   Widget _buildList() {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
       itemCount: _rows.length,
       itemBuilder: (context, index) {
         final row = _rows[index];
@@ -591,7 +591,7 @@ class _ParagraphButton extends StatelessWidget {
             if (kind != null) onSetType(kind);
           },
           child: SizedBox(
-            width: 26,
+            width: 22,
             height: 28,
             child: Center(
               child: Text(
@@ -654,7 +654,7 @@ class _ImageBlock extends StatelessWidget {
     final theme = Theme.of(context);
 
     return Padding(
-      padding: const EdgeInsets.only(left: 32, top: 8, bottom: 8),
+      padding: const EdgeInsets.only(left: 24, top: 8, bottom: 8),
       child: Align(
         // Without this the image floated to the right: a Stack aligns its
         // non-positioned children too, so topRight moved the picture as well

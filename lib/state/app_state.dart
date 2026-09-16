@@ -182,10 +182,12 @@ class AppState extends ChangeNotifier {
   Future<void> renameProject(String slug, String title) =>
       _mutate(slug, (project) => project.copyWith(title: title.trim()));
 
+  /// Adds an item at the top, where it can be seen — the list is read
+  /// newest-first, and the file keeps that same order.
   Future<void> addItem(String slug, String text) => _mutate(
         slug,
         (project) => project.copyWith(
-          items: [...project.items, ChecklistItem(text: text.trim())],
+          items: [ChecklistItem(text: text.trim()), ...project.items],
         ),
       );
 

@@ -22,7 +22,7 @@ pasting one file — or by pointing the model at the repo.
 - Project sidebar on wide windows, pushed screens on a phone — one layout,
   two shapes.
 - Checklists group open items first, with completed ones collapsed under a
-  header at the bottom.
+  header at the bottom. New items are added at the top.
 - Star any item, the way Microsoft To Do does. Starred items pin above the
   rest of the open ones, while the file keeps its own order.
 - Per-item notes in markdown, with images pasted, dropped or picked from disk
@@ -97,6 +97,15 @@ normally again.
 
 Android and Windows both build in CI. Neither binary has been run by a human
 yet, so treat the first launch on each platform as untested.
+
+## Working with the notes repo
+
+Claude keeps the action list in the notes repo current while working on the
+app: it may add items and tick them off, but never delete one. Removing an
+item is the owner's call, so an item Claude thinks is unnecessary stays on the
+list with its reasoning noted instead of quietly disappearing. The notes
+repo's own README records the same agreement, where anyone reading those files
+will see it.
 
 ## Setup
 

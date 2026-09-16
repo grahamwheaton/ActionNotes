@@ -39,9 +39,7 @@ void main() {
       final state = await pumpShell(tester, store);
 
       await state.createProject('MY TODO');
-      for (final text in ['Quote brick undersides', 'Reception', 'Bedrooms']) {
-        await state.addItem('my-todo', text);
-      }
+      await addItemsInOrder(state, 'my-todo', ['Quote brick undersides', 'Reception', 'Bedrooms']);
       await state.toggleItem('my-todo', 1);
       await state.toggleItem('my-todo', 2);
       await tester.pumpAndSettle();
@@ -91,9 +89,7 @@ void main() {
       final state = await pumpShell(tester, store);
 
       await state.createProject('List');
-      for (final text in ['First', 'Second', 'Third']) {
-        await state.addItem('list', text);
-      }
+      await addItemsInOrder(state, 'list', ['First', 'Second', 'Third']);
       // Complete the middle one, so the view order no longer matches the file.
       await state.toggleItem('list', 1);
       await tester.pumpAndSettle();
@@ -135,9 +131,7 @@ void main() {
       await state.init();
 
       await state.createProject('List');
-      for (final text in ['A', 'B', 'C', 'D']) {
-        await state.addItem('list', text);
-      }
+      await addItemsInOrder(state, 'list', ['A', 'B', 'C', 'D']);
       // B and D complete, so open items are A (slot 0) and C (slot 2).
       await state.toggleItem('list', 1);
       await state.toggleItem('list', 3);
@@ -156,9 +150,7 @@ void main() {
       await state.init();
 
       await state.createProject('List');
-      for (final text in ['A', 'B', 'C']) {
-        await state.addItem('list', text);
-      }
+      await addItemsInOrder(state, 'list', ['A', 'B', 'C']);
 
       await state.reorderSlots('list', [0, 1, 2], 0, 2);
 
@@ -552,6 +544,34 @@ void main() {
     });
   });
 
+  group('new items', () {
+    testWidgets('go to the top of the list, not the bottom', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+      await state.createProject('List');
+      await tester.pumpAndSettle();
+
+      for (final text in ['Oldest', 'Middle', 'Newest']) {
+        await tester.enterText(
+          find.widgetWithText(TextField, 'Add an item'),
+          text,
+        );
+        await tester.tap(find.byTooltip('Add item'));
+        await tester.pumpAndSettle();
+      }
+
+      // Newest first, in the file as well as on screen.
+      expect(
+        store.saved['list']!.items.map((i) => i.text),
+        ['Newest', 'Middle', 'Oldest'],
+      );
+      expect(
+        tester.getTopLeft(find.text('Newest')).dy,
+        lessThan(tester.getTopLeft(find.text('Oldest')).dy),
+      );
+    });
+  });
+
   group('a long task title', () {
     testWidgets('wraps instead of being cut off', (tester) async {
       final store = FakeLocalStore();
@@ -582,9 +602,7 @@ void main() {
       final state = await pumpShell(tester, store);
 
       await state.createProject('List');
-      for (final text in ['First', 'Second', 'Third']) {
-        await state.addItem('list', text);
-      }
+      await addItemsInOrder(state, 'list', ['First', 'Second', 'Third']);
       await state.toggleStar('list', 2);
       await tester.pumpAndSettle();
 
@@ -598,9 +616,7 @@ void main() {
       final state = await pumpShell(tester, store);
 
       await state.createProject('List');
-      for (final text in ['First', 'Second', 'Third']) {
-        await state.addItem('list', text);
-      }
+      await addItemsInOrder(state, 'list', ['First', 'Second', 'Third']);
       await state.toggleStar('list', 2);
       await tester.pumpAndSettle();
 
@@ -616,8 +632,7 @@ void main() {
       final state = await pumpShell(tester, store);
 
       await state.createProject('List');
-      await state.addItem('list', 'First');
-      await state.addItem('list', 'Second');
+      await addItemsInOrder(state, 'list', ['First', 'Second']);
       await state.toggleStar('list', 1);
       await tester.pumpAndSettle();
 
@@ -641,9 +656,7 @@ void main() {
       await state.init();
 
       await state.createProject('List');
-      for (final text in ['A', 'B', 'C', 'D']) {
-        await state.addItem('list', text);
-      }
+      await addItemsInOrder(state, 'list', ['A', 'B', 'C', 'D']);
       await state.toggleStar('list', 1); // B starred
       await state.toggleStar('list', 3); // D starred
 

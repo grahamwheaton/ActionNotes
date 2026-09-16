@@ -238,7 +238,10 @@ class _NoteEditorState extends State<NoteEditor> {
         _onDrop(details);
       },
       child: Container(
-        margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+        // Barely any horizontal inset: the block gutter already indents the
+        // text, and stacking margins on top of it pushed notes well clear of
+        // the edge on a phone.
+        margin: const EdgeInsets.fromLTRB(2, 4, 2, 0),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
