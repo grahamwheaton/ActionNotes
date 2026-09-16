@@ -2,6 +2,8 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <string>
+
 #include "flutter_window.h"
 #include "utils.h"
 
@@ -27,7 +29,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"actionnotes", origin, size)) {
+
+  // FLUTTER_VERSION comes from pubspec.yaml by way of CMake, so the title bar
+  // reports the running version without a second place to keep it in step.
+  std::wstring title = L"ActionNotes";
+#ifdef FLUTTER_VERSION
+  const std::string version(FLUTTER_VERSION);
+  title += L" " + std::wstring(version.begin(), version.end());
+#endif
+
+  if (!window.Create(title, origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

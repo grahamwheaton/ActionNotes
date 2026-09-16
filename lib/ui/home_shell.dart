@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../models/project.dart';
@@ -134,7 +135,11 @@ class _SinglePaneLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Projects'),
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [Text('ActionNotes'), AppVersionLabel()],
+        ),
         actions: const [_SyncAction(), _SettingsAction()],
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -209,15 +214,64 @@ class _SidebarHeader extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              'ActionNotes',
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w700),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'ActionNotes',
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700),
+                ),
+                const AppVersionLabel(),
+              ],
             ),
           ),
           const _SyncAction(),
           const _SettingsAction(),
         ],
+      ),
+    );
+  }
+}
+
+/// The running version, read from the package rather than a second constant
+/// that could drift from pubspec. Shows nothing until it resolves, and stays
+/// empty if it cannot be read, so it never blocks the header.
+class AppVersionLabel extends StatefulWidget {
+  const AppVersionLabel({super.key});
+
+  @override
+  State<AppVersionLabel> createState() => _AppVersionLabelState();
+}
+
+class _AppVersionLabelState extends State<AppVersionLabel> {
+  String? _version;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      if (mounted) setState(() => _version = info.version);
+    } catch (_) {
+      // Not worth surfacing; the label simply stays absent.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final version = _version;
+    if (version == null) return const SizedBox.shrink();
+
+    final theme = Theme.of(context);
+    return Text(
+      'v$version',
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
       ),
     );
   }

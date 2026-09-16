@@ -288,12 +288,33 @@ void main() {
       expect(find.text('Alpha item'), findsNothing);
     });
 
-    testWidgets('a narrow window shows no sidebar chrome', (tester) async {
+    testWidgets('a narrow window uses the phone layout, not two panes',
+        (tester) async {
       final store = FakeLocalStore();
-      await pumpShell(tester, store, size: const Size(420, 900));
+      final state = await pumpShell(tester, store, size: const Size(420, 900));
 
-      expect(find.text('Projects'), findsOneWidget);
-      expect(find.text('ActionNotes'), findsNothing);
+      await state.createProject('Alpha');
+      await state.addItem('alpha', 'Alpha item');
+      await tester.pumpAndSettle();
+
+      // The phone layout offers a floating New project button and shows the
+      // list alone — the checklist arrives as a pushed screen.
+      expect(find.byType(FloatingActionButton), findsOneWidget);
+      expect(find.text('Alpha'), findsOneWidget);
+      expect(find.text('Alpha item'), findsNothing);
+    });
+
+    testWidgets('a wide window shows a detail pane and no floating button',
+        (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('Alpha');
+      await state.addItem('alpha', 'Alpha item');
+      await tester.pumpAndSettle();
+
+      expect(find.byType(FloatingActionButton), findsNothing);
+      expect(find.text('Alpha item'), findsOneWidget);
     });
   });
 
@@ -329,6 +350,129 @@ void main() {
 
       expect(find.byIcon(Icons.image_outlined), findsOneWidget);
       expect(find.text('Save'), findsOneWidget);
+    });
+  });
+
+  group('leaving the note editor', () {
+    Future<AppState> openNote(
+      WidgetTester tester,
+      FakeLocalStore store, {
+      Size size = const Size(1280, 900),
+    }) async {
+      final state = await pumpShell(tester, store, size: size);
+      await state.createProject('List');
+      await state.addItem('list', 'Quote doors');
+      await tester.pumpAndSettle();
+
+      // On a phone the checklist is a pushed screen, not a detail pane.
+      if (size.width < 720) {
+        await tester.tap(find.text('List'));
+        await tester.pumpAndSettle();
+      }
+
+      await tester.tap(find.text('Quote doors'));
+      await tester.pumpAndSettle();
+      return state;
+    }
+
+    testWidgets('pressing back saves the note', (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store);
+
+      await tester.enterText(find.byType(TextField).first, 'Typed then back.');
+      await tester.pumpAndSettle();
+
+      // The app bar's back arrow, the thing a person actually presses.
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+
+      expect(store.saved['list']!.items.single.notes, 'Typed then back.');
+    });
+
+    testWidgets('the system back gesture saves too', (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store, size: const Size(420, 900));
+
+      await tester.enterText(find.byType(TextField).first, 'Android back.');
+      await tester.pumpAndSettle();
+
+      // What Android's back gesture delivers to the engine.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+
+      expect(store.saved['list']!.items.single.notes, 'Android back.');
+    });
+
+    testWidgets('Save still closes and writes', (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store);
+
+      await tester.enterText(find.byType(TextField).first, 'Saved.');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(store.saved['list']!.items.single.notes, 'Saved.');
+      expect(find.text('Quote doors'), findsWidgets);
+    });
+
+    testWidgets('leaving an untouched note writes nothing', (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store);
+
+      final before = store.saved['list']!.updated;
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+
+      // No edit means no new revision, so nothing to push.
+      expect(store.saved['list']!.updated, before);
+      expect(store.saved['list']!.items.single.notes, isEmpty);
+    });
+  });
+
+  group('markdown preview', () {
+    testWidgets('a wide editor shows the preview beside the text',
+        (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+      await state.createProject('List');
+      await state.addItem('list', 'Item');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Item'));
+      await tester.pumpAndSettle();
+
+      // No toggle is offered, because both panes are already visible.
+      expect(find.byIcon(Icons.visibility_outlined), findsNothing);
+
+      await tester.enterText(find.byType(TextField).first, '# A heading');
+      await tester.pumpAndSettle();
+
+      // The preview renders as you type, without a save or a toggle.
+      expect(find.text('A heading'), findsOneWidget);
+    });
+
+    testWidgets('a narrow editor keeps the preview toggle', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store, size: const Size(420, 900));
+      await state.createProject('List');
+      await state.addItem('list', 'Item');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('List'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Item'));
+      await tester.pumpAndSettle();
+
+      expect(find.byIcon(Icons.visibility_outlined), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).first, '# A heading');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.visibility_outlined));
+      await tester.pumpAndSettle();
+
+      expect(find.text('A heading'), findsOneWidget);
     });
   });
 

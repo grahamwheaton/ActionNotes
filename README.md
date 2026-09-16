@@ -43,11 +43,14 @@ An item's notes are a markdown document. In the editor:
 - **Paste an image** with Ctrl+V and it uploads to `attachments/` and appears
   inline. Pasting text still pastes text.
 - **Drop an image file** onto the editor on the desktop to do the same.
-- **Preview** toggles the rendered view, where project links are tappable.
+- **A wide window shows the preview beside the editor**, updating as you type.
+  Narrow windows keep a toggle instead, since there is no room for two panes.
+- **Leaving saves.** Back — the arrow or Android's system back — writes the
+  note, as does Save. Only an unchanged note writes nothing.
 
-What this is not: Obsidian's live preview, where markdown renders as you type.
-This is a plain editor with a preview toggle. Backlinks, tags and the graph
-view are not here either.
+What this is not: Obsidian's live preview, where the text itself renders in
+place as you type. Here the rendering happens in the pane beside it. Backlinks,
+tags and the graph view are not here either.
 
 ## When the same project changes in two places
 

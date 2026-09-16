@@ -63,18 +63,27 @@ class _NoteEditorState extends State<NoteEditor> {
   bool _pickerOpen = false;
   String _lastText = '';
 
+  /// Below this width there is no room for editor and preview side by side.
+  static const _splitBreakpoint = 900.0;
+
   @override
   void initState() {
     super.initState();
     _lastText = _controller.text;
-    _controller.addListener(_watchForWikilink);
+    _controller.addListener(_onTextChanged);
   }
 
   @override
   void dispose() {
-    _controller.removeListener(_watchForWikilink);
+    _controller.removeListener(_onTextChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    _watchForWikilink();
+    // Keeps a side-by-side preview in step with what is being typed.
+    if (mounted) setState(() {});
   }
 
   /// Typing `[[`, as in Obsidian, opens the project picker.
@@ -115,13 +124,20 @@ class _NoteEditorState extends State<NoteEditor> {
     _lastText = _controller.text;
   }
 
-  Future<void> _save() async {
+  /// Writes the note. Called by Save and by leaving the screen, so a note is
+  /// never lost to pressing back.
+  Future<void> _persist() async {
     final state = context.read<AppState>();
     // Rewrite any wikilinks that survived into portable markdown, so the file
     // stays readable on GitHub.
     final notes = ProjectLinks.normalize(_controller.text, state.projects);
 
+    if (notes == widget.initialNotes) return;
     await state.setItemNotes(widget.slug, widget.index, notes);
+  }
+
+  Future<void> _saveAndClose() async {
+    await _persist();
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -211,6 +227,19 @@ class _NoteEditorState extends State<NoteEditor> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    return PopScope(
+      // Back — the app bar arrow, or Android's system back — saves rather
+      // than discarding, which is what writing a note then leaving implies.
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        await _saveAndClose();
+      },
+      child: _buildScaffold(theme),
+    );
+  }
+
+  Widget _buildScaffold(ThemeData theme) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title, overflow: TextOverflow.ellipsis),
@@ -225,15 +254,22 @@ class _NoteEditorState extends State<NoteEditor> {
             icon: const Icon(Icons.image_outlined),
             onPressed: _busy || _preview ? null : _pickImage,
           ),
-          IconButton(
-            tooltip: _preview ? 'Edit' : 'Preview',
-            icon:
-                Icon(_preview ? Icons.edit_outlined : Icons.visibility_outlined),
-            onPressed: () => setState(() => _preview = !_preview),
-          ),
+          // A split view already shows the preview, so the toggle is only
+          // meaningful when there is room for one pane.
+          if (MediaQuery.sizeOf(context).width < _splitBreakpoint)
+            IconButton(
+              tooltip: _preview ? 'Edit' : 'Preview',
+              icon: Icon(
+                _preview ? Icons.edit_outlined : Icons.visibility_outlined,
+              ),
+              onPressed: () => setState(() => _preview = !_preview),
+            ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: TextButton(onPressed: _save, child: const Text('Save')),
+            child: TextButton(
+              onPressed: _saveAndClose,
+              child: const Text('Save'),
+            ),
           ),
         ],
       ),
@@ -241,14 +277,46 @@ class _NoteEditorState extends State<NoteEditor> {
         children: [
           if (_busy) const LinearProgressIndicator(),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: _preview ? _buildPreview(theme) : _buildEditor(theme),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final split = constraints.maxWidth >= _splitBreakpoint;
+
+                return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: split
+                      ? _buildSplit(theme)
+                      : _preview
+                          ? _buildPreview(theme)
+                          : _buildEditor(theme),
+                );
+              },
             ),
           ),
           _Hint(preview: _preview),
         ],
       ),
+    );
+  }
+
+  /// Editor and rendered preview side by side, updating as you type.
+  Widget _buildSplit(ThemeData theme) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: _buildEditor(theme)),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: theme.colorScheme.outlineVariant),
+            ),
+            child: _buildPreview(theme),
+          ),
+        ),
+      ],
     );
   }
 
@@ -263,9 +331,12 @@ class _NoteEditorState extends State<NoteEditor> {
             )
           : NoteView(
               markdown: _controller.text,
-              onOpenProject: (slug) {
+              onOpenProject: (slug) async {
                 // Leave the note before switching, so the editor is not left
-                // pointing at an item in another project.
+                // pointing at an item in another project — saving on the way
+                // out, as leaving by any other route does.
+                await _persist();
+                if (!mounted) return;
                 context.read<AppState>().select(slug);
                 Navigator.of(context).pop();
               },
@@ -336,7 +407,7 @@ class _Hint extends StatelessWidget {
           child: Text(
             preview
                 ? 'Tap a project link to open it.'
-                : 'Type [[ to link a project · paste or drop an image to attach it',
+                : 'Type [[ to link a project · paste or drop an image · back saves',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
