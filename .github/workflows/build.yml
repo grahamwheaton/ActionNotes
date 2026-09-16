@@ -219,9 +219,12 @@ jobs:
           beside it. Windows may warn about an unrecognised app, as the build
           is not code-signed.
           EOF
+          # --repo because this job checks nothing out, so gh has no git
+          # remote to infer the repository from.
           # --target matters on a manual run, where the tag does not exist yet
           # and would otherwise be created at the default branch's head.
           gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "ActionNotes $TAG" \
             --notes-file notes.md \
