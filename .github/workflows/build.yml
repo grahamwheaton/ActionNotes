@@ -58,25 +58,39 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
       - run: flutter pub get
-      # A plugin builds native code through JNI, so Gradle downloads CMake
-      # mid-build. That download arrived corrupt once and failed the release
-      # four minutes in, so install it up front where a bad download can be
-      # retried instead of taking the build down with it.
-      - name: Install the CMake the native build needs
+      # A plugin builds native code through JNI, so Gradle installs
+      # cmake;3.22.1 itself during the build. That has worked on every release
+      # but one, where the download arrived corrupt and failed the build four
+      # minutes in. Warming it here makes that retryable — but only as a
+      # courtesy: if this cannot do it, Gradle still tries as before, so the
+      # step warns rather than failing and never becomes a new way to break
+      # the build.
+      - name: Pre-install the native build's CMake
+        continue-on-error: true
         run: |
           set -uo pipefail
-          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          manager="$sdk/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$manager" ] || manager="$(command -v sdkmanager || true)"
+
+          if [ -z "$manager" ] || [ ! -x "$manager" ]; then
+            echo "::warning::No sdkmanager found; leaving CMake to Gradle"
+            exit 0
+          fi
+
           for attempt in 1 2 3; do
-            if yes | "$sdkmanager" 'cmake;3.22.1' >/dev/null 2>&1; then
-              echo "CMake installed on attempt $attempt"
+            # Output is deliberately not silenced: the first version of this
+            # step hid the reason it was failing.
+            if printf 'y\n' | "$manager" 'cmake;3.22.1'; then
+              echo "CMake ready after attempt $attempt"
               exit 0
             fi
-            echo "Attempt $attempt failed; clearing any partial download"
-            rm -rf "$ANDROID_HOME/cmake/3.22.1" "$HOME/.android/cache"
+            echo "::warning::sdkmanager attempt $attempt failed"
+            rm -rf "$sdk/cmake/3.22.1"
             sleep $((attempt * 5))
           done
-          echo 'Could not install cmake;3.22.1' >&2
-          exit 1
+
+          echo "::warning::Could not pre-install CMake; leaving it to Gradle"
 
       - run: flutter build apk --debug
       - uses: actions/upload-artifact@v4
@@ -114,25 +128,39 @@ jobs:
           restore-keys: gradle-${{ runner.os }}-
       - run: flutter pub get
 
-      # A plugin builds native code through JNI, so Gradle downloads CMake
-      # mid-build. That download arrived corrupt once and failed the release
-      # four minutes in, so install it up front where a bad download can be
-      # retried instead of taking the build down with it.
-      - name: Install the CMake the native build needs
+      # A plugin builds native code through JNI, so Gradle installs
+      # cmake;3.22.1 itself during the build. That has worked on every release
+      # but one, where the download arrived corrupt and failed the build four
+      # minutes in. Warming it here makes that retryable — but only as a
+      # courtesy: if this cannot do it, Gradle still tries as before, so the
+      # step warns rather than failing and never becomes a new way to break
+      # the build.
+      - name: Pre-install the native build's CMake
+        continue-on-error: true
         run: |
           set -uo pipefail
-          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          manager="$sdk/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$manager" ] || manager="$(command -v sdkmanager || true)"
+
+          if [ -z "$manager" ] || [ ! -x "$manager" ]; then
+            echo "::warning::No sdkmanager found; leaving CMake to Gradle"
+            exit 0
+          fi
+
           for attempt in 1 2 3; do
-            if yes | "$sdkmanager" 'cmake;3.22.1' >/dev/null 2>&1; then
-              echo "CMake installed on attempt $attempt"
+            # Output is deliberately not silenced: the first version of this
+            # step hid the reason it was failing.
+            if printf 'y\n' | "$manager" 'cmake;3.22.1'; then
+              echo "CMake ready after attempt $attempt"
               exit 0
             fi
-            echo "Attempt $attempt failed; clearing any partial download"
-            rm -rf "$ANDROID_HOME/cmake/3.22.1" "$HOME/.android/cache"
+            echo "::warning::sdkmanager attempt $attempt failed"
+            rm -rf "$sdk/cmake/3.22.1"
             sleep $((attempt * 5))
           done
-          echo 'Could not install cmake;3.22.1' >&2
-          exit 1
+
+          echo "::warning::Could not pre-install CMake; leaving it to Gradle"
 
       - name: Set up release signing
         if: env.ANDROID_KEYSTORE_BASE64 != ''
