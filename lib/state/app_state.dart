@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/checklist_item.dart';
 import '../models/project.dart';
+import '../storage/attachment_store.dart';
 import '../storage/github_client.dart';
 import '../storage/local_store.dart';
 import '../storage/settings_store.dart';
@@ -18,8 +19,10 @@ class AppState extends ChangeNotifier {
     LocalStore? localStore,
     SettingsStore? settingsStore,
     SyncService? syncService,
+    AttachmentStore? attachmentStore,
   })  : _localStore = localStore ?? LocalStore(),
-        _settingsStore = settingsStore ?? SettingsStore() {
+        _settingsStore = settingsStore ?? SettingsStore(),
+        attachments = attachmentStore ?? AttachmentStore() {
     _syncService = syncService ?? SyncService(localStore: _localStore);
   }
 
@@ -27,6 +30,9 @@ class AppState extends ChangeNotifier {
 
   final LocalStore _localStore;
   final SettingsStore _settingsStore;
+
+  /// Exposed so note rendering can resolve image references.
+  final AttachmentStore attachments;
   late final SyncService _syncService;
 
   final Map<String, Timer> _pendingPushes = {};
@@ -36,6 +42,7 @@ class AppState extends ChangeNotifier {
   bool _loading = true;
   bool _syncing = false;
   String? _message;
+  String? _selectedSlug;
 
   List<Project> get projects => List.unmodifiable(_projects);
   GitHubConfig get config => _config;
@@ -44,6 +51,15 @@ class AppState extends ChangeNotifier {
   String? get message => _message;
   bool get isConfigured => _config.isComplete;
   int get pendingCount => _projects.where((p) => p.dirty).length;
+
+  /// Which project the desktop layout is showing in its detail pane.
+  String? get selectedSlug => _selectedSlug;
+
+  void select(String? slug) {
+    if (_selectedSlug == slug) return;
+    _selectedSlug = slug;
+    notifyListeners();
+  }
 
   Project? projectBySlug(String slug) {
     for (final project in _projects) {
@@ -146,18 +162,97 @@ class AppState extends ChangeNotifier {
         return project.copyWith(items: items);
       });
 
+  Future<void> toggleStar(String slug, int index) => _mutate(slug, (project) {
+        final items = [...project.items];
+        items[index] = items[index].copyWith(starred: !items[index].starred);
+        return project.copyWith(items: items);
+      });
+
+  Future<void> setItemNotes(String slug, int index, String notes) =>
+      _mutate(slug, (project) {
+        final items = [...project.items];
+        items[index] = items[index].copyWith(notes: notes.trim());
+        return project.copyWith(items: items);
+      });
+
+  /// Uploads [bytes] as an attachment on [slug] and returns the markdown
+  /// reference to paste into a note, or null with a message set on failure.
+  Future<String?> attachImage(
+    String slug, {
+    required String fileName,
+    required List<int> bytes,
+  }) async {
+    if (!_config.isComplete) {
+      _message = 'Connect a GitHub repo in Settings before attaching images.';
+      notifyListeners();
+      return null;
+    }
+
+    final project = projectBySlug(slug);
+    if (project == null) return null;
+
+    // Names already referenced by this project's notes, so a second upload of
+    // the same filename does not overwrite the first.
+    final taken = <String>{};
+    for (final item in project.items) {
+      for (final match
+          in RegExp(r'attachments/[^/]+/([^)\s]+)').allMatches(item.notes)) {
+        taken.add(match.group(1)!);
+      }
+    }
+
+    final name = AttachmentStore.uniqueFileName(fileName, taken);
+    final repoPath = AttachmentStore.repoPath(slug, name);
+
+    final client = GitHubClient(_config);
+    try {
+      await client.writeBytes(
+        path: repoPath,
+        bytes: bytes,
+        message: 'Add attachment $name to ${project.title}',
+      );
+      // Cache it so the note renders without a round trip.
+      await attachments.save(repoPath, bytes);
+      return '![$name](${AttachmentStore.markdownPath(slug, name)})';
+    } on GitHubException catch (error) {
+      _message = 'Could not upload the image: ${error.message}';
+      notifyListeners();
+      return null;
+    } catch (_) {
+      _message = 'Could not reach GitHub to upload the image.';
+      notifyListeners();
+      return null;
+    } finally {
+      client.dispose();
+    }
+  }
+
   Future<void> removeItem(String slug, int index) => _mutate(slug, (project) {
         final items = [...project.items]..removeAt(index);
         return project.copyWith(items: items);
       });
 
-  /// Moves an item to [newIndex], which is the index it should end up at once
-  /// the item has been lifted out — what ReorderableListView's onReorderItem
-  /// already gives us, so no off-by-one adjustment is needed here.
-  Future<void> reorderItems(String slug, int oldIndex, int newIndex) =>
+  /// Reorders the open items among themselves. Both indices count only open
+  /// items, since that is what the grouped list shows as draggable, and
+  /// [newIndex] is the destination index — what onReorderItem already gives
+  /// us, so no off-by-one adjustment is needed here.
+  ///
+  /// Completed items keep their positions in the file, so reordering what you
+  /// can see never quietly reshuffles what is collapsed out of sight.
+  Future<void> reorderOpenItems(String slug, int oldIndex, int newIndex) =>
       _mutate(slug, (project) {
+        final openSlots = <int>[];
+        for (var i = 0; i < project.items.length; i++) {
+          if (!project.items[i].done) openSlots.add(i);
+        }
+
+        final openItems = [for (final slot in openSlots) project.items[slot]];
+        openItems.insert(newIndex, openItems.removeAt(oldIndex));
+
         final items = [...project.items];
-        items.insert(newIndex, items.removeAt(oldIndex));
+        for (var i = 0; i < openSlots.length; i++) {
+          items[openSlots[i]] = openItems[i];
+        }
         return project.copyWith(items: items);
       });
 
@@ -176,6 +271,7 @@ class AppState extends ChangeNotifier {
     if (project == null) return;
 
     _pendingPushes.remove(slug)?.cancel();
+    if (_selectedSlug == slug) _selectedSlug = null;
     _projects = _projects.where((p) => p.slug != slug).toList();
     await _localStore.delete(slug);
     notifyListeners();

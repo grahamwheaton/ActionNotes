@@ -1,17 +1,50 @@
-/// A single `- [ ] text` line in a project file.
+/// A single `- [ ]` line in a project file, plus anything indented under it.
 class ChecklistItem {
-  ChecklistItem({required this.text, this.done = false});
+  const ChecklistItem({
+    required this.text,
+    this.done = false,
+    this.starred = false,
+    this.notes = '',
+  });
 
   final String text;
   final bool done;
 
-  ChecklistItem copyWith({String? text, bool? done}) =>
-      ChecklistItem(text: text ?? this.text, done: done ?? this.done);
+  /// The "important" flag, written as a ⭐ before the item text.
+  final bool starred;
+
+  /// Markdown indented beneath the item. May reference images in the repo's
+  /// attachments directory.
+  final String notes;
+
+  bool get hasNotes => notes.trim().isNotEmpty;
+
+  ChecklistItem copyWith({
+    String? text,
+    bool? done,
+    bool? starred,
+    String? notes,
+  }) {
+    return ChecklistItem(
+      text: text ?? this.text,
+      done: done ?? this.done,
+      starred: starred ?? this.starred,
+      notes: notes ?? this.notes,
+    );
+  }
 
   @override
   bool operator ==(Object other) =>
-      other is ChecklistItem && other.text == text && other.done == done;
+      other is ChecklistItem &&
+      other.text == text &&
+      other.done == done &&
+      other.starred == starred &&
+      other.notes == notes;
 
   @override
-  int get hashCode => Object.hash(text, done);
+  int get hashCode => Object.hash(text, done, starred, notes);
+
+  @override
+  String toString() =>
+      'ChecklistItem(${done ? 'x' : ' '}${starred ? '*' : ''} $text)';
 }

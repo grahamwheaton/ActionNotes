@@ -4,7 +4,7 @@ import 'package:actionnotes/storage/github_client.dart';
 import 'package:actionnotes/storage/local_store.dart';
 import 'package:actionnotes/storage/settings_store.dart';
 import 'package:actionnotes/storage/sync_service.dart';
-import 'package:actionnotes/ui/projects_screen.dart';
+import 'package:actionnotes/ui/home_shell.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,7 +34,15 @@ class FakeSettingsStore implements SettingsStore {
   Future<void> save(GitHubConfig config) async {}
 }
 
-Future<AppState> pumpApp(WidgetTester tester, FakeLocalStore store) async {
+Future<AppState> pumpApp(
+  WidgetTester tester,
+  FakeLocalStore store, {
+  Size size = const Size(400, 800),
+}) async {
+  tester.view.physicalSize = size;
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+
   final state = AppState(
     localStore: store,
     settingsStore: FakeSettingsStore(),
@@ -44,7 +52,7 @@ Future<AppState> pumpApp(WidgetTester tester, FakeLocalStore store) async {
   await tester.pumpWidget(
     ChangeNotifierProvider.value(
       value: state..init(),
-      child: MaterialApp(theme: AppTheme.light(), home: const ProjectsScreen()),
+      child: MaterialApp(theme: AppTheme.light(), home: const HomeShell()),
     ),
   );
   await tester.pumpAndSettle();
@@ -115,7 +123,7 @@ void main() {
     }
 
     // Drag the first item to the end, as onReorderItem reports it.
-    await state.reorderItems('packing', 0, 2);
+    await state.reorderOpenItems('packing', 0, 2);
 
     expect(
       store.saved['packing']!.items.map((i) => i.text),
@@ -123,7 +131,7 @@ void main() {
     );
 
     // And back to the front.
-    await state.reorderItems('packing', 2, 0);
+    await state.reorderOpenItems('packing', 2, 0);
 
     expect(
       store.saved['packing']!.items.map((i) => i.text),
@@ -131,7 +139,7 @@ void main() {
     );
   });
 
-  testWidgets('the list shows progress for each project', (tester) async {
+  testWidgets('the sidebar shows the open count for each project', (tester) async {
     final store = FakeLocalStore();
     final state = await pumpApp(tester, store);
 
@@ -141,6 +149,6 @@ void main() {
     await state.toggleItem('trip', 0);
     await tester.pumpAndSettle();
 
-    expect(find.text('1 of 2 done'), findsOneWidget);
+    expect(find.text('1'), findsWidgets);
   });
 }

@@ -8,9 +8,17 @@ import '../models/project.dart';
 class ProjectMarkdown {
   ProjectMarkdown._();
 
+  /// Item notes are indented by this much beneath their item.
+  static const _noteIndent = '  ';
+
+  /// Written before the text of a starred item. Read leniently: a hollow star
+  /// or a plain asterisk pair means the same thing.
+  static const starMarker = '⭐';
+
   static final _frontMatterFence = RegExp(r'^---\s*$');
   static final _headingPattern = RegExp(r'^#\s+(.*)$');
   static final _itemPattern = RegExp(r'^\s*[-*+]\s+\[([ xX])\]\s?(.*)$');
+  static final _starPattern = RegExp(r'^(?:⭐|★|\*\*)\s*');
 
   static Project parse(String source, {required String slug, String? sha}) {
     final lines = source.replaceAll('\r\n', '\n').split('\n');
@@ -35,18 +43,56 @@ class ProjectMarkdown {
 
     String? headingTitle;
     final items = <ChecklistItem>[];
-    final noteLines = <String>[];
+    final projectNotes = <String>[];
+
+    // Non-null while lines could still belong to the item just read.
+    List<String>? itemNotes;
+
+    void flushItemNotes() {
+      if (itemNotes == null || items.isEmpty) {
+        itemNotes = null;
+        return;
+      }
+      final notes = _trimBlankEdges(itemNotes!).join('\n');
+      if (notes.isNotEmpty) {
+        items[items.length - 1] = items.last.copyWith(notes: notes);
+      }
+      itemNotes = null;
+    }
 
     for (; index < lines.length; index++) {
       final line = lines[index];
 
       final item = _itemPattern.firstMatch(line);
       if (item != null) {
+        flushItemNotes();
+
+        var text = item.group(2)!.trim();
+        final starred = _starPattern.hasMatch(text);
+        if (starred) text = text.replaceFirst(_starPattern, '').trim();
+
         items.add(ChecklistItem(
-          text: item.group(2)!.trim(),
+          text: text,
           done: item.group(1)!.toLowerCase() == 'x',
+          starred: starred,
         ));
+        itemNotes = <String>[];
         continue;
+      }
+
+      if (itemNotes != null) {
+        // A blank line may sit inside a note block, so keep it for now and let
+        // the flush trim it if the block ended here.
+        if (line.trim().isEmpty) {
+          itemNotes!.add('');
+          continue;
+        }
+        if (line.startsWith(' ') || line.startsWith('\t')) {
+          itemNotes!.add(_dedent(line));
+          continue;
+        }
+        // Unindented text ends the item's notes and belongs to the project.
+        flushItemNotes();
       }
 
       if (headingTitle == null && items.isEmpty) {
@@ -57,8 +103,9 @@ class ProjectMarkdown {
         }
       }
 
-      noteLines.add(line);
+      projectNotes.add(line);
     }
+    flushItemNotes();
 
     final extra = Map<String, String>.from(frontMatter)
       ..remove('title')
@@ -69,7 +116,7 @@ class ProjectMarkdown {
       slug: slug,
       title: _firstNonEmpty([frontMatter['title'], headingTitle, slug])!,
       items: items,
-      notes: _trimBlankEdges(noteLines).join('\n'),
+      notes: _trimBlankEdges(projectNotes).join('\n'),
       created: _parseDate(frontMatter['created']),
       updated: _parseDate(frontMatter['updated']),
       extraFrontMatter: extra,
@@ -98,7 +145,15 @@ class ProjectMarkdown {
       ..writeln();
 
     for (final item in project.items) {
-      buffer.writeln('- [${item.done ? 'x' : ' '}] ${item.text}');
+      final star = item.starred ? '$starMarker ' : '';
+      buffer.writeln('- [${item.done ? 'x' : ' '}] $star${item.text}');
+
+      if (item.hasNotes) {
+        for (final line in item.notes.trim().split('\n')) {
+          // Keep blank lines genuinely blank rather than indented whitespace.
+          buffer.writeln(line.trim().isEmpty ? '' : '$_noteIndent$line');
+        }
+      }
     }
 
     final notes = project.notes.trim();
@@ -109,6 +164,14 @@ class ProjectMarkdown {
     }
 
     return buffer.toString();
+  }
+
+  /// Removes one level of note indentation, tolerating tabs and deeper indents
+  /// from hand-edited files.
+  static String _dedent(String line) {
+    if (line.startsWith(_noteIndent)) return line.substring(_noteIndent.length);
+    if (line.startsWith('\t')) return line.substring(1);
+    return line.trimLeft();
   }
 
   static String? _firstNonEmpty(List<String?> candidates) {

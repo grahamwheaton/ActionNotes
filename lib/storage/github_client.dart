@@ -49,6 +49,7 @@ class GitHubClient {
 
   static const _base = 'https://api.github.com';
   static const projectsDir = 'projects';
+  static const attachmentsDir = 'attachments';
 
   final GitHubConfig config;
   final http.Client _client;
@@ -127,6 +128,46 @@ class GitHubClient {
       body: jsonEncode({
         'message': message,
         'content': base64.encode(utf8.encode(content)),
+        'branch': config.branch,
+        if (sha != null) 'sha': sha,
+      }),
+    );
+
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      throw GitHubException(response.statusCode, _errorMessage(response));
+    }
+
+    final json = jsonDecode(response.body) as Map<String, dynamic>;
+    return (json['content'] as Map<String, dynamic>)['sha'] as String;
+  }
+
+  /// Reads a file's raw bytes. Used for note attachments, which are binary and
+  /// live in a private repo, so they cannot simply be fetched by URL.
+  Future<List<int>?> readBytes(String path) async {
+    final response = await _client.get(
+      _contentsUri(path),
+      headers: {..._headers, 'Accept': 'application/vnd.github.raw'},
+    );
+    if (response.statusCode == 404) return null;
+    if (response.statusCode != 200) {
+      throw GitHubException(response.statusCode, _errorMessage(response));
+    }
+    return response.bodyBytes;
+  }
+
+  /// Uploads raw bytes, for an image being attached to an item's notes.
+  Future<String> writeBytes({
+    required String path,
+    required List<int> bytes,
+    required String message,
+    String? sha,
+  }) async {
+    final response = await _client.put(
+      _contentsUri(path, withRef: false),
+      headers: {..._headers, 'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'message': message,
+        'content': base64.encode(bytes),
         'branch': config.branch,
         if (sha != null) 'sha': sha,
       }),

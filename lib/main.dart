@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'state/app_state.dart';
-import 'ui/projects_screen.dart';
+import 'ui/home_shell.dart';
 import 'ui/theme.dart';
 
 void main() {
@@ -21,7 +21,7 @@ class ActionNotesApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         theme: AppTheme.light(),
         darkTheme: AppTheme.dark(),
-        home: const ProjectsScreen(),
+        home: const HomeShell(),
       ),
     );
   }

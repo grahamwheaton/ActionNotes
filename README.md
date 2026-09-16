@@ -19,9 +19,19 @@ pasting one file — or by pointing the model at the repo.
 
 ## Current state
 
-First pass: project list, checklist editing, markdown read/write, GitHub sync,
-settings. Android is the platform being built and tested; Windows builds from
-the same source but has not been run yet.
+- Project sidebar on wide windows, pushed screens on a phone — one layout,
+  two shapes.
+- Checklists group open items first, with completed ones collapsed under a
+  header at the bottom.
+- Star any item, the way Microsoft To Do does.
+- Per-item notes in markdown, including images attached from disk and stored
+  in the repo.
+- Right-click (or long-press) an item or a project for star, notes, rename and
+  delete.
+- Drag open items to reorder them, by the handle on the right.
+
+Android and Windows both build in CI. Neither binary has been run by a human
+yet, so treat the first launch on each platform as untested.
 
 ## Setup
 
