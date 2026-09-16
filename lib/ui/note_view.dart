@@ -4,23 +4,37 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:provider/provider.dart';
 
+import '../markdown/project_links.dart';
 import '../state/app_state.dart';
 import '../storage/attachment_store.dart';
 
 /// Renders an item's notes as markdown, resolving image references against the
 /// attachment cache.
 class NoteView extends StatelessWidget {
-  const NoteView({super.key, required this.markdown, this.selectable = true});
+  const NoteView({
+    super.key,
+    required this.markdown,
+    this.selectable = true,
+    this.onOpenProject,
+  });
 
   final String markdown;
   final bool selectable;
+
+  /// Called when a link to another project is tapped. Without it, such links
+  /// are shown but do nothing.
+  final void Function(String slug)? onOpenProject;
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
 
+    // Render wikilinks as real links, so a note pasted from a vault behaves
+    // the same as one written here.
+    final rendered = ProjectLinks.normalize(markdown, state.projects);
+
     return MarkdownBody(
-      data: markdown,
+      data: rendered,
       selectable: selectable,
       imageBuilder: (uri, title, alt) => _NoteImage(
         reference: uri.toString(),
@@ -29,9 +43,16 @@ class NoteView extends StatelessWidget {
         state: state,
       ),
       onTapLink: (_, href, __) {
-        // Opening external links needs a launcher plugin; until then say so
-        // rather than appearing to do nothing.
         if (href == null) return;
+
+        final slug = ProjectLinks.targetSlug(href);
+        if (slug != null && state.projectBySlug(slug) != null) {
+          onOpenProject?.call(slug);
+          return;
+        }
+
+        // Opening external links needs a launcher plugin; until then show the
+        // target rather than appearing to do nothing.
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(href)),
         );

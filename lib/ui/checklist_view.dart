@@ -405,7 +405,10 @@ class _ProjectNotes extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       child: SingleChildScrollView(
-        child: NoteView(markdown: project.notes.trim()),
+        child: NoteView(
+          markdown: project.notes.trim(),
+          onOpenProject: (slug) => context.read<AppState>().select(slug),
+        ),
       ),
     );
   }

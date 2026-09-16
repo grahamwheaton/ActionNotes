@@ -24,13 +24,30 @@ pasting one file — or by pointing the model at the repo.
 - Checklists group open items first, with completed ones collapsed under a
   header at the bottom.
 - Star any item, the way Microsoft To Do does.
-- Per-item notes in markdown, including images attached from disk and stored
-  in the repo.
+- Per-item notes in markdown, with images pasted, dropped or picked from disk
+  and stored in the repo.
+- Links between projects: type `[[` for a picker, or write a normal markdown
+  link. Tap one in the preview to jump there.
 - Right-click (or long-press) an item or a project for star, notes, rename and
   delete.
 - Drag open items to reorder them, by the handle on the right.
 - When a project changes both on a device and on GitHub, the app says so and
   offers a choice: keep yours, take GitHub's, or merge both.
+
+## Notes, the Obsidian-ish parts
+
+An item's notes are a markdown document. In the editor:
+
+- **Type `[[`** to pick a project to link — the link is saved as
+  `[Title](slug.md)`, which works in the app, on github.com and in Obsidian.
+- **Paste an image** with Ctrl+V and it uploads to `attachments/` and appears
+  inline. Pasting text still pastes text.
+- **Drop an image file** onto the editor on the desktop to do the same.
+- **Preview** toggles the rendered view, where project links are tappable.
+
+What this is not: Obsidian's live preview, where markdown renders as you type.
+This is a plain editor with a preview toggle. Backlinks, tags and the graph
+view are not here either.
 
 ## When the same project changes in two places
 

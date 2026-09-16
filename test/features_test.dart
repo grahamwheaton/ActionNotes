@@ -332,6 +332,99 @@ void main() {
     });
   });
 
+  group('linking projects', () {
+    testWidgets('typing [[ opens the picker and inserts a portable link',
+        (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('House move');
+      await state.createProject('Main Project');
+      await state.addItem('main-project', 'Quote doors');
+      // The detail pane otherwise defaults to the alphabetically first.
+      state.select('main-project');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Quote doors'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).first, 'See [[');
+      await tester.pumpAndSettle();
+
+      // The picker offers the other project, not the one being edited.
+      expect(find.text('Link to project'), findsOneWidget);
+      expect(find.text('house-move.md'), findsOneWidget);
+      expect(find.text('main-project.md'), findsNothing);
+
+      await tester.tap(find.text('house-move.md'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(
+        store.saved['main-project']!.items.single.notes,
+        'See [House move](house-move.md)',
+      );
+    });
+
+    testWidgets('a hand-typed wikilink is rewritten on save', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('House move');
+      await state.createProject('Main Project');
+      await state.addItem('main-project', 'Quote doors');
+      // The detail pane otherwise defaults to the alphabetically first.
+      state.select('main-project');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Quote doors'));
+      await tester.pumpAndSettle();
+
+      // Typed in full, so the [[ handler does not fire mid-word.
+      await tester.enterText(
+        find.byType(TextField).first,
+        'Blocked by [[House move]]',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(
+        store.saved['main-project']!.items.single.notes,
+        'Blocked by [House move](house-move.md)',
+      );
+    });
+
+    testWidgets('an unresolvable wikilink is left alone', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('Main Project');
+      await state.addItem('main-project', 'Quote doors');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Quote doors'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+        find.byType(TextField).first,
+        'See [[Not A Project]]',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(
+        store.saved['main-project']!.items.single.notes,
+        'See [[Not A Project]]',
+      );
+    });
+  });
+
   group('attachment paths', () {
     test('markdown references resolve back to a repo path', () {
       const reference = '../attachments/my-todo/door.png';

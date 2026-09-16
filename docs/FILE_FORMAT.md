@@ -96,6 +96,24 @@ once renders offline afterwards.
 - Anything the app does not understand in the front matter is round-tripped
   unchanged rather than dropped.
 
+## Links between projects
+
+Notes link to other projects with an ordinary relative markdown link:
+
+```markdown
+- [ ] Quote doors
+  Blocked by [House move](house-move.md).
+```
+
+The link is relative to `projects/`, which makes it work in three places at
+once: in the app, on github.com when browsing the file, and in Obsidian, which
+follows relative markdown links as well as its own.
+
+Obsidian's `[[Wikilink]]` form is **accepted on read** — pasted from a vault or
+typed out of habit — and rewritten to the portable form when the app saves the
+note. `[[slug|custom label]]` keeps the label. A wikilink naming a project that
+does not exist is left exactly as written rather than turned into a dead link.
+
 ## Conflicts
 
 Nothing in the format records which device wrote a file, so a project edited in
