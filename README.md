@@ -51,8 +51,49 @@ Windows:
 flutter build windows --release
 ```
 
-CI builds a debug APK on every push to this branch; download it from the
-workflow run's artifacts.
+CI builds a debug APK and a Windows release on every push; download them from
+the workflow run's artifacts.
+
+### Releases
+
+Pushing a version tag publishes a release APK as a downloadable asset:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The asset is a plain `.apk`, so it installs straight from the phone browser —
+unlike a CI artifact, which arrives zipped.
+
+### Release signing
+
+Without a keystore the release build falls back to debug keys, and CI generates
+a fresh debug key on every run, so those APKs will not install over one another
+— Android treats each as a different app and makes you uninstall first.
+
+To sign properly, generate an upload key once:
+
+```sh
+keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA \
+  -keysize 2048 -validity 10000 -alias upload
+base64 -w0 upload-keystore.jks
+```
+
+Then add four repository secrets under Settings → Secrets and variables →
+Actions:
+
+| Secret | Value |
+| --- | --- |
+| `ANDROID_KEYSTORE_BASE64` | the base64 output above |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
+| `ANDROID_KEY_ALIAS` | `upload` |
+| `ANDROID_KEY_PASSWORD` | the key password |
+
+The next tag picks them up automatically. Keep `upload-keystore.jks` somewhere
+safe and out of the repo — losing it means future builds can no longer upgrade
+an installed app. `.gitignore` already excludes keystores and
+`android/key.properties`.
 
 ## Using it with Claude or ChatGPT
 
