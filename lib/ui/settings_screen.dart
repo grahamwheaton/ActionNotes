@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
 import '../storage/github_client.dart';
+import 'sign_in_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -62,6 +63,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     });
   }
 
+  Future<void> _signIn() async {
+    final token = await showGitHubSignIn(context);
+    if (token == null || !mounted) return;
+
+    setState(() {
+      _token.text = token;
+      _resultIsError = false;
+      _result = 'Signed in. Test the connection, or save to sync.';
+    });
+  }
+
+  void _signOut() {
+    setState(() {
+      _token.clear();
+      _result = null;
+    });
+  }
+
   Future<void> _save() async {
     setState(() => _busy = true);
     await context.read<AppState>().updateConfig(_config);
@@ -99,20 +118,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           _Field(controller: _repo, label: 'Repository', hint: 'notes'),
           _Field(controller: _branch, label: 'Branch', hint: 'main'),
-          _Field(
-            controller: _token,
-            label: 'Personal access token',
-            hint: 'github_pat_...',
-            obscure: true,
+          const SizedBox(height: 4),
+          Text(
+            'Access',
+            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          _AccessCard(
+            hasToken: _token.text.trim().isNotEmpty,
+            busy: _busy,
+            onSignIn: _signIn,
+            onSignOut: _signOut,
           ),
           const SizedBox(height: 8),
           Text(
-            'Create a fine-grained token scoped to this one repo with '
-            'Contents: Read and write. It is stored in this device\'s keystore.',
+            'Signing in approves ActionNotes on github.com and keeps the token '
+            'in this device\'s keystore. It reaches only the repos you install '
+            'the app on.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
+          const SizedBox(height: 4),
+          _TokenFallback(controller: _token, onChanged: () => setState(() {})),
           const SizedBox(height: 24),
           Row(
             children: [
@@ -161,18 +189,114 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 }
 
+/// Says whether this device holds a token, and offers the one button that
+/// changes that.
+class _AccessCard extends StatelessWidget {
+  const _AccessCard({
+    required this.hasToken,
+    required this.busy,
+    required this.onSignIn,
+    required this.onSignOut,
+  });
+
+  final bool hasToken;
+  final bool busy;
+  final VoidCallback onSignIn;
+  final VoidCallback onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            hasToken ? Icons.check_circle_outline : Icons.lock_outline,
+            color: hasToken
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurfaceVariant,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              hasToken ? 'Signed in to GitHub' : 'Not signed in',
+              style: theme.textTheme.bodyMedium,
+            ),
+          ),
+          if (hasToken)
+            TextButton(onPressed: busy ? null : onSignOut, child: const Text('Sign out'))
+          else
+            FilledButton(onPressed: busy ? null : onSignIn, child: const Text('Sign in')),
+        ],
+      ),
+    );
+  }
+}
+
+/// The old way in, kept for anyone who would rather mint their own token —
+/// folded away so it is not the first thing anyone reads.
+class _TokenFallback extends StatelessWidget {
+  const _TokenFallback({required this.controller, required this.onChanged});
+
+  final TextEditingController controller;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Theme(
+      data: theme.copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: const EdgeInsets.only(top: 8),
+        title: Text(
+          'Use a personal access token instead',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        children: [
+          _Field(
+            controller: controller,
+            label: 'Personal access token',
+            hint: 'github_pat_...',
+            obscure: true,
+            onChanged: onChanged,
+          ),
+          Text(
+            'A fine-grained token scoped to this one repo, with '
+            'Contents: Read and write.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Field extends StatelessWidget {
   const _Field({
     required this.controller,
     required this.label,
     required this.hint,
     this.obscure = false,
+    this.onChanged,
   });
 
   final TextEditingController controller;
   final String label;
   final String hint;
   final bool obscure;
+  final VoidCallback? onChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -183,6 +307,7 @@ class _Field extends StatelessWidget {
         obscureText: obscure,
         autocorrect: false,
         enableSuggestions: false,
+        onChanged: onChanged == null ? null : (_) => onChanged!(),
         decoration: InputDecoration(labelText: label, hintText: hint),
       ),
     );

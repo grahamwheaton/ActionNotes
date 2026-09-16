@@ -149,7 +149,14 @@ class AppState extends ChangeNotifier {
       return switch (error.statusCode) {
         401 => 'Token rejected. Check it was copied in full and has not expired.',
         403 => 'Token lacks permission for this repo. It needs Contents: Read and write.',
-        404 => 'No such repo, or the token cannot see it.',
+        // Signing in and installing the app are separate steps on GitHub, and
+        // a sign-in that skipped the install lands here with a valid token
+        // that can see nothing. Say so, rather than implying a typo.
+        404 => 'Cannot see ${config.owner}/${config.repo}. Check the names, and '
+            'that the ActionNotes app is installed on this repo — signing in '
+            'does not install it, and an app installed nowhere can see '
+            'nothing. Install it from its Install App tab under '
+            'github.com/settings/apps.',
         _ => error.message,
       };
     } catch (_) {
