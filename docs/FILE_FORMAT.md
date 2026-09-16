@@ -60,7 +60,10 @@ Four parts, in this order:
   ![alt](../attachments/<project-slug>/<file>)
 ```
 
-- `- [ ]` is open, `- [x]` is done.
+- `- [ ]` is open, `- [x]` is done. **A project's items sit at the left
+  margin.** An indented `- [ ]` belongs to the note above it, which is what
+  lets a note hold a checklist of its own without those rows being read as
+  more items of the project.
 - A **⭐ before the text** marks the item starred — the app's equivalent of
   Microsoft To Do's star. It is stripped from the displayed text.
 - **Lines indented by two spaces** after an item are that item's notes. The
@@ -114,9 +117,23 @@ Notes are edited as blocks, and these are the line kinds it models:
 | --- | --- |
 | `# ` to `###### ` | heading, drawn at size with the hashes hidden |
 | `- ` | bullet, drawn with a dot |
+| `- [ ] ` / `- [x] ` | a checklist row with a real checkbox |
 | `![alt](path)` alone on a line | the image itself |
 | `---`, `***` or `___` | a horizontal rule |
 | anything else | a paragraph |
+
+Bullets and checklist rows nest, two spaces per level, so a list can sit
+inside a list:
+
+```markdown
+- [ ] pack
+  - [x] passport
+  - [ ] tickets
+    - check the dates
+```
+
+Tab and Shift+Tab move a row in and out a level. Return continues the list at
+the same depth, and Return on an empty row leaves the list.
 
 Inline markdown — bold, italic, code, links — is never rewritten; it is styled
 where it sits. An image with text on the same line stays a paragraph rather

@@ -41,6 +41,13 @@ class BlockTypes {
       block: NoteBlock.bullet(''),
     ),
     BlockTypeChoice(
+      label: 'Checklist',
+      hint: '- [ ] task',
+      icon: '☑',
+      shortcut: 'Ctrl+T',
+      block: NoteBlock.task(''),
+    ),
+    BlockTypeChoice(
       label: 'Horizontal line',
       hint: '---',
       icon: '—',

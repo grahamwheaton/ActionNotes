@@ -49,6 +49,9 @@ An item's notes are a markdown document. In the editor:
   the picture. Typing `# ` turns a line into a heading and takes the hashes
   away; `- ` makes a bullet. Enter starts a new block, backspace at the start
   of a heading turns it back into a paragraph.
+- **Lists nest.** `- ` makes a bullet, `- [ ] ` a checklist row with a real
+  checkbox, and Tab moves a row in a level so a list can sit inside a list.
+  Return continues the list; Return on an empty row leaves it.
 - **Inline markdown styles as you type** — `**bold**` looks bold, `*italic*`
   italic, `` `code` `` monospaced, a link's label underlined. The markers stay
   visible but dimmed: hiding them would put the caret out of step with the

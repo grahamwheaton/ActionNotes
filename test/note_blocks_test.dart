@@ -38,12 +38,12 @@ void main() {
       ]);
     });
 
-    test('does not mistake a task line for a bullet', () {
-      // A nested checklist inside a note is text, not a block type we own.
+    test('a task line is a checklist row, not a plain bullet', () {
       final blocks = NoteBlocks.parse('- [ ] a task');
 
-      expect(blocks.single.type, NoteBlockType.paragraph);
-      expect(blocks.single.text, '- [ ] a task');
+      expect(blocks.single.type, NoteBlockType.task);
+      expect(blocks.single.text, 'a task');
+      expect(blocks.single.done, isFalse);
     });
 
     test('blank lines do not become blocks', () {

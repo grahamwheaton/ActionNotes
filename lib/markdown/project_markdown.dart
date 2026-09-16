@@ -17,7 +17,10 @@ class ProjectMarkdown {
 
   static final _frontMatterFence = RegExp(r'^---\s*$');
   static final _headingPattern = RegExp(r'^#\s+(.*)$');
-  static final _itemPattern = RegExp(r'^\s*[-*+]\s+\[([ xX])\]\s?(.*)$');
+  /// Deliberately anchored at column 0: an indented `- [ ]` belongs to the
+  /// note above it, which is how a checklist inside a note stays inside it
+  /// rather than being read as another item of the project.
+  static final _itemPattern = RegExp(r'^[-*+]\s+\[([ xX])\]\s?(.*)$');
   static final _starPattern = RegExp(r'^(?:⭐|★|\*\*)\s*');
 
   static Project parse(String source, {required String slug, String? sha}) {

@@ -111,6 +111,15 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   /// Turns a typed marker into the block it names, and `[[` into a link.
   void _onTextChanged(_Row row) {
     final text = row.controller!.text;
+
+    // A phone's keyboard sends Enter through the text connection rather than
+    // as a key event, so the newline arrives here. Splitting on it is what
+    // makes Return continue a list on Android as it does on a desktop.
+    if (text.contains('\n')) {
+      _splitOnNewline(row);
+      return;
+    }
+
     final shortcut = NoteBlocks.shortcutFor(row.block, text);
 
     if (shortcut != null) {
@@ -160,6 +169,21 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     });
   }
 
+  /// Splits where a newline landed in the text, then removes it.
+  void _splitOnNewline(_Row row) {
+    final controller = row.controller!;
+    final at = controller.text.indexOf('\n');
+
+    final before = controller.text.substring(0, at);
+    final after = controller.text.substring(at + 1);
+
+    controller.value = TextEditingValue(
+      text: before,
+      selection: TextSelection.collapsed(offset: before.length),
+    );
+    _insertAfter(row, after);
+  }
+
   /// Enter splits the block at the caret, as a new paragraph below.
   void _splitAt(_Row row) {
     final controller = row.controller!;
@@ -168,14 +192,30 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     final after = controller.text.substring(caret);
 
     controller.text = before;
+    _insertAfter(row, after);
+  }
 
-    // Continuing a list keeps making bullets; anything else starts a
-    // paragraph, which is what leaving a heading should do.
-    final nextType = row.block.type == NoteBlockType.bullet
-        ? NoteBlockType.bullet
-        : NoteBlockType.paragraph;
+  /// Adds a row below [row] carrying [text] and moves the caret into it.
+  ///
+  /// A list row continues the list at the same depth — a new bullet after a
+  /// bullet, an unticked task after a task — and anything else starts a
+  /// paragraph, which is what leaving a heading should do. An empty list row
+  /// ends the list instead, the way every editor does it.
+  void _insertAfter(_Row row, String text) {
+    final continuing = row.block.isListRow && row.controller!.text.isNotEmpty;
 
-    final next = _row(NoteBlock(type: nextType, text: after));
+    if (row.block.isListRow && row.controller!.text.isEmpty) {
+      // Return on an empty list row drops out of the list.
+      setState(() => row.block = const NoteBlock.paragraph(''));
+      _emit();
+      return;
+    }
+
+    final next = _row(
+      continuing
+          ? row.block.copyWith(text: text, done: false)
+          : NoteBlock(type: NoteBlockType.paragraph, text: text),
+    );
     setState(() => _rows.insert(_indexOfId(row.id) + 1, next));
 
     // The new row's focus node only exists after it is built.
@@ -183,6 +223,21 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
       next.focus?.requestFocus();
       next.controller?.selection = const TextSelection.collapsed(offset: 0);
     });
+    _emit();
+  }
+
+  /// Tab and Shift+Tab nest a list row and lift it back out.
+  void _nudgeIndent(_Row row, int delta) {
+    if (!row.block.isListRow) return;
+    setState(() => row.block = row.block.copyWith(
+          indent: (row.block.indent + delta).clamp(0, 5),
+        ));
+    row.focus?.requestFocus();
+    _emit();
+  }
+
+  void _toggleTask(_Row row) {
+    setState(() => row.block = row.block.copyWith(done: !row.block.done));
     _emit();
   }
 
@@ -351,6 +406,8 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
                 onSetType: (kind) => _setBlockType(row, kind),
                 onMark: (mark) => _applyMark(row, mark),
                 onClearMarks: () => _clearMarks(row),
+                onIndent: (delta) => _nudgeIndent(row, delta),
+                onToggleTask: () => _toggleTask(row),
                 onRequestLink: widget.onRequestLink == null
                     ? null
                     : () async {
@@ -379,6 +436,8 @@ class _TextBlock extends StatelessWidget {
     required this.onSetType,
     required this.onMark,
     required this.onClearMarks,
+    required this.onIndent,
+    required this.onToggleTask,
     this.onRequestLink,
   });
 
@@ -389,11 +448,13 @@ class _TextBlock extends StatelessWidget {
   final ValueChanged<NoteBlock> onSetType;
   final ValueChanged<InlineMark> onMark;
   final VoidCallback onClearMarks;
+  final ValueChanged<int> onIndent;
+  final VoidCallback onToggleTask;
   final Future<void> Function()? onRequestLink;
 
   TextStyle _styleFor(ThemeData theme) {
     final text = theme.textTheme;
-    return switch (row.block.type) {
+    final style = switch (row.block.type) {
       NoteBlockType.heading => switch (row.block.level) {
           1 => text.headlineSmall!.copyWith(fontWeight: FontWeight.w700),
           2 => text.titleLarge!.copyWith(fontWeight: FontWeight.w700),
@@ -402,6 +463,14 @@ class _TextBlock extends StatelessWidget {
         },
       _ => text.bodyMedium!,
     };
+
+    if (row.block.type == NoteBlockType.task && row.block.done) {
+      return style.copyWith(
+        decoration: TextDecoration.lineThrough,
+        color: theme.colorScheme.outline,
+      );
+    }
+    return style;
   }
 
   /// Ctrl+0 for a paragraph and Ctrl+1..6 for headers, as MarkText has them,
@@ -445,10 +514,19 @@ class _TextBlock extends StatelessWidget {
         onSetType(const NoteBlock.bullet(''));
         return KeyEventResult.handled;
       }
+      if (event.logicalKey == LogicalKeyboardKey.keyT) {
+        onSetType(const NoteBlock.task(''));
+        return KeyEventResult.handled;
+      }
       if (event.logicalKey == LogicalKeyboardKey.minus) {
         onSetType(const NoteBlock.divider());
         return KeyEventResult.handled;
       }
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.tab) {
+      onIndent(HardwareKeyboard.instance.isShiftPressed ? -1 : 1);
+      return KeyEventResult.handled;
     }
 
     final enter = event.logicalKey == LogicalKeyboardKey.enter ||
@@ -473,24 +551,40 @@ class _TextBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isBullet = row.block.type == NoteBlockType.bullet;
+    final block = row.block;
 
     return Padding(
       padding: EdgeInsets.only(
-        top: row.block.type == NoteBlockType.heading ? 12 : 1,
+        top: block.type == NoteBlockType.heading ? 12 : 1,
         bottom: 1,
+        // Each nesting level steps the whole row across, marker included.
+        left: block.indent * 20,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _ParagraphButton(row: row, onSetType: onSetType),
-          if (isBullet)
+          if (block.type == NoteBlockType.bullet)
             Padding(
-              padding: const EdgeInsets.only(top: 9, right: 8),
+              // Nudged to sit on the first line's centre rather than above it.
+              padding: const EdgeInsets.only(top: 11, right: 10, left: 2),
               child: Icon(
-                Icons.circle,
+                block.indent.isEven ? Icons.circle : Icons.circle_outlined,
                 size: 5,
                 color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          if (block.type == NoteBlockType.task)
+            Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: SizedBox(
+                width: 30,
+                height: 30,
+                child: Checkbox(
+                  value: block.done,
+                  visualDensity: VisualDensity.compact,
+                  onChanged: (_) => onToggleTask(),
+                ),
               ),
             ),
           Expanded(
@@ -565,11 +659,11 @@ class _ParagraphButton extends StatelessWidget {
   final _Row row;
   final ValueChanged<NoteBlock> onSetType;
 
-  String get _label => switch (row.block.type) {
-        NoteBlockType.heading => 'H${row.block.level}',
-        NoteBlockType.bullet => '•',
-        _ => '¶',
-      };
+  /// Headings say which level they are; everything else shows the same
+  /// handle. A bullet used to show a dot here, which read as a second bullet
+  /// beside the real one.
+  String get _label =>
+      row.block.type == NoteBlockType.heading ? 'H${row.block.level}' : '¶';
 
   @override
   Widget build(BuildContext context) {

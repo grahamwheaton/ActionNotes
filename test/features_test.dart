@@ -669,6 +669,137 @@ void main() {
     });
   });
 
+  group('lists in a note', () {
+    Future<AppState> openNoteFor(
+      WidgetTester tester,
+      FakeLocalStore store,
+    ) async {
+      final state = await pumpShell(tester, store);
+      await state.createProject('Bullets test');
+      await state.addItem('bullets-test', 'Item');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Item'));
+      await tester.pumpAndSettle();
+      return state;
+    }
+
+    Finder blockField(int index) => find.byType(TextField).at(index);
+
+    testWidgets('a newline from a soft keyboard starts the next bullet',
+        (tester) async {
+      final store = FakeLocalStore();
+      await openNoteFor(tester, store);
+
+      await tester.enterText(blockField(0), '- ');
+      await tester.pumpAndSettle();
+      await tester.enterText(blockField(0), 'Item one');
+      await tester.pumpAndSettle();
+
+      // Android's keyboard delivers Return as a newline in the text rather
+      // than as a key event, which used to leave both lines in one bullet.
+      await tester.enterText(blockField(0), 'Item one\n');
+      await tester.pumpAndSettle();
+
+      await tester.enterText(blockField(1), 'Item two');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(
+        store.saved['bullets-test']!.items.single.notes,
+        '- Item one\n- Item two',
+      );
+    });
+
+    testWidgets('return on an empty bullet leaves the list', (tester) async {
+      final store = FakeLocalStore();
+      await openNoteFor(tester, store);
+
+      await tester.enterText(blockField(0), '- ');
+      await tester.pumpAndSettle();
+      await tester.enterText(blockField(0), 'Only item');
+      await tester.pumpAndSettle();
+      await tester.enterText(blockField(0), 'Only item\n');
+      await tester.pumpAndSettle();
+
+      // The second row is an empty bullet; Return drops out to a paragraph.
+      await tester.enterText(blockField(1), '\n');
+      await tester.pumpAndSettle();
+      await tester.enterText(blockField(1), 'Plain text');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(
+        store.saved['bullets-test']!.items.single.notes,
+        '- Only item\n\nPlain text',
+      );
+    });
+
+    testWidgets('a checklist row shows a real checkbox that ticks',
+        (tester) async {
+      final store = FakeLocalStore();
+      await openNoteFor(tester, store);
+
+      await tester.enterText(blockField(0), '- [ ] ');
+      await tester.pumpAndSettle();
+      await tester.enterText(blockField(0), 'Buy milk');
+      await tester.pumpAndSettle();
+
+      expect(find.byType(Checkbox), findsOneWidget);
+
+      await tester.tap(find.byType(Checkbox));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(
+        store.saved['bullets-test']!.items.single.notes,
+        '- [x] Buy milk',
+      );
+    });
+
+    testWidgets('a bullet shows one marker, not two', (tester) async {
+      final store = FakeLocalStore();
+      await openNoteFor(tester, store);
+
+      await tester.enterText(blockField(0), '- ');
+      await tester.pumpAndSettle();
+      await tester.enterText(blockField(0), 'One item');
+      await tester.pumpAndSettle();
+
+      // The block handle used to draw a dot as well, so a bullet appeared
+      // twice over. Headings still label their level.
+      expect(find.text('•'), findsNothing);
+      expect(find.text('¶'), findsOneWidget);
+    });
+
+    testWidgets('a note with nested rows opens at the right depths',
+        (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+      await state.createProject('Bullets test');
+      await state.addItem('bullets-test', 'Item');
+      await state.setItemNotes(
+        'bullets-test',
+        0,
+        '- [ ] pack\n  - [x] passport\n    - check dates',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Item'));
+      await tester.pumpAndSettle();
+
+      // Each level steps further across than the one above it.
+      final top = tester.getTopLeft(find.text('pack')).dx;
+      final middle = tester.getTopLeft(find.text('passport')).dx;
+      final deep = tester.getTopLeft(find.text('check dates')).dx;
+
+      expect(middle, greaterThan(top));
+      expect(deep, greaterThan(middle));
+    });
+  });
+
   group('linking projects', () {
     testWidgets('typing [[ opens the picker and inserts a portable link',
         (tester) async {
