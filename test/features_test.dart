@@ -320,14 +320,61 @@ void main() {
       await state.addItem('list', 'Item');
       await tester.pumpAndSettle();
 
-      expect(find.text('Notes'), findsNothing);
+      expect(find.byTooltip('Show notes'), findsNothing);
 
       await state.setItemNotes('list', 0, 'Some **markdown** notes.');
       await tester.pumpAndSettle();
 
-      expect(find.text('Notes'), findsOneWidget);
+      expect(find.byTooltip('Show notes'), findsOneWidget);
       expect(store.saved['list']!.items.single.notes,
           'Some **markdown** notes.');
+    });
+
+    testWidgets('notes open under the item rather than on their own screen',
+        (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('List');
+      await state.addItem('list', 'Item');
+      await state.setItemNotes('list', 0, 'The note body.');
+      await tester.pumpAndSettle();
+
+      // Closed to start with: the marker shows, the note does not.
+      expect(find.byTooltip('Show notes'), findsOneWidget);
+      expect(find.textContaining('The note body.'), findsNothing);
+
+      await tester.tap(find.byTooltip('Show notes'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('The note body.'), findsOneWidget);
+      // Still the list, not the editor pushed over it.
+      expect(find.text('Save'), findsNothing);
+
+      await tester.tap(find.byTooltip('Hide notes'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('The note body.'), findsNothing);
+    });
+
+    testWidgets('opening the notes in place leaves the item tappable',
+        (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpShell(tester, store);
+
+      await state.createProject('List');
+      await state.addItem('list', 'Item');
+      await state.setItemNotes('list', 0, 'The note body.');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Show notes'));
+      await tester.pumpAndSettle();
+
+      // The text still opens the editor; only the marker toggles.
+      await tester.tap(find.text('Item'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Save'), findsOneWidget);
     });
 
     testWidgets('tapping an item opens the note editor', (tester) async {
