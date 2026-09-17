@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../markdown/item_tags.dart';
+import '../models/project.dart';
 import '../state/app_state.dart';
 import '../state/search.dart';
 import 'checklist_view.dart';
@@ -63,9 +64,13 @@ class _SearchScreenState extends State<SearchScreen> {
         ],
       ),
       body: query.isEmpty
-          ? _Message(
-              text: 'Type to search across every project.',
-              theme: theme,
+          // An empty box is where tags are browsed: searching and finding out
+          // what there is to search for belong together.
+          ? _TagIndex(
+              projects: state.projects,
+              onPick: (tag) => setState(
+                () => _controller.text = ItemTags.marker(tag),
+              ),
             )
           : hits.isEmpty
               ? _Message(
@@ -146,6 +151,10 @@ class _HitTile extends StatelessWidget {
       onTap: () {
         final state = context.read<AppState>();
         state.select(hit.project.slug);
+        // Mark the line that matched, so a hit in a long list does not turn
+        // into a second search by eye.
+        final index = hit.itemIndex;
+        if (index != null) state.revealItem(hit.project.slug, index);
 
         // On a phone the checklist is a screen, so replace the search with it
         // rather than stacking; on a desktop selecting is enough.
@@ -160,6 +169,68 @@ class _HitTile extends StatelessWidget {
           );
         }
       },
+    );
+  }
+}
+
+/// Every tag in use, so they can be found without being remembered.
+class _TagIndex extends StatelessWidget {
+  const _TagIndex({required this.projects, required this.onPick});
+
+  final List<Project> projects;
+  final ValueChanged<String> onPick;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final tags = ProjectSearch.tags(projects);
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
+      children: [
+        Text(
+          'Type to search across every project.',
+          style: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        if (tags.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          Text(
+            'Tags',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Everything written as [tag], in an item or in its notes.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final tag in tags)
+                ActionChip(
+                  avatar: Text(
+                    '${tag.count}',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSecondaryContainer,
+                    ),
+                  ),
+                  label: Text(tag.tag),
+                  backgroundColor: theme.colorScheme.secondaryContainer,
+                  side: BorderSide.none,
+                  onPressed: () => onPick(tag.tag),
+                ),
+            ],
+          ),
+        ],
+      ],
     );
   }
 }

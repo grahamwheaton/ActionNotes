@@ -1,6 +1,7 @@
 import '../markdown/project_links.dart';
 import '../markdown/project_markdown.dart';
 import '../markdown/project_merge.dart';
+import '../models/checklist_item.dart';
 import '../models/project.dart';
 import 'github_client.dart';
 import 'local_store.dart';
@@ -233,6 +234,63 @@ class SyncService {
       // rather than failing the same way forever.
       await localStore.save(toPush);
       return toPush;
+    } finally {
+      client.dispose();
+    }
+  }
+
+  /// Appends items to a project's archive file, creating it if need be.
+  ///
+  /// Returns null on success, or a message saying why not — the caller only
+  /// removes them from the list once they are safely written.
+  Future<String?> archiveItems(
+    GitHubConfig config,
+    Project project,
+    List<ChecklistItem> items,
+  ) async {
+    if (items.isEmpty) return null;
+    if (!config.isComplete) {
+      return 'Connect a GitHub repo in Settings before archiving.';
+    }
+
+    final path = '${GitHubClient.archiveDir}/${project.slug}.md';
+    final client = _clientFactory(config);
+    try {
+      final existing = await client.readFile(path);
+      final stamp = DateTime.now().toUtc().toIso8601String().split('T').first;
+
+      final buffer = StringBuffer();
+      if (existing == null) {
+        buffer
+          ..writeln('# ${project.title} — archive')
+          ..writeln()
+          ..writeln('Completed items moved out of `projects/${project.slug}.md`.')
+          ..writeln();
+      } else {
+        buffer.write(existing.content);
+        if (!existing.content.endsWith('\n')) buffer.writeln();
+        buffer.writeln();
+      }
+
+      buffer
+        ..writeln('## Archived $stamp')
+        ..writeln();
+      for (final item in items) {
+        buffer.write(ProjectMarkdown.serializeItem(item));
+      }
+
+      await client.writeFile(
+        path: path,
+        content: buffer.toString(),
+        message: 'Archive ${items.length} completed '
+            '${items.length == 1 ? 'item' : 'items'} from ${project.title}',
+        sha: existing?.sha,
+      );
+      return null;
+    } on GitHubException catch (error) {
+      return 'Could not write the archive: ${error.message}';
+    } catch (_) {
+      return 'Could not reach GitHub to write the archive.';
     } finally {
       client.dispose();
     }

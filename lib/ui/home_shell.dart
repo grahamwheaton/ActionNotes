@@ -11,6 +11,7 @@ import 'conflict_dialog.dart';
 import 'context_menu.dart';
 import 'note_editor.dart';
 import 'search_screen.dart';
+import 'shortcuts_sheet.dart';
 import 'settings_screen.dart';
 import 'text_prompt.dart';
 
@@ -28,6 +29,10 @@ class HomeShell extends StatelessWidget {
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyK, control: true): () =>
             SearchScreen.open(context),
+        // The same activators the sheet documents, so the two cannot
+        // disagree about which keys open it.
+        for (final activator in shortcutsSheetActivators)
+          activator: () => showShortcutsSheet(context),
       },
       child: LayoutBuilder(
         builder: (context, constraints) =>
@@ -165,10 +170,15 @@ class _DetailHeader extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: 'Clear completed',
-            icon: const Icon(Icons.playlist_remove),
-            onPressed: () =>
-                context.read<AppState>().clearCompleted(project.slug),
+            tooltip: 'Archive completed',
+            icon: const Icon(Icons.inventory_2_outlined),
+            onPressed: () async {
+              final problem =
+                  await context.read<AppState>().archiveCompleted(project.slug);
+              if (problem == null || !context.mounted) return;
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text(problem)));
+            },
           ),
         ],
       ),
@@ -535,6 +545,14 @@ class _SidebarFooter extends StatelessWidget {
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ),
+                ),
+                // A phone has no ? key to press, so the sheet needs a way in
+                // that is not a shortcut.
+                IconButton(
+                  tooltip: 'Keyboard shortcuts',
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.keyboard_outlined, size: 18),
+                  onPressed: () => showShortcutsSheet(context),
                 ),
                 const AppVersionLabel(),
               ],

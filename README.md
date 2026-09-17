@@ -32,7 +32,10 @@ pasting one file — or by pointing the model at the repo.
   everything carrying that tag. The tags live in the markdown itself, so
   anything reading the file sees them.
 - Search across every project's titles, items and notes, saying where each
-  hit came from. `[tag]` in the search box asks for that tag exactly.
+  hit came from, and **landing on the line that matched** rather than just
+  opening its project. `[tag]` in the search box asks for that tag exactly,
+  and an empty box lists **every tag in use** with how many items carry it —
+  browsing and searching in the same place.
 - **Light or dark**, or whatever the system is doing — an override in
   Settings, remembered between runs.
 - Per-item notes in markdown, with images pasted, dropped or picked from disk
@@ -54,7 +57,21 @@ pasting one file — or by pointing the model at the repo.
   does not route through Save or back.
 - Links between projects: type `[[` for a picker, or write a normal markdown
   link. Tap one in the preview to jump there.
-- Right-click (or long-press) an item or a project for star, notes, rename and
+- **Move an item to another project**, from its right-click menu. Its notes
+  come with it, and so do its images: each attachment is copied into the new
+  project's folder and the references rewritten, because the tidy-up that
+  follows a push deletes files a project no longer mentions. If a copy cannot
+  be made, nothing moves.
+- **Archive completed items** rather than clearing them. They are appended to
+  `archive/<project>.md` — the format's own lines, so anything that reads a
+  project file reads the archive — and only then taken off the list, so a
+  failed write leaves the list as it was. Nothing is deleted.
+- **Changes made elsewhere show up while the app is open**: a quiet sync every
+  45 seconds, stopped when the app goes to the background, and one straight
+  away when it comes back. A push in flight is allowed to land first, so the
+  two can never write against the same SHA.
+- Right-click (or long-press) an item or a project for star, notes, rename,
+  move and
   delete.
 - Drag open items to reorder them, by the handle on the right.
 - When a project changes both on a device and on GitHub, the app says so and
@@ -124,6 +141,11 @@ An item's notes are a markdown document. In the editor:
 - **Keyboard**: Ctrl+0 paragraph, Ctrl+1 to Ctrl+6 headers, Ctrl+L bullet,
   Ctrl+- horizontal line, Ctrl+B bold, Ctrl+I italic. Over a run of lines:
   Ctrl+A all, Ctrl+C copy, Ctrl+X cut, backspace or delete to remove.
+  **Ctrl+/ or ?** lists the lot, from the same table the app-level shortcuts
+  are registered from.
+- On a phone the note's bar folds undo, redo, link and image into a menu so a
+  long task title has the width to be read, and the star sits beside Save so
+  an item can be starred without going back to the list.
 
 What this is not: the markers reappear whenever the caret is among them, so it
 is not quite Word. Backlinks, tags and the graph view are not here either.

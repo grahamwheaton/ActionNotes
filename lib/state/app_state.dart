@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../markdown/project_links.dart';
 import '../markdown/project_merge.dart';
 import '../models/checklist_item.dart';
 import '../models/project.dart';
@@ -42,18 +43,27 @@ class AppState extends ChangeNotifier {
     SyncService? syncService,
     AttachmentStore? attachmentStore,
     Duration pushDelay = defaultPushDelay,
+    Duration syncInterval = defaultSyncInterval,
   })  : _localStore = localStore ?? LocalStore(),
         _settingsStore = settingsStore ?? SettingsStore(),
         _pushDelay = pushDelay,
+        _syncInterval = syncInterval,
         attachments = attachmentStore ?? AttachmentStore() {
     _syncService = syncService ?? SyncService(localStore: _localStore);
   }
 
   static const defaultPushDelay = Duration(seconds: 2);
 
+  /// How often to look for changes made elsewhere while the app is open.
+  /// Often enough that two devices feel like one, rarely enough that it is
+  /// not a battery or rate-limit problem.
+  static const defaultSyncInterval = Duration(seconds: 45);
+
   /// How long an edit settles before it is pushed. A test shortens it rather
   /// than waiting two seconds per edit.
   final Duration _pushDelay;
+  final Duration _syncInterval;
+  Timer? _watch;
 
   final LocalStore _localStore;
   final SettingsStore _settingsStore;
@@ -75,6 +85,7 @@ class AppState extends ChangeNotifier {
   String? _message;
   String? _selectedSlug;
   NoteTarget? _openNote;
+  NoteTarget? _revealed;
   ThemeMode _themeMode = ThemeMode.system;
   List<ProjectConflict> _conflicts = [];
 
@@ -105,6 +116,23 @@ class AppState extends ChangeNotifier {
     // A note belongs to the project it was opened from, and its index means
     // nothing in another one.
     _openNote = null;
+    notifyListeners();
+  }
+
+  /// An item a search asked to be shown, for the list to scroll to and mark
+  /// for a moment. Cleared as soon as the list has taken it, so coming back
+  /// to a project later does not flash a line again.
+  NoteTarget? get revealed => _revealed;
+
+  void revealItem(String slug, int index) {
+    _revealed = NoteTarget(slug, index);
+    notifyListeners();
+  }
+
+  /// Called by the list once it has scrolled to it.
+  void clearRevealed() {
+    if (_revealed == null) return;
+    _revealed = null;
     notifyListeners();
   }
 
@@ -155,10 +183,34 @@ class AppState extends ChangeNotifier {
     if (_config.isComplete) unawaited(sync());
   }
 
+  /// Starts checking for other people's changes while the app is in front.
+  ///
+  /// Without it a change made on the other device, or by a model editing the
+  /// repo, is invisible until something local prompts a sync.
+  void startWatching() {
+    _watch?.cancel();
+    _watch = Timer.periodic(_syncInterval, (_) {
+      if (_config.isComplete && !_syncing) unawaited(sync());
+    });
+  }
+
+  /// Stops it, for when the app goes to the background: a phone should not be
+  /// polling GitHub in someone's pocket.
+  void stopWatching() {
+    _watch?.cancel();
+    _watch = null;
+  }
+
   Future<void> sync() async {
     if (_syncing) return;
     _syncing = true;
     notifyListeners();
+
+    // A push already in flight holds the SHA this sync would write against,
+    // so let it land first rather than racing it into a conflict.
+    for (var waited = 0; _pushing.isNotEmpty && waited < 30; waited++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
 
     // What was in hand when the sync started. The service works from the
     // copies it loaded then, so this is how a project edited while it ran can
@@ -393,6 +445,99 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Moves an item to another project, notes and attachments included.
+  ///
+  /// The attachments are the reason this is not two list edits: a note refers
+  /// to `../attachments/<slug>/file`, and the tidy-up that follows a push
+  /// deletes any file the project no longer mentions. Leaving the references
+  /// pointing at the old project would have its images deleted underneath it,
+  /// so each one is copied across and the references rewritten first. If a
+  /// copy cannot be made the move does not happen, which is better than a
+  /// move that loses the pictures.
+  ///
+  /// Returns null on success, or a message saying why not.
+  Future<String?> moveItem(String fromSlug, int index, String toSlug) async {
+    if (fromSlug == toSlug) return null;
+
+    final from = projectBySlug(fromSlug);
+    final to = projectBySlug(toSlug);
+    if (from == null || to == null) return 'That project is no longer here.';
+    if (index >= from.items.length) return 'That item is no longer here.';
+
+    final item = from.items[index];
+
+    // Names already used in the target, so a copy cannot overwrite one of its
+    // own images.
+    final taken = <String>{};
+    for (final existing in to.items) {
+      taken.addAll(ProjectLinks.attachmentNames(existing.notes));
+    }
+
+    var notes = item.notes;
+    for (final name in ProjectLinks.attachmentNames(item.notes)) {
+      final copied = await _copyAttachment(
+        name: name,
+        fromSlug: fromSlug,
+        toSlug: toSlug,
+        taken: taken,
+      );
+      if (copied == null) {
+        return 'Could not copy "$name" to ${to.title}, so nothing was moved.';
+      }
+      taken.add(copied);
+      notes = notes.replaceAll(
+        AttachmentStore.markdownPath(fromSlug, name),
+        AttachmentStore.markdownPath(toSlug, copied),
+      );
+    }
+
+    // The note open on the source project cannot be trusted afterwards, for
+    // the same reason a removal closes it: the indexes shift.
+    if (_openNote?.slug == fromSlug) _openNote = null;
+
+    await _mutate(fromSlug, (project) {
+      final items = [...project.items]..removeAt(index);
+      return project.copyWith(items: items);
+    });
+    await _mutate(
+      toSlug,
+      (project) => project.copyWith(
+        items: [item.copyWith(notes: notes), ...project.items],
+      ),
+    );
+    return null;
+  }
+
+  /// Copies one attachment into another project's folder, returning the name
+  /// it was given, or null if it could not be copied.
+  Future<String?> _copyAttachment({
+    required String name,
+    required String fromSlug,
+    required String toSlug,
+    required Set<String> taken,
+  }) async {
+    try {
+      final bytes = await attachments.bytesFor(
+        AttachmentStore.repoPath(fromSlug, name),
+        _config,
+      );
+      if (bytes == null) return null;
+
+      final copied = AttachmentStore.uniqueFileName(name, taken);
+      final path = AttachmentStore.repoPath(toSlug, copied);
+      await _syncService.uploadAttachment(
+        _config,
+        path: path,
+        bytes: bytes,
+        message: 'Copy attachment $copied for a moved item',
+      );
+      await attachments.save(path, bytes);
+      return copied;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> removeItem(String slug, int index) {
     // Removing an item shifts the indexes after it, so a note open on this
     // project can no longer be trusted to point at the item it was opened on.
@@ -429,12 +574,32 @@ class AppState extends ChangeNotifier {
         return project.copyWith(items: items);
       });
 
-  Future<void> clearCompleted(String slug) => _mutate(
-        slug,
-        (project) => project.copyWith(
-          items: project.items.where((item) => !item.done).toList(),
-        ),
-      );
+  /// Moves completed items out of the list and into `archive/<slug>.md`.
+  ///
+  /// It used to delete them, which is the one thing a checklist should not do
+  /// to something you finished — and in my own notes repo, the one thing the
+  /// working agreement forbids. They are written to the archive first and
+  /// only then taken out of the list, so a failure leaves the list as it was.
+  ///
+  /// Returns null on success, or a message saying why nothing was archived.
+  Future<String?> archiveCompleted(String slug) async {
+    final project = projectBySlug(slug);
+    if (project == null) return null;
+
+    final done = project.items.where((item) => item.done).toList();
+    if (done.isEmpty) return 'Nothing is completed yet.';
+
+    final problem = await _syncService.archiveItems(_config, project, done);
+    if (problem != null) return problem;
+
+    await _mutate(
+      slug,
+      (current) => current.copyWith(
+        items: current.items.where((item) => !item.done).toList(),
+      ),
+    );
+    return null;
+  }
 
   Future<void> setNotes(String slug, String notes) =>
       _mutate(slug, (project) => project.copyWith(notes: notes));
@@ -498,6 +663,13 @@ class AppState extends ChangeNotifier {
   Future<void> _pushNow(String slug) async {
     _pendingPushes.remove(slug);
 
+    // A sync pushes the dirty projects itself, so pushing during one would be
+    // the same two-writes-one-SHA race from the other direction.
+    if (_syncing) {
+      _schedulePush(slug);
+      return;
+    }
+
     if (_pushing.contains(slug)) {
       _schedulePush(slug);
       return;
@@ -549,6 +721,7 @@ class AppState extends ChangeNotifier {
 
   @override
   void dispose() {
+    stopWatching();
     for (final timer in _pendingPushes.values) {
       timer.cancel();
     }

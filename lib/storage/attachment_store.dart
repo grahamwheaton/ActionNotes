@@ -80,6 +80,14 @@ class AttachmentStore {
   }
 
   /// Builds a filename that will not collide with one already in the project.
+  /// The file's bytes, from the cache or from GitHub, or null if neither has
+  /// them. Used when an attachment has to be copied rather than shown.
+  Future<List<int>?> bytesFor(String repoPath, GitHubConfig config) async {
+    final file = await resolve(repoPath, config);
+    if (file == null) return null;
+    return file.readAsBytes();
+  }
+
   static String uniqueFileName(String original, Set<String> taken) {
     final safe = original
         .split(RegExp(r'[/\\]'))

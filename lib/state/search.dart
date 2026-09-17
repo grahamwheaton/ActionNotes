@@ -1,6 +1,14 @@
 import '../markdown/item_tags.dart';
 import '../models/project.dart';
 
+/// A tag and how many items carry it.
+class TagCount {
+  const TagCount(this.tag, this.count);
+
+  final String tag;
+  final int count;
+}
+
 /// Where a match was found, so a result can say why it matched.
 enum SearchField { projectTitle, itemText, itemNotes, projectNotes }
 
@@ -113,6 +121,38 @@ class ProjectSearch {
     }
 
     return hits;
+  }
+
+  /// Every tag in use, most used first and alphabetically within that.
+  ///
+  /// Tags can be searched but not remembered, so this is what makes them
+  /// findable: the list is built from the items themselves, which means it
+  /// cannot go stale.
+  static List<TagCount> tags(List<Project> projects) {
+    final counts = <String, int>{};
+    final spellings = <String, String>{};
+
+    for (final project in projects) {
+      for (final item in project.items) {
+        for (final tag in item.tags) {
+          final key = tag.toLowerCase();
+          counts[key] = (counts[key] ?? 0) + 1;
+          spellings.putIfAbsent(key, () => tag);
+        }
+      }
+    }
+
+    final tags = [
+      for (final entry in counts.entries) TagCount(spellings[entry.key]!, entry.value),
+    ];
+
+    tags.sort((a, b) {
+      final byCount = b.count.compareTo(a.count);
+      return byCount != 0
+          ? byCount
+          : a.tag.toLowerCase().compareTo(b.tag.toLowerCase());
+    });
+    return tags;
   }
 
   /// The first line of [text] containing [needle], trimmed, or null.

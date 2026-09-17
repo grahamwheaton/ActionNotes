@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../markdown/item_tags.dart';
 import '../markdown/project_links.dart';
+import '../models/checklist_item.dart';
 import '../state/app_state.dart';
 import 'home_shell.dart';
 import 'note_blocks_editor.dart';
@@ -173,9 +174,22 @@ class _NoteEditorState extends State<NoteEditor> {
     return ProjectLinks.linkTo(project);
   }
 
+  /// The item as it stands, so the star in the bar shows its real state.
+  ChecklistItem? get _item {
+    final project = context.watch<AppState>().projectBySlug(widget.slug);
+    if (project == null || widget.index >= project.items.length) return null;
+    return project.items[widget.index];
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+
+    // A phone's bar cannot hold five buttons and a title that wraps, and the
+    // title is the part worth reading: everything but the star and Save moves
+    // into a menu.
+    final tight = MediaQuery.sizeOf(context).width < 560;
+    final item = _item;
 
     return PopScope(
       // Back — the app bar arrow, or Android's system back — saves rather
@@ -193,37 +207,57 @@ class _NoteEditorState extends State<NoteEditor> {
           // the one a route would have supplied.
           leading: _inPane ? BackButton(onPressed: _saveAndClose) : null,
           // A task title is a sentence more often than a label, so give it
-          // room to wrap instead of cutting it off mid-word.
-          toolbarHeight: 78,
+          // room to wrap instead of cutting it off mid-word — and more of it
+          // where the bar is narrow, which is where it runs out first.
+          toolbarHeight: tight ? 116 : 78,
+          titleSpacing: tight ? 4 : null,
           title: Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
-            child: _EditorTitle(text: widget.title),
+            child: _EditorTitle(text: widget.title, maxLines: tight ? 5 : 3),
           ),
           actions: [
-            IconButton(
-              tooltip: 'Undo',
-              icon: const Icon(Icons.undo),
-              onPressed: _editor.currentState?.canUndo ?? false
-                  ? () => setState(() => _editor.currentState?.undo())
-                  : null,
-            ),
-            IconButton(
-              tooltip: 'Redo',
-              icon: const Icon(Icons.redo),
-              onPressed: _editor.currentState?.canRedo ?? false
-                  ? () => setState(() => _editor.currentState?.redo())
-                  : null,
-            ),
-            IconButton(
-              tooltip: 'Link to a project',
-              icon: const Icon(Icons.link),
-              onPressed: _linkToProject,
-            ),
-            IconButton(
-              tooltip: 'Attach image',
-              icon: const Icon(Icons.image_outlined),
-              onPressed: () => _images.currentState?.pickImage(),
-            ),
+            if (item != null)
+              IconButton(
+                tooltip: item.starred ? 'Remove star' : 'Star',
+                icon: Icon(item.starred ? Icons.star : Icons.star_border),
+                color: item.starred ? theme.colorScheme.primary : null,
+                onPressed: () => context
+                    .read<AppState>()
+                    .toggleStar(widget.slug, widget.index),
+              ),
+            if (tight)
+              _OverflowMenu(
+                canUndo: _editor.currentState?.canUndo ?? false,
+                canRedo: _editor.currentState?.canRedo ?? false,
+                onUndo: _undo,
+                onRedo: _redo,
+                onLink: _linkToProject,
+                onImage: () => _images.currentState?.pickImage(),
+              )
+            else ...[
+              IconButton(
+                tooltip: 'Undo',
+                icon: const Icon(Icons.undo),
+                onPressed:
+                    _editor.currentState?.canUndo ?? false ? _undo : null,
+              ),
+              IconButton(
+                tooltip: 'Redo',
+                icon: const Icon(Icons.redo),
+                onPressed:
+                    _editor.currentState?.canRedo ?? false ? _redo : null,
+              ),
+              IconButton(
+                tooltip: 'Link to a project',
+                icon: const Icon(Icons.link),
+                onPressed: _linkToProject,
+              ),
+              IconButton(
+                tooltip: 'Attach image',
+                icon: const Icon(Icons.image_outlined),
+                onPressed: () => _images.currentState?.pickImage(),
+              ),
+            ],
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: TextButton(
@@ -302,11 +336,83 @@ class _NoteEditorState extends State<NoteEditor> {
   }
 }
 
+/// Undo, redo, link and image, folded away where the bar is narrow so the
+/// title has the width.
+class _OverflowMenu extends StatelessWidget {
+  const _OverflowMenu({
+    required this.canUndo,
+    required this.canRedo,
+    required this.onUndo,
+    required this.onRedo,
+    required this.onLink,
+    required this.onImage,
+  });
+
+  final bool canUndo;
+  final bool canRedo;
+  final VoidCallback onUndo;
+  final VoidCallback onRedo;
+  final VoidCallback onLink;
+  final VoidCallback onImage;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'More',
+      onSelected: (value) => switch (value) {
+        'undo' => onUndo(),
+        'redo' => onRedo(),
+        'link' => onLink(),
+        _ => onImage(),
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'undo',
+          enabled: canUndo,
+          child: const _MenuRow(icon: Icons.undo, label: 'Undo'),
+        ),
+        PopupMenuItem(
+          value: 'redo',
+          enabled: canRedo,
+          child: const _MenuRow(icon: Icons.redo, label: 'Redo'),
+        ),
+        const PopupMenuItem(
+          value: 'link',
+          child: _MenuRow(icon: Icons.link, label: 'Link to a project'),
+        ),
+        const PopupMenuItem(
+          value: 'image',
+          child: _MenuRow(icon: Icons.image_outlined, label: 'Attach image'),
+        ),
+      ],
+    );
+  }
+}
+
+class _MenuRow extends StatelessWidget {
+  const _MenuRow({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 18),
+        const SizedBox(width: 10),
+        Text(label),
+      ],
+    );
+  }
+}
+
 /// The item's line at the top of the editor, with its tags as pills.
 class _EditorTitle extends StatelessWidget {
-  const _EditorTitle({required this.text});
+  const _EditorTitle({required this.text, this.maxLines = 3});
 
   final String text;
+  final int maxLines;
 
   @override
   Widget build(BuildContext context) {
@@ -319,7 +425,12 @@ class _EditorTitle extends StatelessWidget {
     final title = ItemTags.strip(text);
 
     if (tags.isEmpty) {
-      return Text(text, maxLines: 3, overflow: TextOverflow.ellipsis, style: style);
+      return Text(
+        text,
+        maxLines: maxLines,
+        overflow: TextOverflow.ellipsis,
+        style: style,
+      );
     }
 
     return Wrap(
@@ -330,7 +441,12 @@ class _EditorTitle extends StatelessWidget {
         // No Flexible: a Wrap gives its children their own width, and a
         // long title wraps onto another line rather than squeezing the pills.
         if (title.isNotEmpty)
-          Text(title, maxLines: 3, overflow: TextOverflow.ellipsis, style: style),
+          Text(
+            title,
+            maxLines: maxLines,
+            overflow: TextOverflow.ellipsis,
+            style: style,
+          ),
         for (final tag in tags) TagPill(tag: tag, faded: false),
       ],
     );

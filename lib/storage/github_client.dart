@@ -49,6 +49,10 @@ class GitHubClient {
 
   static const _base = 'https://api.github.com';
   static const projectsDir = 'projects';
+
+  /// Where completed items go when a list is tidied. Deliberately not under
+  /// `projects/`, which is scanned: an archive is kept, not shown.
+  static const archiveDir = 'archive';
   static const attachmentsDir = 'attachments';
 
   final GitHubConfig config;

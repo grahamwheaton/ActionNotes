@@ -127,6 +127,22 @@ class ProjectMarkdown {
     );
   }
 
+  /// One item as its markdown line, plus its indented notes — the same shape
+  /// [serialize] writes, so an archived item reads exactly as it did in the
+  /// list.
+  static String serializeItem(ChecklistItem item) {
+    final buffer = StringBuffer();
+    final star = item.starred ? '$starMarker ' : '';
+    buffer.writeln('- [${item.done ? 'x' : ' '}] $star${item.text}');
+
+    if (item.hasNotes) {
+      for (final line in item.notes.trim().split('\n')) {
+        buffer.writeln(line.isEmpty ? '' : '  $line');
+      }
+    }
+    return buffer.toString();
+  }
+
   static String serialize(Project project) {
     final buffer = StringBuffer()
       ..writeln('---')

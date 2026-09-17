@@ -97,6 +97,15 @@ items first and groups completed ones under a collapsible header, but it does
 not rewrite the file to match that view: reordering in the app moves open items
 among themselves and leaves completed items where they are.
 
+## Archive
+
+Archiving a project's completed items appends them to
+`archive/<project-slug>.md`, as the same `- [x]` lines with the same indented
+notes, under an `## Archived <date>` heading. The directory is deliberately
+outside `projects/`, which is the only one the app scans, so an archived item
+is kept and readable — on GitHub, in an editor, by a model — without coming
+back as a checklist. Nothing is deleted.
+
 ## Attachments
 
 Images are stored in the repo at `attachments/<project-slug>/<filename>` and

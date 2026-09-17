@@ -13,6 +13,7 @@ import 'note_blocks_editor.dart';
 import 'note_editor.dart';
 import 'note_images.dart';
 import 'note_view.dart';
+import 'project_picker.dart';
 import 'tag_pill.dart';
 import 'text_prompt.dart';
 
@@ -34,7 +35,14 @@ class ChecklistView extends StatefulWidget {
 class _ChecklistViewState extends State<ChecklistView> {
   final _newItemController = TextEditingController();
   final _newItemFocus = FocusNode();
+  final _scroll = ScrollController();
   bool _completedExpanded = true;
+
+  /// The item a search asked for, marked for a moment so the eye can find it.
+  /// By text, for the same reason the note buffers are: an index stops
+  /// meaning the same row as soon as the list changes.
+  String? _flashing;
+  Timer? _flashTimer;
 
   /// Items whose notes are open in place, keyed by the item's text.
   ///
@@ -148,9 +156,46 @@ class _ChecklistViewState extends State<ChecklistView> {
     for (final itemText in _pendingNotes.keys.toList()) {
       _flushNotes(itemText);
     }
+    _flashTimer?.cancel();
+    _scroll.dispose();
     _newItemController.dispose();
     _newItemFocus.dispose();
     super.dispose();
+  }
+
+  /// Scrolls to the item a search picked and marks it.
+  ///
+  /// The offset is estimated from the row's place in the view rather than
+  /// measured: the rows are built lazily, so the one being looked for usually
+  /// does not exist yet to be measured. Landing near it and marking it is
+  /// what the search was for.
+  void _revealItem(Project project, List<int> viewOrder, int index) {
+    final position = viewOrder.indexOf(index);
+    if (position < 0) {
+      // It is in the completed group, which is closed. Open it and let the
+      // next frame do the scrolling.
+      if (!_completedExpanded) setState(() => _completedExpanded = true);
+      return;
+    }
+
+    _state.clearRevealed();
+
+    const rowHeight = 62.0;
+    if (_scroll.hasClients) {
+      final target = (position * rowHeight - rowHeight)
+          .clamp(0.0, _scroll.position.maxScrollExtent);
+      _scroll.animateTo(
+        target,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      );
+    }
+
+    _flashTimer?.cancel();
+    setState(() => _flashing = project.items[index].text);
+    _flashTimer = Timer(const Duration(milliseconds: 1800), () {
+      if (mounted) setState(() => _flashing = null);
+    });
   }
 
   /// Adds what has been typed. [starred] comes from Ctrl+Enter, for an item
@@ -194,6 +239,25 @@ class _ChecklistViewState extends State<ChecklistView> {
       }
     }
 
+    // What the list shows, in order, so a search can be told where a row is.
+    final viewOrder = [
+      ...starred,
+      ...open,
+      if (_completedExpanded) ...done,
+    ];
+
+    final revealed = context.watch<AppState>().revealed;
+    if (revealed != null && revealed.slug == widget.slug) {
+      final index = revealed.index;
+      if (index < project.items.length) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _revealItem(project, viewOrder, index);
+        });
+      } else {
+        _state.clearRevealed();
+      }
+    }
+
     return Scaffold(
       appBar: widget.showAppBar
           ? AppBar(
@@ -207,6 +271,7 @@ class _ChecklistViewState extends State<ChecklistView> {
             child: project.items.isEmpty
                 ? const _EmptyChecklist()
                 : CustomScrollView(
+                    controller: _scroll,
                     slivers: [
                       // Starred first, each group draggable within itself so a
                       // drag cannot silently unstar or unpin something.
@@ -230,6 +295,7 @@ class _ChecklistViewState extends State<ChecklistView> {
                               item: project.items[index],
                               dragPosition: position,
                               notesExpanded: _expandedNotes.contains(project.items[index].text),
+                              flashing: _flashing == project.items[index].text,
                               onToggleNotes: () =>
                                   _toggleNotes(index, project.items[index].text),
                               onNotesChanged: (notes) =>
@@ -258,6 +324,7 @@ class _ChecklistViewState extends State<ChecklistView> {
                             item: project.items[index],
                             dragPosition: position,
                             notesExpanded: _expandedNotes.contains(project.items[index].text),
+                              flashing: _flashing == project.items[index].text,
                             onToggleNotes: () =>
                                   _toggleNotes(index, project.items[index].text),
                               onNotesChanged: (notes) =>
@@ -289,6 +356,7 @@ class _ChecklistViewState extends State<ChecklistView> {
                               index: index,
                               item: project.items[index],
                               notesExpanded: _expandedNotes.contains(project.items[index].text),
+                              flashing: _flashing == project.items[index].text,
                               onToggleNotes: () =>
                                   _toggleNotes(index, project.items[index].text),
                               onNotesChanged: (notes) =>
@@ -373,6 +441,7 @@ class _ItemTile extends StatelessWidget {
     required this.notesExpanded,
     required this.onToggleNotes,
     required this.onNotesChanged,
+    this.flashing = false,
     this.dragPosition,
   });
 
@@ -388,6 +457,9 @@ class _ItemTile extends StatelessWidget {
 
   /// Whether this item's notes are showing under it.
   final bool notesExpanded;
+
+  /// Marked for a moment, because a search just pointed at this row.
+  final bool flashing;
   final VoidCallback onToggleNotes;
 
   /// Fires as the notes are edited in place, for the view to save.
@@ -432,6 +504,19 @@ class _ItemTile extends StatelessWidget {
           },
         ),
         ContextMenuAction(
+          label: 'Move to...',
+          icon: Icons.drive_file_move_outline,
+          onSelected: () async {
+            final project = await ProjectPicker.show(context, excludeSlug: slug);
+            if (project == null || !context.mounted) return;
+
+            final problem = await state.moveItem(slug, index, project.slug);
+            if (problem == null || !context.mounted) return;
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(problem)));
+          },
+        ),
+        ContextMenuAction(
           label: 'Delete',
           icon: Icons.delete_outline,
           destructive: true,
@@ -445,14 +530,19 @@ class _ItemTile extends StatelessWidget {
         // item that is done has had its moment, and goes back to looking
         // like the rest.
         decoration: BoxDecoration(
-          color: highlighted
-              ? theme.colorScheme.primaryContainer.withValues(alpha: 0.45)
-              : theme.colorScheme.surfaceContainerLowest,
+          color: flashing
+              ? theme.colorScheme.tertiaryContainer
+              : highlighted
+                  ? theme.colorScheme.primaryContainer.withValues(alpha: 0.45)
+                  : theme.colorScheme.surfaceContainerLowest,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: highlighted
-                ? theme.colorScheme.primary.withValues(alpha: 0.5)
-                : theme.colorScheme.outlineVariant,
+            color: flashing
+                ? theme.colorScheme.tertiary
+                : highlighted
+                    ? theme.colorScheme.primary.withValues(alpha: 0.5)
+                    : theme.colorScheme.outlineVariant,
+            width: flashing ? 2 : 1,
           ),
         ),
         child: Column(
@@ -768,8 +858,11 @@ class _ProjectMenu extends StatelessWidget {
     return PopupMenuButton<String>(
       onSelected: (value) async {
         switch (value) {
-          case 'clear':
-            await state.clearCompleted(project.slug);
+          case 'archive':
+            final problem = await state.archiveCompleted(project.slug);
+            if (problem == null || !context.mounted) return;
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(problem)));
           case 'notes':
             final notes = await TextPromptDialog.show(
               context,
@@ -784,7 +877,10 @@ class _ProjectMenu extends StatelessWidget {
         }
       },
       itemBuilder: (_) => const [
-        PopupMenuItem(value: 'clear', child: Text('Clear completed')),
+        PopupMenuItem(
+          value: 'archive',
+          child: Text('Archive completed'),
+        ),
         PopupMenuItem(value: 'notes', child: Text('Project notes')),
       ],
     );
