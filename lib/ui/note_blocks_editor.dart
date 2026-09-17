@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -24,6 +25,10 @@ class _Row {
   NoteBlock block;
   final MarkdownTextController? controller;
   final FocusNode? focus;
+
+  /// The row's box in the list, so a drag across the note can work out which
+  /// line the pointer is over.
+  final GlobalKey boxKey = GlobalKey();
 
   void dispose() {
     controller?.dispose();
@@ -86,6 +91,11 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   /// The end that moves. Kept apart from the anchor so shift and an arrow
   /// back the way you came shrinks the selection instead of sitting still.
   int? _reachId;
+
+  /// The row a mouse drag started in, and whether it has left that row.
+  /// Cleared when the button comes up.
+  int? _dragFromId;
+  bool _dragLeftItsRow = false;
 
 
   late final NoteHistory _history = NoteHistory(widget.initialMarkdown);
@@ -178,6 +188,122 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     _anchorId = anchor;
     _reachId = row.id;
     _selectRange(anchor, row.id);
+  }
+
+  /// Which row the pointer is over, by vertical position: a drag that strays
+  /// past the end of a line is still a drag over that line.
+  int? _rowIdAt(Offset position) {
+    for (final row in _rows) {
+      final box = row.boxKey.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) continue;
+
+      final top = box.localToGlobal(Offset.zero).dy;
+      if (position.dy >= top && position.dy < top + box.size.height) {
+        return row.id;
+      }
+    }
+    return null;
+  }
+
+  /// Dragging from one line into another selects the lines between them.
+  ///
+  /// A pointer listener rather than a gesture: the field being dragged in has
+  /// already claimed the gesture arena for its own text selection, and this
+  /// has to see the same movement without taking it away.
+  ///
+  /// Mouse only. A touch drag on a note is a scroll, and taking that over
+  /// would cost more than it gave; a phone selects across lines with shift
+  /// and the arrow keys, or by reaching from a line's handle.
+  void _onPointerDown(PointerDownEvent event) {
+    if (event.kind != PointerDeviceKind.mouse) return;
+    _dragFromId = _rowIdAt(event.position);
+    _dragLeftItsRow = false;
+  }
+
+  void _onPointerMove(PointerMoveEvent event) {
+    final from = _dragFromId;
+    if (from == null || event.buttons & kPrimaryMouseButton == 0) return;
+
+    final over = _rowIdAt(event.position);
+    if (over == null) return;
+
+    // Back inside the row it started in: hand selecting back to the field,
+    // which is what a drag within one line should be.
+    if (over == from) {
+      if (_dragLeftItsRow) {
+        _dragLeftItsRow = false;
+        _clearRowSelection();
+      }
+      return;
+    }
+
+    _dragLeftItsRow = true;
+    _anchorId = from;
+    _reachId = over;
+    _selectRange(from, over);
+  }
+
+  void _onPointerFinished(PointerEvent event) => _dragFromId = null;
+
+  /// The selected rows, in the order they appear.
+  Iterable<_Row> get _selectedRows =>
+      _rows.where((row) => _selectedIds.contains(row.id));
+
+  /// The markdown of the selected rows, which is what a copy puts on the
+  /// clipboard — markdown, so pasting it anywhere else keeps the structure.
+  String _selectionMarkdown() => NoteBlocks.serialize([
+        for (final row in _selectedRows)
+          row.block.isText
+              ? row.block.copyWith(text: row.controller!.text)
+              : row.block,
+      ]);
+
+  Future<void> copySelection({bool cut = false}) async {
+    if (_selectedIds.isEmpty) return;
+
+    await Clipboard.setData(ClipboardData(text: _selectionMarkdown()));
+    if (cut) deleteSelection();
+  }
+
+  /// Removes the selected rows, leaving somewhere to type if that was all of
+  /// them, and puts the caret where they were.
+  void deleteSelection() {
+    if (_selectedIds.isEmpty) return;
+
+    final removed = _selectedRows.toList();
+    final at = _indexOfId(removed.first.id);
+
+    setState(() => _rows.removeWhere((row) => _selectedIds.contains(row.id)));
+    for (final row in removed) {
+      if (row.id == _activeId) _activeId = null;
+      row.dispose();
+    }
+    _clearRowSelection();
+
+    if (_rows.every((row) => !row.block.isText)) {
+      setState(() => _rows.insert(
+            at.clamp(0, _rows.length),
+            _row(const NoteBlock.paragraph('')),
+          ));
+    }
+
+    final landing = _rows[(at - 1).clamp(0, _rows.length - 1)];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      landing.focus?.requestFocus();
+    });
+    _emit(structural: true);
+  }
+
+  /// Ctrl+A over a note of more than one line takes the whole note, rather
+  /// than the one line the caret happens to be in. Returns false when there
+  /// is nothing to do, so the field's own select-all still happens.
+  bool selectAllRows() {
+    if (_rows.length < 2) return false;
+
+    _anchorId = _rows.first.id;
+    _reachId = _rows.last.id;
+    _selectRange(_rows.first.id, _rows.last.id);
+    return true;
   }
 
   /// Applies a block type to the whole selection when [row] is part of one,
@@ -539,7 +665,13 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
       alignment: Alignment.topLeft,
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 760),
-        child: _buildList(),
+        child: Listener(
+          onPointerDown: _onPointerDown,
+          onPointerMove: _onPointerMove,
+          onPointerUp: _onPointerFinished,
+          onPointerCancel: _onPointerFinished,
+          child: _buildList(),
+        ),
       ),
     );
   }
@@ -553,9 +685,13 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
           ? const EdgeInsets.fromLTRB(16, 0, 0, 0)
           : const EdgeInsets.fromLTRB(16, 10, 16, 10),
       itemCount: _rows.length,
-      itemBuilder: (context, index) {
-        final row = _rows[index];
+      itemBuilder: (context, index) =>
+          KeyedSubtree(key: _rows[index].boxKey, child: _buildRow(_rows[index])),
+    );
+  }
 
+  Widget _buildRow(_Row row) {
+    {
         if (row.block.type == NoteBlockType.divider) {
           return _DividerBlock(
             key: ValueKey(row.id),
@@ -575,6 +711,9 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
                 onExtendRows: (delta) => _extendRows(row, delta),
                 onExtendTo: () => _extendTo(row),
                 onClearSelection: _clearRowSelection,
+                onCopySelection: copySelection,
+                onDeleteSelection: deleteSelection,
+                onSelectAllRows: selectAllRows,
                 onMark: (mark) => _applyMark(row, mark),
                 onClearMarks: () => _clearMarks(row),
                 onIndent: (delta) => _nudgeIndent(row, delta),
@@ -592,8 +731,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
                 onOpenProject: widget.onOpenProject,
                 onRemove: () => _removeRow(row),
               );
-      },
-    );
+    }
   }
 }
 
@@ -613,6 +751,9 @@ class _TextBlock extends StatelessWidget {
     required this.onExtendRows,
     required this.onExtendTo,
     required this.onClearSelection,
+    required this.onCopySelection,
+    required this.onDeleteSelection,
+    required this.onSelectAllRows,
     this.onRequestLink,
   });
 
@@ -631,6 +772,14 @@ class _TextBlock extends StatelessWidget {
   final ValueChanged<int> onExtendRows;
   final VoidCallback onExtendTo;
   final VoidCallback onClearSelection;
+
+  /// Copies the selected run of rows as markdown, cutting it if asked.
+  final Future<void> Function({bool cut}) onCopySelection;
+  final VoidCallback onDeleteSelection;
+
+  /// Takes the whole note. False when there is only one row, so the field's
+  /// own select-all is left to happen.
+  final bool Function() onSelectAllRows;
   final Future<void> Function()? onRequestLink;
 
   TextStyle _styleFor(ThemeData theme) {
@@ -699,6 +848,30 @@ class _TextBlock extends StatelessWidget {
         onSetType(const NoteBlock.divider());
         return KeyEventResult.handled;
       }
+      if (event.logicalKey == LogicalKeyboardKey.keyA && onSelectAllRows()) {
+        return KeyEventResult.handled;
+      }
+      // Copy and cut belong to the run of rows while there is one, or the
+      // field would answer with the one line the caret is in.
+      if (selected) {
+        if (event.logicalKey == LogicalKeyboardKey.keyC) {
+          onCopySelection();
+          return KeyEventResult.handled;
+        }
+        if (event.logicalKey == LogicalKeyboardKey.keyX) {
+          onCopySelection(cut: true);
+          return KeyEventResult.handled;
+        }
+      }
+    }
+
+    // Backspace or delete over a selected run takes the run, the way it takes
+    // selected text anywhere else.
+    if (selected &&
+        (event.logicalKey == LogicalKeyboardKey.backspace ||
+            event.logicalKey == LogicalKeyboardKey.delete)) {
+      onDeleteSelection();
+      return KeyEventResult.handled;
     }
 
     if (event.logicalKey == LogicalKeyboardKey.escape) {
@@ -845,6 +1018,31 @@ class _TextBlock extends StatelessWidget {
                   return AdaptiveTextSelectionToolbar.buttonItems(
                     anchors: editable.contextMenuAnchors,
                     buttonItems: [
+                      // First, and only while a run is selected: the field's
+                      // own Copy would answer with this line alone.
+                      if (selected) ...[
+                        ContextMenuButtonItem(
+                          label: 'Copy lines',
+                          onPressed: () {
+                            ContextMenuController.removeAny();
+                            onCopySelection();
+                          },
+                        ),
+                        ContextMenuButtonItem(
+                          label: 'Cut lines',
+                          onPressed: () {
+                            ContextMenuController.removeAny();
+                            onCopySelection(cut: true);
+                          },
+                        ),
+                        ContextMenuButtonItem(
+                          label: 'Delete lines',
+                          onPressed: () {
+                            ContextMenuController.removeAny();
+                            onDeleteSelection();
+                          },
+                        ),
+                      ],
                       for (final mark in InlineMark.values)
                         ContextMenuButtonItem(
                           label: mark.label,

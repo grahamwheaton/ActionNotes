@@ -64,14 +64,26 @@ An item's notes are a markdown document. In the editor:
 - **Lists nest.** `- ` makes a bullet, `- [ ] ` a checklist row with a real
   checkbox, and Tab moves a row in a level so a list can sit inside a list.
   Return continues the list; Return on an empty row leaves it.
-- **A run of lines changes together.** Shift with up or down reaches into the
-  next row once the caret has run out of text in this one, and shift-clicking
-  a ¶ handle reaches from where you were to there. The selected rows highlight,
-  and a block type — from the menu, or Ctrl+T for checkboxes, Ctrl+L for
-  bullets — lands on all of them, which is how a handful of typed lines becomes
-  a checklist. Escape, a click or typing gives the selection up. Because each
-  block is its own field, this selects whole rows rather than text across them:
-  copying or bolding across a line break is still one block at a time.
+- **Selecting across lines.** Drag with a mouse from one line into another,
+  or hold shift and press up or down — which reaches into the next row once
+  the caret has run out of text in this one — or shift-click a ¶ handle to
+  reach from where you were to there. Ctrl+A takes the whole note. The
+  selected rows highlight, and Escape, a click or typing gives the selection
+  up.
+  - Ctrl+C and Ctrl+X copy and cut the run **as markdown**, so what lands on
+    the clipboard keeps its headings and bullets; backspace or delete takes
+    the lines, in one undo step, and a note always keeps somewhere to type.
+    The right-click menu has the same three, since the field's own Copy would
+    answer with one line.
+  - A block type — from the menu, or Ctrl+T for checkboxes, Ctrl+L for
+    bullets — lands on every selected row, which is how a handful of typed
+    lines becomes a checklist.
+  - Because each block is its own text field, a selection that spans lines is
+    a run of whole lines rather than a character range: the line the drag
+    started in shows its own partial highlight, but copying takes the lines
+    entire, and an inline mark like bold still applies to one block at a
+    time. A touch drag is left to scroll the note, so a phone reaches across
+    lines with shift and the arrow keys, or from a line's handle.
 - **Inline markdown styles as you type** — `**bold**` looks bold, `*italic*`
   italic, `` `code` `` monospaced, a link shows its label rather than its
   target. The markers collapse to nothing until the caret enters the span they
@@ -97,7 +109,8 @@ An item's notes are a markdown document. In the editor:
   bold, italic, strikethrough, code, link and clear, alongside the usual copy
   and paste.
 - **Keyboard**: Ctrl+0 paragraph, Ctrl+1 to Ctrl+6 headers, Ctrl+L bullet,
-  Ctrl+- horizontal line, Ctrl+B bold, Ctrl+I italic.
+  Ctrl+- horizontal line, Ctrl+B bold, Ctrl+I italic. Over a run of lines:
+  Ctrl+A all, Ctrl+C copy, Ctrl+X cut, backspace or delete to remove.
 
 What this is not: the markers reappear whenever the caret is among them, so it
 is not quite Word. Backlinks, tags and the graph view are not here either.

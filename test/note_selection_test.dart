@@ -1,6 +1,7 @@
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/ui/home_shell.dart';
 import 'package:actionnotes/ui/theme.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -50,6 +51,42 @@ Future<void> selectDown(WidgetTester tester, int from, int rows) async {
     await tester.pumpAndSettle();
   }
   await tester.sendKeyUpEvent(LogicalKeyboardKey.shift);
+}
+
+/// Stands in for the system clipboard, which a test has none of.
+class FakeClipboard {
+  String? text;
+
+  void install(WidgetTester tester) {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        switch (call.method) {
+          case 'Clipboard.setData':
+            text = (call.arguments as Map)['text'] as String?;
+            return null;
+          case 'Clipboard.getData':
+            return {'text': text};
+          default:
+            return null;
+        }
+      },
+    );
+    addTearDown(() => tester.binding.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null));
+  }
+}
+
+/// Drags with a mouse from the middle of one row's field into another's.
+Future<void> dragAcross(WidgetTester tester, int from, int to) async {
+  final gesture = await tester.startGesture(
+    tester.getCenter(blockField(from)),
+    kind: PointerDeviceKind.mouse,
+  );
+  await gesture.moveTo(tester.getCenter(blockField(to)));
+  await tester.pumpAndSettle();
+  await gesture.up();
+  await tester.pumpAndSettle();
 }
 
 Future<void> pressCtrl(WidgetTester tester, LogicalKeyboardKey key) async {
@@ -155,5 +192,165 @@ void main() {
 
     // Only the row the caret was in changed.
     expect(await saveAndRead(tester, store), '- [ ] One\n\nTwo');
+  });
+
+  group('across lines', () {
+    testWidgets('dragging from one line into another selects the lines',
+        (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
+
+      await dragAcross(tester, 0, 2);
+      await pressCtrl(tester, LogicalKeyboardKey.keyT);
+
+      expect(
+        await saveAndRead(tester, store),
+        '- [ ] One\n- [ ] Two\n- [ ] Three',
+      );
+    });
+
+    testWidgets('dragging upwards selects just the same', (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
+
+      await dragAcross(tester, 2, 1);
+      await pressCtrl(tester, LogicalKeyboardKey.keyT);
+
+      expect(await saveAndRead(tester, store), 'One\n\n- [ ] Two\n- [ ] Three');
+    });
+
+    testWidgets('a drag back into its own line hands selecting back to it',
+        (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo');
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(blockField(0)),
+        kind: PointerDeviceKind.mouse,
+      );
+      await gesture.moveTo(tester.getCenter(blockField(1)));
+      await tester.pumpAndSettle();
+      await gesture.moveTo(tester.getCenter(blockField(0)));
+      await tester.pumpAndSettle();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      await pressCtrl(tester, LogicalKeyboardKey.keyT);
+
+      // Only the row the drag started and ended in.
+      expect(await saveAndRead(tester, store), '- [ ] One\n\nTwo');
+    });
+
+    // A touch drag on a note is a scroll. Taking it over would cost more than
+    // it gave, so it is deliberately left alone.
+    testWidgets('a touch drag selects nothing', (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
+
+      await tester.tap(blockField(0));
+      await tester.pumpAndSettle();
+      final gesture = await tester.startGesture(
+        tester.getCenter(blockField(0)),
+      );
+      await gesture.moveTo(tester.getCenter(blockField(2)));
+      await tester.pumpAndSettle();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      await pressCtrl(tester, LogicalKeyboardKey.keyT);
+
+      expect(await saveAndRead(tester, store), '- [ ] One\n\nTwo\n\nThree');
+    });
+
+    testWidgets('copying a selection puts its markdown on the clipboard',
+        (tester) async {
+      final clipboard = FakeClipboard();
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: '# Title\n\nOne\n\n- Two');
+      clipboard.install(tester);
+
+      await selectDown(tester, 0, 2);
+      await pressCtrl(tester, LogicalKeyboardKey.keyC);
+
+      // Markdown, not flattened text: pasting it elsewhere keeps the heading
+      // and the bullet.
+      expect(clipboard.text, '# Title\n\nOne\n\n- Two');
+    });
+
+    testWidgets('copying takes only the selected lines', (tester) async {
+      final clipboard = FakeClipboard();
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
+      clipboard.install(tester);
+
+      await selectDown(tester, 0, 1);
+      await pressCtrl(tester, LogicalKeyboardKey.keyC);
+
+      expect(clipboard.text, 'One\n\nTwo');
+    });
+
+    testWidgets('cutting copies the lines and takes them out', (tester) async {
+      final clipboard = FakeClipboard();
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
+      clipboard.install(tester);
+
+      await selectDown(tester, 0, 1);
+      await pressCtrl(tester, LogicalKeyboardKey.keyX);
+      await tester.pumpAndSettle();
+
+      expect(clipboard.text, 'One\n\nTwo');
+      expect(await saveAndRead(tester, store), 'Three');
+    });
+
+    testWidgets('backspace over a selection takes the lines', (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
+
+      await selectDown(tester, 1, 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pumpAndSettle();
+
+      expect(await saveAndRead(tester, store), 'One');
+    });
+
+    testWidgets('taking every line leaves somewhere to type', (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo');
+
+      await selectDown(tester, 0, 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TextField), findsOneWidget);
+      expect(await saveAndRead(tester, store), '');
+    });
+
+    testWidgets('ctrl and A take the whole note', (tester) async {
+      final clipboard = FakeClipboard();
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
+      clipboard.install(tester);
+
+      await tester.tap(blockField(1));
+      await tester.pumpAndSettle();
+      await pressCtrl(tester, LogicalKeyboardKey.keyA);
+      await pressCtrl(tester, LogicalKeyboardKey.keyC);
+
+      expect(clipboard.text, 'One\n\nTwo\n\nThree');
+    });
+
+    testWidgets('a selection undoes in one step', (tester) async {
+      final store = FakeLocalStore();
+      await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
+
+      await selectDown(tester, 0, 1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
+      await tester.pumpAndSettle();
+
+      await pressCtrl(tester, LogicalKeyboardKey.keyZ);
+
+      expect(await saveAndRead(tester, store), 'One\n\nTwo\n\nThree');
+    });
   });
 }
