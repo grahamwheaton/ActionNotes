@@ -23,7 +23,8 @@ class _SignInDialog extends StatefulWidget {
   State<_SignInDialog> createState() => _SignInDialogState();
 }
 
-class _SignInDialogState extends State<_SignInDialog> {
+class _SignInDialogState extends State<_SignInDialog>
+    with WidgetsBindingObserver {
   final _flow = GitHubDeviceFlow();
 
   DeviceCode? _code;
@@ -33,11 +34,22 @@ class _SignInDialogState extends State<_SignInDialog> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _begin();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Approving happens in a browser, so coming back is exactly when the
+    // answer has probably changed — and on Android the socket used for the
+    // last poll has likely been dropped while the app was in the background,
+    // which is what made signing in fail there but not on a desktop.
+    if (state == AppLifecycleState.resumed) _flow.pollNow();
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _flow.cancel();
     super.dispose();
   }

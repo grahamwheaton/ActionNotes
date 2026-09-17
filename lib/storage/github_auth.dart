@@ -69,6 +69,9 @@ class GitHubDeviceFlow {
   /// so instead of blaming an expired code.
   Object? _lastTransportError;
 
+  /// The wait between polls, held so it can be cut short.
+  Completer<void>? _sleeping;
+
   http.Client get _client => _injected ?? (_owned ??= http.Client());
 
   /// Throws away the pooled connection. The next request opens a new one.
@@ -81,7 +84,34 @@ class GitHubDeviceFlow {
   /// Abandons an in-flight [awaitToken]. Safe to call more than once.
   void cancel() {
     _cancelled = true;
+    _wake();
     _dropConnection();
+  }
+
+  /// Asks a waiting poll to go now rather than sitting out the rest of its
+  /// interval.
+  ///
+  /// Worth calling when the app returns to the foreground: approving happens
+  /// in a browser, so coming back is the moment the answer is most likely to
+  /// have changed — and on Android it is also when the connection used for
+  /// the last poll has most likely been torn down while the app was away.
+  void pollNow() => _wake();
+
+  void _wake() {
+    final sleeping = _sleeping;
+    if (sleeping != null && !sleeping.isCompleted) sleeping.complete();
+  }
+
+  /// Waits [duration], unless [pollNow] or [cancel] cuts it short.
+  Future<void> _waitBetweenPolls(Duration duration) {
+    final completer = Completer<void>();
+    _sleeping = completer;
+
+    final timer = Timer(duration, _wake);
+    return completer.future.whenComplete(() {
+      timer.cancel();
+      _sleeping = null;
+    });
   }
 
   /// Posts to GitHub, retrying once on a fresh connection.
@@ -144,7 +174,7 @@ class GitHubDeviceFlow {
     var wait = code.interval;
 
     while (true) {
-      await Future<void>.delayed(wait);
+      await _waitBetweenPolls(wait);
 
       if (_cancelled) {
         throw GitHubAuthException('Sign-in cancelled.', isCancelled: true);

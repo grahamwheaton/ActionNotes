@@ -326,4 +326,61 @@ void main() {
       expect(polls, 1);
     });
   });
+
+  group('coming back from the browser', () {
+    test('polls at once rather than sitting out the interval', () async {
+      var polls = 0;
+      final flow = GitHubDeviceFlow(
+        client: MockClient((request) async {
+          polls++;
+          return http.Response(jsonEncode({'access_token': 'tok'}), 200);
+        }),
+      );
+
+      // A long interval: without a nudge this would not poll for a minute.
+      final code = DeviceCode(
+        deviceCode: 'dev-code',
+        userCode: 'WDJB-MJHT',
+        verificationUri: Uri.parse('https://github.com/login/device'),
+        interval: const Duration(minutes: 1),
+        expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+      );
+
+      final pending = flow.awaitToken(code);
+      // Let the loop settle into its wait, then come back to the app.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(polls, 0, reason: 'still waiting out the interval');
+
+      flow.pollNow();
+
+      expect(await pending.timeout(const Duration(seconds: 2)), 'tok');
+      expect(polls, 1);
+    });
+
+    test('cancelling also stops the wait immediately', () async {
+      final flow = GitHubDeviceFlow(
+        client: MockClient((request) async {
+          return http.Response(jsonEncode({'error': 'authorization_pending'}), 200);
+        }),
+      );
+
+      final code = DeviceCode(
+        deviceCode: 'dev-code',
+        userCode: 'WDJB-MJHT',
+        verificationUri: Uri.parse('https://github.com/login/device'),
+        interval: const Duration(minutes: 1),
+        expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+      );
+
+      final pending = flow.awaitToken(code);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      flow.cancel();
+
+      await expectLater(
+        pending.timeout(const Duration(seconds: 2)),
+        throwsA(isA<GitHubAuthException>()
+            .having((e) => e.isCancelled, 'isCancelled', isTrue)),
+      );
+    });
+  });
 }
