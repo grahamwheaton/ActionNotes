@@ -41,13 +41,19 @@ class AppState extends ChangeNotifier {
     SettingsStore? settingsStore,
     SyncService? syncService,
     AttachmentStore? attachmentStore,
+    Duration pushDelay = defaultPushDelay,
   })  : _localStore = localStore ?? LocalStore(),
         _settingsStore = settingsStore ?? SettingsStore(),
+        _pushDelay = pushDelay,
         attachments = attachmentStore ?? AttachmentStore() {
     _syncService = syncService ?? SyncService(localStore: _localStore);
   }
 
-  static const _pushDelay = Duration(seconds: 2);
+  static const defaultPushDelay = Duration(seconds: 2);
+
+  /// How long an edit settles before it is pushed. A test shortens it rather
+  /// than waiting two seconds per edit.
+  final Duration _pushDelay;
 
   final LocalStore _localStore;
   final SettingsStore _settingsStore;
@@ -57,6 +63,10 @@ class AppState extends ChangeNotifier {
   late final SyncService _syncService;
 
   final Map<String, Timer> _pendingPushes = {};
+
+  /// Projects with a push in flight, so a second one waits rather than racing
+  /// it with a SHA that is about to be out of date.
+  final Set<String> _pushing = {};
 
   List<Project> _projects = [];
   GitHubConfig _config = const GitHubConfig(owner: '', repo: '', branch: 'main', token: '');
@@ -137,12 +147,59 @@ class AppState extends ChangeNotifier {
     _syncing = true;
     notifyListeners();
 
+    // What was in hand when the sync started. The service works from the
+    // copies it loaded then, so this is how a project edited while it ran can
+    // be told from one it left alone.
+    final before = {for (final project in _projects) project.slug: project};
+
     final result = await _syncService.sync(_config);
-    _projects = result.projects;
+    _projects = _reconcile(before, result.projects);
     _message = result.error;
     _conflicts = result.conflicts;
     _syncing = false;
     notifyListeners();
+  }
+
+  /// Folds a sync's answer into what is on screen, keeping anything edited
+  /// while it was running.
+  ///
+  /// Taking the result wholesale would replace such a project with its own
+  /// older self: the edit disappears from the list, and the SHA it carries is
+  /// the one from before the sync wrote the file — which the next push sends,
+  /// and GitHub refuses as a conflict nobody caused.
+  List<Project> _reconcile(
+    Map<String, Project> before,
+    List<Project> synced,
+  ) {
+    final live = {for (final project in _projects) project.slug: project};
+    final reconciled = <Project>[];
+
+    for (final project in synced) {
+      final current = live.remove(project.slug);
+      final start = before[project.slug];
+
+      // Every edit stamps a new time, so a changed stamp is an edit; the
+      // dirty check is there for the edit that lands inside the same
+      // millisecond the sync started.
+      final editedDuringSync = current != null &&
+          (start == null ||
+              current.updated != start.updated ||
+              (current.dirty && !start.dirty));
+
+      // Keep the newer content, but take the SHA the sync learned: that is
+      // what the file on GitHub has now, so it is what the next push has to
+      // be sent against.
+      reconciled.add(editedDuringSync
+          ? current.copyWith(sha: project.sha, dirty: true)
+          : project);
+    }
+
+    // A project created while the sync was running is not in its answer at
+    // all, and must not be dropped for it.
+    reconciled.addAll(live.values);
+
+    return reconciled
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
   /// Settles a conflict and clears it, so the project can sync again.
@@ -413,29 +470,56 @@ class AppState extends ChangeNotifier {
     if (!_config.isComplete) return;
 
     _pendingPushes.remove(slug)?.cancel();
-    _pendingPushes[slug] = Timer(_pushDelay, () async {
-      _pendingPushes.remove(slug);
-      final project = projectBySlug(slug);
-      if (project == null || !project.dirty) return;
+    _pendingPushes[slug] = Timer(_pushDelay, () => _pushNow(slug));
+  }
 
-      final pushed = await _syncService.push(_config, project);
-      if (pushed.dirty) return; // Still pending; the next sync will retry.
+  /// Pushes one project, one at a time.
+  ///
+  /// GitHub accepts a write only against the SHA the file currently has, so
+  /// two pushes of the same project must not overlap: the second would send
+  /// the SHA the first has already moved past, and come back as a conflict
+  /// nobody caused. A push arriving while one is in flight waits instead, and
+  /// goes out afterwards with the SHA that one brought back.
+  Future<void> _pushNow(String slug) async {
+    _pendingPushes.remove(slug);
 
-      // An image dropped from a note leaves its file behind, so tidy up once
-      // the note itself has landed.
-      unawaited(_syncService.pruneAttachments(_config, pushed));
+    if (_pushing.contains(slug)) {
+      _schedulePush(slug);
+      return;
+    }
 
-      final latest = projectBySlug(slug);
-      if (latest == null) return;
-      // Only clear the flag if nothing was edited while the push was in flight.
-      if (latest.updated == project.updated) {
-        final settled = latest.copyWith(sha: pushed.sha, dirty: false);
-        _projects =
-            _projects.map((p) => p.slug == slug ? settled : p).toList();
-        await _localStore.save(settled);
-        notifyListeners();
-      }
-    });
+    final project = projectBySlug(slug);
+    if (project == null || !project.dirty) return;
+
+    _pushing.add(slug);
+    final Project pushed;
+    try {
+      pushed = await _syncService.push(_config, project);
+    } finally {
+      _pushing.remove(slug);
+    }
+
+    if (pushed.dirty) return; // Still pending; the next sync will retry.
+
+    // An image dropped from a note leaves its file behind, so tidy up once
+    // the note itself has landed.
+    unawaited(_syncService.pruneAttachments(_config, pushed));
+
+    final latest = projectBySlug(slug);
+    if (latest == null) return;
+
+    // The write landed, so GitHub's copy has this SHA whatever has been
+    // edited here since. Keeping the old one is what made a later push look
+    // like a conflict. What the edits do change is whether there is still
+    // something to send.
+    final editedWhilePushing = latest.updated != project.updated;
+    final settled = latest.copyWith(sha: pushed.sha, dirty: editedWhilePushing);
+
+    _projects = _projects.map((p) => p.slug == slug ? settled : p).toList();
+    await _localStore.save(settled);
+    notifyListeners();
+
+    if (editedWhilePushing) _schedulePush(slug);
   }
 
   String _uniqueSlug(String base) {
