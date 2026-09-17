@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import '../storage/github_account.dart';
 import '../storage/github_client.dart';
+import 'repo_picker.dart';
 import 'sign_in_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -21,6 +23,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _busy = false;
   String? _result;
   bool _resultIsError = false;
+
+  /// Who the token in [_token] belongs to, once GitHub has been asked. Only
+  /// known after signing in on this screen, so an empty one means unasked
+  /// rather than signed out.
+  String? _login;
 
   @override
   void initState() {
@@ -72,11 +79,55 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _resultIsError = false;
       _result = 'Signed in. Test the connection, or save to sync.';
     });
+
+    await _fillInAccount();
+  }
+
+  /// Asks GitHub who just signed in, and uses it for the owner if nothing has
+  /// been typed there. It is only a default: notes kept under an org have an
+  /// owner that is not the person signing in, so an owner already filled in is
+  /// left alone.
+  Future<void> _fillInAccount() async {
+    final account = GitHubAccount(_token.text.trim());
+    try {
+      final login = await account.login();
+      if (!mounted) return;
+      setState(() {
+        _login = login;
+        if (_owner.text.trim().isEmpty) _owner.text = login;
+      });
+    } catch (_) {
+      // Nothing is lost: the owner can still be typed, and testing the
+      // connection reports anything actually wrong with the token.
+    } finally {
+      account.dispose();
+    }
+  }
+
+  Future<void> _pickRepo() async {
+    final token = _token.text.trim();
+    if (token.isEmpty) return;
+
+    final account = GitHubAccount(token);
+    try {
+      final picked = await showRepoPicker(context, load: account.repos);
+      if (picked == null || !mounted) return;
+
+      setState(() {
+        _owner.text = picked.owner;
+        _repo.text = picked.name;
+        _branch.text = picked.defaultBranch;
+        _result = null;
+      });
+    } finally {
+      account.dispose();
+    }
   }
 
   void _signOut() {
     setState(() {
       _token.clear();
+      _login = null;
       _result = null;
     });
   }
@@ -116,7 +167,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
             label: 'Owner',
             hint: 'your GitHub username or org',
           ),
-          _Field(controller: _repo, label: 'Repository', hint: 'notes'),
+          _Field(
+            controller: _repo,
+            label: 'Repository',
+            hint: 'notes',
+            suffix: IconButton(
+              icon: const Icon(Icons.travel_explore),
+              tooltip: _token.text.trim().isEmpty
+                  ? 'Sign in to browse your repositories'
+                  : 'Browse your repositories',
+              onPressed: _token.text.trim().isEmpty ? null : _pickRepo,
+            ),
+          ),
           _Field(controller: _branch, label: 'Branch', hint: 'main'),
           const SizedBox(height: 4),
           Text(
@@ -126,6 +188,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           _AccessCard(
             hasToken: _token.text.trim().isNotEmpty,
+            login: _login,
             busy: _busy,
             onSignIn: _signIn,
             onSignOut: _signOut,
@@ -194,12 +257,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
 class _AccessCard extends StatelessWidget {
   const _AccessCard({
     required this.hasToken,
+    required this.login,
     required this.busy,
     required this.onSignIn,
     required this.onSignOut,
   });
 
   final bool hasToken;
+  final String? login;
   final bool busy;
   final VoidCallback onSignIn;
   final VoidCallback onSignOut;
@@ -225,7 +290,11 @@ class _AccessCard extends StatelessWidget {
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              hasToken ? 'Signed in to GitHub' : 'Not signed in',
+              switch ((hasToken, login)) {
+                (true, final String login) => 'Signed in as $login',
+                (true, _) => 'Signed in to GitHub',
+                _ => 'Not signed in',
+              },
               style: theme.textTheme.bodyMedium,
             ),
           ),
@@ -290,6 +359,7 @@ class _Field extends StatelessWidget {
     required this.hint,
     this.obscure = false,
     this.onChanged,
+    this.suffix,
   });
 
   final TextEditingController controller;
@@ -297,6 +367,7 @@ class _Field extends StatelessWidget {
   final String hint;
   final bool obscure;
   final VoidCallback? onChanged;
+  final Widget? suffix;
 
   @override
   Widget build(BuildContext context) {
@@ -308,7 +379,11 @@ class _Field extends StatelessWidget {
         autocorrect: false,
         enableSuggestions: false,
         onChanged: onChanged == null ? null : (_) => onChanged!(),
-        decoration: InputDecoration(labelText: label, hintText: hint),
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: hint,
+          suffixIcon: suffix,
+        ),
       ),
     );
   }

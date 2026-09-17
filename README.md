@@ -144,7 +144,11 @@ will see it.
    github.com. This is what grants access, and it reaches only the repos you
    tick.
 3. Open **Settings**, hit **Sign in**, and approve the code it shows you in the
-   browser. Then fill in owner, repo and branch.
+   browser. Signing in fills the owner in for you, and the button beside
+   **Repository** lists and searches the repos the app is installed on —
+   picking one sets the owner, name and default branch together. All three
+   fields can still be typed, for notes kept under an org or a repo the list
+   cannot see.
 4. Hit sync. Projects you create appear in the repo as markdown files.
 
 Signing in uses GitHub's device flow: the app shows a short code, you approve it
