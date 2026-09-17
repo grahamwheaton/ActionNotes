@@ -53,26 +53,66 @@ class GitHubAuthException implements Exception {
 /// The whole point is that nothing sensitive is typed into this app — the
 /// approval happens on github.com, and all that crosses back is the token.
 class GitHubDeviceFlow {
-  GitHubDeviceFlow({http.Client? client}) : _client = client ?? http.Client();
+  GitHubDeviceFlow({http.Client? client}) : _injected = client;
 
   static const _codeUrl = 'https://github.com/login/device/code';
   static const _tokenUrl = 'https://github.com/login/oauth/access_token';
 
-  final http.Client _client;
+  /// A client supplied by a test. When absent one is made here and replaced
+  /// whenever a connection turns out to be dead.
+  final http.Client? _injected;
+  http.Client? _owned;
+
   bool _cancelled = false;
 
+  /// The last transport failure, so a sign-in that never got through can say
+  /// so instead of blaming an expired code.
+  Object? _lastTransportError;
+
+  http.Client get _client => _injected ?? (_owned ??= http.Client());
+
+  /// Throws away the pooled connection. The next request opens a new one.
+  void _dropConnection() {
+    if (_injected != null) return;
+    _owned?.close();
+    _owned = null;
+  }
+
   /// Abandons an in-flight [awaitToken]. Safe to call more than once.
-  void cancel() => _cancelled = true;
+  void cancel() {
+    _cancelled = true;
+    _dropConnection();
+  }
+
+  /// Posts to GitHub, retrying once on a fresh connection.
+  ///
+  /// A sign-in runs for minutes with gaps between polls, and GitHub closes
+  /// keep-alive connections it considers idle. Dart will not retry a POST on
+  /// a socket the peer has shut — it surfaces as a ClientException, "software
+  /// caused connection abort" on Android — so the first thing to try is the
+  /// same request on a connection that is actually open.
+  Future<http.Response> _post(String url, Map<String, String> body) async {
+    try {
+      return await _client.post(
+        Uri.parse(url),
+        headers: const {'Accept': 'application/json'},
+        body: body,
+      );
+    } on Exception {
+      _dropConnection();
+      return _client.post(
+        Uri.parse(url),
+        headers: const {'Accept': 'application/json'},
+        body: body,
+      );
+    }
+  }
 
   /// Asks GitHub to open a sign-in and mint a code for it.
   Future<DeviceCode> start() async {
     _cancelled = false;
 
-    final response = await _client.post(
-      Uri.parse(_codeUrl),
-      headers: const {'Accept': 'application/json'},
-      body: {'client_id': githubClientId},
-    );
+    final response = await _post(_codeUrl, {'client_id': githubClientId});
 
     final body = _decode(response);
     if (response.statusCode != 200 || body['device_code'] == null) {
@@ -110,19 +150,32 @@ class GitHubDeviceFlow {
         throw GitHubAuthException('Sign-in cancelled.', isCancelled: true);
       }
       if (code.hasExpired) {
-        throw GitHubAuthException('The code expired. Start the sign-in again.');
+        throw GitHubAuthException(
+          _lastTransportError == null
+              ? 'The code expired. Start the sign-in again.'
+              : 'Could not reach GitHub while waiting for the approval. '
+                  'Check the connection and sign in again.',
+        );
       }
 
-      final response = await _client.post(
-        Uri.parse(_tokenUrl),
-        headers: const {'Accept': 'application/json'},
-        body: {
+      final http.Response response;
+      try {
+        response = await _post(_tokenUrl, {
           'client_id': githubClientId,
           'device_code': code.deviceCode,
           'grant_type': 'urn:ietf:params:oauth:grant-type:device_code',
-        },
-      );
+        });
+      } on Exception catch (error) {
+        // By this point the approval has usually already happened on
+        // github.com, so a dropped connection must not end the sign-in: the
+        // device code is still good, and the next poll asks again. Giving up
+        // here was what turned a moment of bad network into a failed
+        // sign-in that had in fact been approved.
+        _lastTransportError = error;
+        continue;
+      }
 
+      _lastTransportError = null;
       final body = _decode(response);
       final token = body['access_token'] as String?;
       if (token != null && token.isNotEmpty) return token;

@@ -148,7 +148,9 @@ will see it.
 4. Hit sync. Projects you create appear in the repo as markdown files.
 
 Signing in uses GitHub's device flow: the app shows a short code, you approve it
-on github.com, and a token comes back. No password is ever typed into the app,
+on github.com, and a token comes back. The wait is patient about the network —
+a connection dropped between polls is retried rather than ending a sign-in
+that has already been approved. No password is ever typed into the app,
 and the client ID it ships with is public by design — the device flow is built
 for apps that cannot keep a secret, so there is none to leak.
 

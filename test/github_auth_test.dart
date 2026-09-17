@@ -210,4 +210,120 @@ void main() {
           .having((e) => e.message, 'message', contains('Device flow is not enabled'))),
     );
   });
+
+  group('a dropped connection mid sign-in', () {
+    test('does not end a sign-in GitHub has already approved', () async {
+      // Exactly what Android reported: the device code was issued and
+      // approved, then the token poll aborted.
+      var polls = 0;
+      final flow = GitHubDeviceFlow(
+        client: MockClient((request) async {
+          if (request.url.path.endsWith('/device/code')) {
+            return http.Response(
+              jsonEncode({
+                'device_code': 'dev-code',
+                'user_code': 'WDJB-MJHT',
+                'verification_uri': 'https://github.com/login/device',
+                'interval': 0,
+                'expires_in': 900,
+              }),
+              200,
+            );
+          }
+
+          polls++;
+          if (polls == 1) {
+            throw http.ClientException(
+              'Software caused connection abort',
+              request.url,
+            );
+          }
+          return http.Response(jsonEncode({'access_token': 'tok'}), 200);
+        }),
+      );
+
+      final code = await flow.start();
+      expect(await flow.awaitToken(code), 'tok');
+      // The first poll threw; the sign-in carried on to the second.
+      expect(polls, greaterThan(1));
+    });
+
+    test('keeps trying while the code is still good', () async {
+      var polls = 0;
+      final flow = GitHubDeviceFlow(
+        client: MockClient((request) async {
+          polls++;
+          if (polls < 4) {
+            throw http.ClientException('connection abort', request.url);
+          }
+          return http.Response(jsonEncode({'access_token': 'tok'}), 200);
+        }),
+      );
+
+      final code = DeviceCode(
+        deviceCode: 'dev-code',
+        userCode: 'WDJB-MJHT',
+        verificationUri: Uri.parse('https://github.com/login/device'),
+        interval: Duration.zero,
+        expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+      );
+
+      expect(await flow.awaitToken(code), 'tok');
+      expect(polls, 4);
+    });
+
+    test('says the connection failed, rather than blaming the code', () async {
+      final flow = GitHubDeviceFlow(
+        client: MockClient((request) async {
+          throw http.ClientException('connection abort', request.url);
+        }),
+      );
+
+      // Valid at first, so polls actually happen, then it runs out of time
+      // with every one of them having failed to get through.
+      final code = DeviceCode(
+        deviceCode: 'dev-code',
+        userCode: 'WDJB-MJHT',
+        verificationUri: Uri.parse('https://github.com/login/device'),
+        interval: Duration.zero,
+        expiresAt: DateTime.now().add(const Duration(milliseconds: 100)),
+      );
+
+      await expectLater(
+        flow.awaitToken(code),
+        throwsA(
+          isA<GitHubAuthException>().having(
+            (e) => e.message,
+            'message',
+            contains('Could not reach GitHub'),
+          ),
+        ),
+      );
+    });
+
+    test('a refusal is still final, not retried forever', () async {
+      var polls = 0;
+      final flow = GitHubDeviceFlow(
+        client: MockClient((request) async {
+          polls++;
+          return http.Response(jsonEncode({'error': 'access_denied'}), 200);
+        }),
+      );
+
+      final code = DeviceCode(
+        deviceCode: 'dev-code',
+        userCode: 'WDJB-MJHT',
+        verificationUri: Uri.parse('https://github.com/login/device'),
+        interval: Duration.zero,
+        expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+      );
+
+      await expectLater(
+        flow.awaitToken(code),
+        throwsA(isA<GitHubAuthException>()
+            .having((e) => e.isCancelled, 'isCancelled', isTrue)),
+      );
+      expect(polls, 1);
+    });
+  });
 }
