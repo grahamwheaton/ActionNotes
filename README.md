@@ -24,11 +24,16 @@ pasting one file — or by pointing the model at the repo.
 - Checklists group open items first, with completed ones collapsed under a
   header at the bottom. New items are added at the top.
 - Star any item, the way Microsoft To Do does. Starred items pin above the
-  rest of the open ones, while the file keeps its own order.
+  rest of the open ones and their rows are tinted, while the file keeps its
+  own order.
+- Tag an item by writing `[tag]` in its text. The brackets are shown as pills
+  after the title, and tapping one finds everything carrying that tag. The
+  tags live in the markdown line itself, so anything reading the file sees
+  them.
 - Search across every project's titles, items and notes, saying where each
-  hit came from.
+  hit came from. `[tag]` in the search box asks for that tag exactly.
 - Per-item notes in markdown, with images pasted, dropped or picked from disk
-  and stored in the repo. An item carrying notes says so, and opens them
+  and stored in the repo. Every item opens its notes
   underneath itself in the list — as the editor itself, so a checkbox in a note
   ticks and the text can be changed without going anywhere. Edits settle for a
   moment and then save, and closing the note writes it at once.

@@ -1,3 +1,5 @@
+import '../markdown/item_tags.dart';
+
 /// A single `- [ ]` line in a project file, plus anything indented under it.
 class ChecklistItem {
   const ChecklistItem({
@@ -18,6 +20,14 @@ class ChecklistItem {
   final String notes;
 
   bool get hasNotes => notes.trim().isNotEmpty;
+
+  /// The tags written inline in [text] as `[tag]`.
+  List<String> get tags => ItemTags.parse(text);
+
+  /// [text] without its tag markers — what the row shows beside the pills.
+  /// The markers stay in [text], which is what the file holds and what an
+  /// edit works on, so a tag is removed by deleting it from the line.
+  String get title => ItemTags.strip(text);
 
   ChecklistItem copyWith({
     String? text,

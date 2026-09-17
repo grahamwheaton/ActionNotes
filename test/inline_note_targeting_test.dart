@@ -22,7 +22,7 @@ Future<AppState> pumpChecklist(
   await state.init();
   await state.createProject('List');
   await addItemsInOrder(state, 'list', ['First', 'Second']);
-  // The inline toggle only appears on an item that already has notes.
+  // Both start with notes, so the toggle reads "Show notes" on each.
   await state.setItemNotes('list', 0, 'first note');
   await state.setItemNotes('list', 1, 'second note');
 

@@ -1,17 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../markdown/item_tags.dart';
 import '../state/app_state.dart';
 import '../state/search.dart';
 import 'checklist_view.dart';
+import 'tag_pill.dart';
 
 /// Searches across every project's titles, items and notes.
 class SearchScreen extends StatefulWidget {
-  const SearchScreen({super.key});
+  const SearchScreen({super.key, this.initialQuery = ''});
 
-  static Future<void> open(BuildContext context) {
+  /// What to search for on opening. Tapping a tag pill arrives here with
+  /// `[tag]`, which searches for that tag rather than for those characters.
+  final String initialQuery;
+
+  static Future<void> open(BuildContext context, {String query = ''}) {
     return Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SearchScreen()),
+      MaterialPageRoute(builder: (_) => SearchScreen(initialQuery: query)),
     );
   }
 
@@ -20,7 +26,7 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  final _controller = TextEditingController();
+  late final _controller = TextEditingController(text: widget.initialQuery);
 
   @override
   void dispose() {
@@ -62,12 +68,47 @@ class _SearchScreenState extends State<SearchScreen> {
               theme: theme,
             )
           : hits.isEmpty
-              ? _Message(text: 'Nothing matches "$query".', theme: theme)
+              ? _Message(
+                  text: ItemTags.queryTag(query) == null
+                      ? 'Nothing matches "$query".'
+                      : 'Nothing is tagged ${ItemTags.queryTag(query)}.',
+                  theme: theme,
+                )
               : ListView.separated(
                   itemCount: hits.length,
                   separatorBuilder: (_, __) => const Divider(height: 1),
                   itemBuilder: (context, index) => _HitTile(hit: hits[index]),
                 ),
+    );
+  }
+}
+
+/// A hit's line. An item's own text shows its tags as pills, the same as in
+/// the list; a note's line is left as the markdown it is.
+class _HitText extends StatelessWidget {
+  const _HitText({required this.hit});
+
+  final SearchHit hit;
+
+  @override
+  Widget build(BuildContext context) {
+    final tags =
+        hit.field == SearchField.itemText ? ItemTags.parse(hit.text) : const <String>[];
+
+    if (tags.isEmpty) {
+      return Text(hit.text, maxLines: 2, overflow: TextOverflow.ellipsis);
+    }
+
+    final title = ItemTags.strip(hit.text);
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        if (title.isNotEmpty)
+          Text(title, maxLines: 2, overflow: TextOverflow.ellipsis),
+        for (final tag in tags) TagPill(tag: tag, faded: false),
+      ],
     );
   }
 }
@@ -100,7 +141,7 @@ class _HitTile extends StatelessWidget {
         size: 20,
         color: theme.colorScheme.onSurfaceVariant,
       ),
-      title: Text(hit.text, maxLines: 2, overflow: TextOverflow.ellipsis),
+      title: _HitText(hit: hit),
       subtitle: Text(_where, style: theme.textTheme.bodySmall),
       onTap: () {
         final state = context.read<AppState>();

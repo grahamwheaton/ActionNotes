@@ -3,14 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/checklist_item.dart';
 import '../markdown/project_links.dart';
+import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
 import 'context_menu.dart';
 import 'note_blocks_editor.dart';
 import 'note_editor.dart';
 import 'note_view.dart';
+import 'tag_pill.dart';
 import 'text_prompt.dart';
 
 /// One project's checklist: open items first, then a collapsible Completed
@@ -355,6 +356,9 @@ class _ItemTile extends StatelessWidget {
   /// Fires as the notes are edited in place, for the view to save.
   final ValueChanged<String> onNotesChanged;
 
+  /// Starred and still open: worth picking out of the list.
+  bool get highlighted => item.starred && !item.done;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -374,7 +378,7 @@ class _ItemTile extends StatelessWidget {
             context,
             slug: slug,
             index: index,
-            title: item.text,
+            title: item.title,
             initialNotes: item.notes,
           ),
         ),
@@ -399,10 +403,20 @@ class _ItemTile extends StatelessWidget {
       ],
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+        // A starred row is tinted and outlined in the accent colour, so the
+        // ones that matter are findable without reading the stars. A starred
+        // item that is done has had its moment, and goes back to looking
+        // like the rest.
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerLowest,
+          color: highlighted
+              ? theme.colorScheme.primaryContainer.withValues(alpha: 0.45)
+              : theme.colorScheme.surfaceContainerLowest,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: theme.colorScheme.outlineVariant),
+          border: Border.all(
+            color: highlighted
+                ? theme.colorScheme.primary.withValues(alpha: 0.5)
+                : theme.colorScheme.outlineVariant,
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -415,7 +429,7 @@ class _ItemTile extends StatelessWidget {
                 context,
                 slug: slug,
                 index: index,
-                title: item.text,
+                title: item.title,
                 initialNotes: item.notes,
               ),
               child: Row(
@@ -426,22 +440,15 @@ class _ItemTile extends StatelessWidget {
                 ),
                 Expanded(
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    child: Text(
-                      item.text,
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        decoration:
-                            item.done ? TextDecoration.lineThrough : null,
-                        color: item.done ? theme.colorScheme.outline : null,
-                      ),
-                    ),
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    child: _ItemTitle(item: item),
                   ),
                 ),
-                if (item.hasNotes)
-                  _NotesToggle(
-                    expanded: notesExpanded,
-                    onTap: onToggleNotes,
-                  ),
+                _NotesToggle(
+                  expanded: notesExpanded,
+                  hasNotes: item.hasNotes,
+                  onTap: onToggleNotes,
+                ),
                 IconButton(
                   tooltip: item.starred ? 'Remove star' : 'Star',
                   icon: Icon(
@@ -470,7 +477,7 @@ class _ItemTile extends StatelessWidget {
               ],
             ),
             ),
-            if (notesExpanded && item.hasNotes)
+            if (notesExpanded)
               Padding(
                 // Indented to start under the item's text, not its checkbox.
                 padding: const EdgeInsets.fromLTRB(36, 0, 12, 10),
@@ -499,10 +506,21 @@ class _ItemTile extends StatelessWidget {
 ///
 /// Sits with the star at the right-hand end of the row, so the controls are
 /// together and the item's text is left to be text.
+///
+/// On every row, whether or not there is a note yet: it used to appear only
+/// once an item had notes, which meant the section could not be found until
+/// a note had been written some other way — and on a desktop, where clicking
+/// the row opens the full editor, there was nothing to suggest notes opened
+/// in place at all.
 class _NotesToggle extends StatelessWidget {
-  const _NotesToggle({required this.expanded, required this.onTap});
+  const _NotesToggle({
+    required this.expanded,
+    required this.hasNotes,
+    required this.onTap,
+  });
 
   final bool expanded;
+  final bool hasNotes;
   final VoidCallback onTap;
 
   @override
@@ -510,15 +528,59 @@ class _NotesToggle extends StatelessWidget {
     final theme = Theme.of(context);
 
     return IconButton(
-      tooltip: expanded ? 'Hide notes' : 'Show notes',
+      tooltip: switch ((expanded, hasNotes)) {
+        (true, _) => 'Hide notes',
+        (false, true) => 'Show notes',
+        (false, false) => 'Add notes',
+      },
       onPressed: onTap,
       icon: Icon(
-        expanded ? Icons.expand_less : Icons.notes,
+        switch ((expanded, hasNotes)) {
+          (true, _) => Icons.expand_less,
+          (false, true) => Icons.notes,
+          // An empty row of lines, to say there is nothing there yet.
+          (false, false) => Icons.notes_outlined,
+        },
         size: 20,
         color: expanded
             ? theme.colorScheme.primary
-            : theme.colorScheme.onSurfaceVariant,
+            : hasNotes
+                ? theme.colorScheme.onSurfaceVariant
+                : theme.colorScheme.outlineVariant,
       ),
+    );
+  }
+}
+
+/// An item's text, with its `[tag]` markers shown as pills rather than
+/// brackets. Wrapped so a long title and its tags flow onto another line
+/// instead of squeezing each other.
+class _ItemTitle extends StatelessWidget {
+  const _ItemTitle({required this.item});
+
+  final ChecklistItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = theme.textTheme.bodyLarge?.copyWith(
+      decoration: item.done ? TextDecoration.lineThrough : null,
+      color: item.done ? theme.colorScheme.outline : null,
+    );
+
+    final tags = item.tags;
+    if (tags.isEmpty) return Text(item.text, style: style);
+
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        // A title made of nothing but tags would otherwise render an empty
+        // line above the pills.
+        if (item.title.isNotEmpty) Text(item.title, style: style),
+        for (final tag in tags) TagPill(tag: tag, faded: item.done),
+      ],
     );
   }
 }

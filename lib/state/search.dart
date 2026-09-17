@@ -1,3 +1,4 @@
+import '../markdown/item_tags.dart';
 import '../models/project.dart';
 
 /// Where a match was found, so a result can say why it matched.
@@ -31,6 +32,12 @@ class ProjectSearch {
   ProjectSearch._();
 
   static List<SearchHit> run(List<Project> projects, String query) {
+    // `[bug]` asks for that tag rather than for the characters, which is what
+    // tapping a pill sends, and is the one place a query means something
+    // other than "contains this".
+    final tag = ItemTags.queryTag(query);
+    if (tag != null) return byTag(projects, tag);
+
     final needle = query.trim().toLowerCase();
     if (needle.isEmpty) return const [];
 
@@ -76,6 +83,31 @@ class ProjectSearch {
           project: project,
           field: SearchField.projectNotes,
           text: projectNote,
+        ));
+      }
+    }
+
+    return hits;
+  }
+
+  /// Every item carrying [tag], across every project.
+  ///
+  /// An exact tag match, not a substring one: `[app]` should not drag in
+  /// `[appointments]`, or a pill would find things the person did not tag.
+  static List<SearchHit> byTag(List<Project> projects, String tag) {
+    final hits = <SearchHit>[];
+
+    for (final project in projects) {
+      for (var index = 0; index < project.items.length; index++) {
+        final item = project.items[index];
+        if (!item.tags.any((found) => found.toLowerCase() == tag.toLowerCase())) {
+          continue;
+        }
+        hits.add(SearchHit(
+          project: project,
+          field: SearchField.itemText,
+          text: item.text,
+          itemIndex: index,
         ));
       }
     }

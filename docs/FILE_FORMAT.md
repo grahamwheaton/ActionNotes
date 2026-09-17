@@ -53,6 +53,7 @@ Four parts, in this order:
 - [ ] An open item
 - [x] A completed item
 - [ ] ⭐ A starred item
+- [ ] An item with tags [bug] [next week]
 - [ ] An item with notes
   Any markdown, indented two spaces.
 
@@ -65,7 +66,18 @@ Four parts, in this order:
   lets a note hold a checklist of its own without those rows being read as
   more items of the project.
 - A **⭐ before the text** marks the item starred — the app's equivalent of
-  Microsoft To Do's star. It is stripped from the displayed text.
+  Microsoft To Do's star. It is stripped from the displayed text. The app also
+  tints a starred item's row while it is open.
+- **`[tag]` anywhere in an item's text is a tag.** The app shows the item
+  without the brackets and the tags as pills after it, and tapping one
+  searches for everything carrying it. Tags live in the line itself rather
+  than in front matter, so anything reading the file sees them, and a tag is
+  removed by deleting it from the line.
+  - A tag may hold spaces (`[next week]`), and case is kept but ignored when
+    matching, so `[Bug]` and `[bug]` are one tag.
+  - Deliberately **not** tags, because `[...]` is also link syntax: a link or
+    image label (`[the docs](https://example.com)`) and a wikilink
+    (`[[Shopping]]`), which a note gives its own meaning to.
 - **Lines indented by two spaces** after an item are that item's notes. The
   indent is what distinguishes a note from the next item, so an indented `-`
   is a bullet inside a note rather than a new item.
