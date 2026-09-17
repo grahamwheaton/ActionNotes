@@ -16,6 +16,11 @@ class ItemTags {
   /// the inner one rather than something surprising.
   static final _pattern = RegExp(r'(?<!\[)\[([^\[\]\n]+)\](?![\]\(])');
 
+  /// A checklist marker at the start of a line in a note: `- [ ]`, `- [x]`,
+  /// or a bare `[x]`. Stripped before a note line is read for tags, or every
+  /// ticked row in a note would contribute a tag called `x`.
+  static final _taskMarker = RegExp(r'^\s*(?:[-*+]\s+)?\[[ xX]\]');
+
   /// The tags in [text], in the order they appear, each one once.
   ///
   /// Case is kept as written but not for telling tags apart: `[Bug]` and
@@ -26,6 +31,38 @@ class ItemTags {
     for (final match in _pattern.allMatches(text)) {
       final tag = match.group(1)!.trim();
       if (tag.isEmpty) continue;
+      found.putIfAbsent(tag.toLowerCase(), () => tag);
+    }
+
+    return found.values.toList();
+  }
+
+  /// The tags written anywhere in a note.
+  ///
+  /// Read line by line so a checklist row's own marker can be taken off
+  /// first. Everything else is the same as in an item's line: a link label
+  /// and a wikilink are not tags.
+  static List<String> parseNotes(String notes) {
+    final found = <String, String>{};
+
+    for (final line in notes.split('\n')) {
+      for (final tag in parse(line.replaceFirst(_taskMarker, ''))) {
+        found.putIfAbsent(tag.toLowerCase(), () => tag);
+      }
+    }
+
+    return found.values.toList();
+  }
+
+  /// Every tag on an item: the ones on its own line first, then any written
+  /// in its notes, each one once.
+  ///
+  /// A tag belongs to the task whether it was written on the line or in the
+  /// note underneath, so both end up as pills after the title.
+  static List<String> parseAll({required String text, required String notes}) {
+    final found = <String, String>{};
+
+    for (final tag in [...parse(text), ...parseNotes(notes)]) {
       found.putIfAbsent(tag.toLowerCase(), () => tag);
     }
 

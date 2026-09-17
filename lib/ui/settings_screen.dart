@@ -204,6 +204,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 4),
           _TokenFallback(controller: _token, onChanged: () => setState(() {})),
+          const SizedBox(height: 20),
+          Text(
+            'Appearance',
+            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 12),
+          const _ThemePicker(),
           const SizedBox(height: 24),
           Row(
             children: [
@@ -247,6 +254,46 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// Light, dark, or whatever the system is doing.
+///
+/// An override rather than a replacement: System stays the default, because
+/// most of the time following the phone or the desktop is right.
+class _ThemePicker extends StatelessWidget {
+  const _ThemePicker();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SegmentedButton<ThemeMode>(
+        segments: const [
+          ButtonSegment(
+            value: ThemeMode.system,
+            icon: Icon(Icons.brightness_auto_outlined),
+            label: Text('System'),
+          ),
+          ButtonSegment(
+            value: ThemeMode.light,
+            icon: Icon(Icons.light_mode_outlined),
+            label: Text('Light'),
+          ),
+          ButtonSegment(
+            value: ThemeMode.dark,
+            icon: Icon(Icons.dark_mode_outlined),
+            label: Text('Dark'),
+          ),
+        ],
+        selected: {state.themeMode},
+        showSelectedIcon: false,
+        onSelectionChanged: (selected) =>
+            context.read<AppState>().setThemeMode(selected.first),
       ),
     );
   }

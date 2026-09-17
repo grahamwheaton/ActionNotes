@@ -93,6 +93,29 @@ void main() {
       expect(find.text('Tidy up'), findsNothing);
     });
 
+    testWidgets('a tag written in a note shows on the row too', (tester) async {
+      final state = await pumpList(tester, ['Fix the sync']);
+      await state.setItemNotes('list', 0, 'rang them, it is [urgent]');
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TagPill), findsOneWidget);
+      expect(find.text('urgent'), findsOneWidget);
+      // The title is untouched: nothing was taken out of it.
+      expect(find.text('Fix the sync'), findsOneWidget);
+    });
+
+    testWidgets('a tag in a note is searchable like any other', (tester) async {
+      final state = await pumpList(tester, ['Fix the sync']);
+      await state.setItemNotes('list', 0, 'rang them, it is [urgent]');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(TagPill));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SearchScreen), findsOneWidget);
+      expect(find.text('Fix the sync'), findsOneWidget);
+    });
+
     testWidgets('the markers stay in the text an edit works on',
         (tester) async {
       final state = await pumpList(tester, ['Fix the sync [bug]']);

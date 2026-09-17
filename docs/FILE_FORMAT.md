@@ -75,6 +75,11 @@ Four parts, in this order:
   removed by deleting it from the line.
   - A tag may hold spaces (`[next week]`), and case is kept but ignored when
     matching, so `[Bug]` and `[bug]` are one tag.
+  - **A tag written in an item's notes counts as that item's tag too**, and
+    shows as a pill after its title. Only the ones on the item's own line are
+    taken out of the displayed title; a tag in a note is shown where it can be
+    seen without opening the note, and edited where it was written. A
+    checklist row's own `- [ ]` or `- [x]` marker inside a note is not a tag.
   - Deliberately **not** tags, because `[...]` is also link syntax: a link or
     image label (`[the docs](https://example.com)`) and a wikilink
     (`[[Shopping]]`), which a note gives its own meaning to.

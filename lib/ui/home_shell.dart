@@ -106,7 +106,7 @@ class _DetailPane extends StatelessWidget {
         key: ValueKey('note-${project.slug}-${note.index}'),
         slug: project.slug,
         index: note.index,
-        title: item.title,
+        title: item.text,
         initialNotes: item.notes,
         onClose: state.hideNote,
       );

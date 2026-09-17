@@ -47,6 +47,7 @@ class NoteBlocksEditor extends StatefulWidget {
     required this.onChanged,
     this.onOpenProject,
     this.onRequestLink,
+    this.onPaste,
     this.shrinkWrap = false,
   });
 
@@ -64,6 +65,12 @@ class NoteBlocksEditor extends StatefulWidget {
   final Future<String?> Function()? onRequestLink;
 
   final void Function(String slug)? onOpenProject;
+
+  /// Takes over Paste in a block's own menu, so an image on the clipboard can
+  /// be uploaded. Without it the menu pastes text, which is all a text field
+  /// knows how to do — and is what a phone's paste would otherwise be
+  /// limited to, there being no Ctrl+V to intercept.
+  final Future<void> Function()? onPaste;
 
   @override
   State<NoteBlocksEditor> createState() => NoteBlocksEditorState();
@@ -711,6 +718,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
                 onExtendRows: (delta) => _extendRows(row, delta),
                 onExtendTo: () => _extendTo(row),
                 onClearSelection: _clearRowSelection,
+                onPaste: widget.onPaste,
                 onCopySelection: copySelection,
                 onDeleteSelection: deleteSelection,
                 onSelectAllRows: selectAllRows,
@@ -755,6 +763,7 @@ class _TextBlock extends StatelessWidget {
     required this.onDeleteSelection,
     required this.onSelectAllRows,
     this.onRequestLink,
+    this.onPaste,
   });
 
   final _Row row;
@@ -781,6 +790,9 @@ class _TextBlock extends StatelessWidget {
   /// own select-all is left to happen.
   final bool Function() onSelectAllRows;
   final Future<void> Function()? onRequestLink;
+
+  /// Replaces the menu's own Paste when the note can take an image.
+  final Future<void> Function()? onPaste;
 
   TextStyle _styleFor(ThemeData theme) {
     // The same scale the rendered note uses, so a heading does not change
@@ -1066,7 +1078,22 @@ class _TextBlock extends StatelessWidget {
                           onClearMarks();
                         },
                       ),
-                      ...editable.contextMenuButtonItems,
+                      // The menu's own items, with Paste redirected when the
+                      // note can take an image: the field's paste would put
+                      // the text on the clipboard in and ignore a picture.
+                      for (final item in editable.contextMenuButtonItems)
+                        if (item.type == ContextMenuButtonType.paste &&
+                            onPaste != null)
+                          ContextMenuButtonItem(
+                            label: item.label,
+                            type: item.type,
+                            onPressed: () {
+                              ContextMenuController.removeAny();
+                              onPaste!();
+                            },
+                          )
+                        else
+                          item,
                     ],
                   );
                 },

@@ -238,6 +238,22 @@ class SyncService {
     }
   }
 
+  /// Uploads one attachment. Errors are left to the caller, which already
+  /// turns a [GitHubException] into something readable.
+  Future<void> uploadAttachment(
+    GitHubConfig config, {
+    required String path,
+    required List<int> bytes,
+    required String message,
+  }) async {
+    final client = _clientFactory(config);
+    try {
+      await client.writeBytes(path: path, bytes: bytes, message: message);
+    } finally {
+      client.dispose();
+    }
+  }
+
   Future<String?> deleteRemote(GitHubConfig config, Project project) async {
     if (!config.isComplete || project.sha == null) return null;
 

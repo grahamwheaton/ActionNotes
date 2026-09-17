@@ -99,4 +99,58 @@ void main() {
     // The markers stay in the text, which is what the file holds.
     expect(item.text, 'Fix the sync [bug] [app]');
   });
+
+  group('tags in a note', () {
+    test('are read from anywhere in it', () {
+      expect(
+        ItemTags.parseNotes('First line [bug]\n\nand later [urgent]'),
+        ['bug', 'urgent'],
+      );
+    });
+
+    // Every ticked row in a note would otherwise contribute a tag called x.
+    test('a checklist row inside a note is not a tag', () {
+      expect(ItemTags.parseNotes('- [ ] to do\n- [x] done'), isEmpty);
+      expect(ItemTags.parseNotes('  - [X] indented and done'), isEmpty);
+    });
+
+    test('a checklist row can still carry one', () {
+      expect(ItemTags.parseNotes('- [x] rang them [phone]'), ['phone']);
+    });
+
+    test('an image or a link in a note is not a tag', () {
+      expect(
+        ItemTags.parseNotes('![shot](../attachments/x/a.png)\n[Trip](trip.md)'),
+        isEmpty,
+      );
+    });
+
+    test('an item carries the tags from its line and its note, in that order',
+        () {
+      const item = ChecklistItem(
+        text: 'Fix the sync [bug]',
+        notes: 'talked to them [urgent]',
+      );
+
+      expect(item.tags, ['bug', 'urgent']);
+      // The line's own tags are the ones the title drops.
+      expect(item.ownTags, ['bug']);
+      expect(item.title, 'Fix the sync');
+    });
+
+    test('the same tag in both places is one tag', () {
+      const item = ChecklistItem(text: 'Fix it [bug]', notes: 'still a [Bug]');
+
+      expect(item.tags, ['bug']);
+    });
+
+    test('a note-only tag is still the item\'s tag', () {
+      const item = ChecklistItem(text: 'Fix it', notes: 'turns out [urgent]');
+
+      expect(item.tags, ['urgent']);
+      expect(item.ownTags, isEmpty);
+      // Nothing is taken out of the title, because nothing was in it.
+      expect(item.title, 'Fix it');
+    });
+  });
 }

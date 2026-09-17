@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../markdown/project_links.dart';
@@ -10,6 +11,7 @@ import '../state/app_state.dart';
 import 'context_menu.dart';
 import 'note_blocks_editor.dart';
 import 'note_editor.dart';
+import 'note_images.dart';
 import 'note_view.dart';
 import 'tag_pill.dart';
 import 'text_prompt.dart';
@@ -42,11 +44,43 @@ class _ChecklistViewState extends State<ChecklistView> {
   final Set<String> _expandedNotes = {};
 
   void _toggleNotes(int index, String itemText) {
+    // Alt makes it a decision about the whole project, the way alt-clicking a
+    // disclosure in a file tree does.
+    if (HardwareKeyboard.instance.isAltPressed) {
+      _toggleAllNotes(opening: !_expandedNotes.contains(itemText));
+      return;
+    }
+
     // Closing a note is a good moment to be sure it is written, rather than
     // trusting the pause timer to have fired first.
     if (_expandedNotes.contains(itemText)) _flushNotes(itemText);
     setState(() {
       if (!_expandedNotes.remove(itemText)) _expandedNotes.add(itemText);
+    });
+  }
+
+  /// Opens or closes every item's notes at once.
+  ///
+  /// [opening] follows the row that was alt-clicked, so alt-clicking a closed
+  /// note opens them all and alt-clicking an open one closes them all —
+  /// rather than each row flipping to its own opposite, which would leave the
+  /// list half open.
+  void _toggleAllNotes({required bool opening}) {
+    final project = _state.projectBySlug(widget.slug);
+    if (project == null) return;
+
+    // Everything on the way out gets written, as closing one note does.
+    if (!opening) {
+      for (final itemText in _pendingNotes.keys.toList()) {
+        _flushNotes(itemText);
+      }
+    }
+
+    setState(() {
+      _expandedNotes.clear();
+      if (opening) {
+        _expandedNotes.addAll(project.items.map((item) => item.text));
+      }
     });
   }
 
@@ -119,11 +153,13 @@ class _ChecklistViewState extends State<ChecklistView> {
     super.dispose();
   }
 
-  void _addItem() {
+  /// Adds what has been typed. [starred] comes from Ctrl+Enter, for an item
+  /// that matters as soon as it is written.
+  void _addItem({bool starred = false}) {
     final text = _newItemController.text.trim();
     if (text.isEmpty) return;
 
-    context.read<AppState>().addItem(widget.slug, text);
+    context.read<AppState>().addItem(widget.slug, text, starred: starred);
     _newItemController.clear();
     // Keep focus so a list can be typed out without reaching for the field.
     _newItemFocus.requestFocus();
@@ -272,6 +308,7 @@ class _ChecklistViewState extends State<ChecklistView> {
             controller: _newItemController,
             focusNode: _newItemFocus,
             onSubmit: _addItem,
+            onSubmitStarred: () => _addItem(starred: true),
           ),
         ],
       ),
@@ -378,7 +415,7 @@ class _ItemTile extends StatelessWidget {
             context,
             slug: slug,
             index: index,
-            title: item.title,
+            title: item.text,
             initialNotes: item.notes,
           ),
         ),
@@ -429,7 +466,7 @@ class _ItemTile extends StatelessWidget {
                 context,
                 slug: slug,
                 index: index,
-                title: item.title,
+                title: item.text,
                 initialNotes: item.notes,
               ),
               child: Row(
@@ -481,22 +518,67 @@ class _ItemTile extends StatelessWidget {
               Padding(
                 // Indented to start under the item's text, not its checkbox.
                 padding: const EdgeInsets.fromLTRB(36, 0, 12, 10),
-                child: NoteBlocksEditor(
+                child: _InlineNotes(
                   // Keyed by the item so that editing one note and opening
                   // another does not hand the second the first one's blocks.
                   // By text, not index: an index is reused by whichever row
                   // moves into it, which would hand the editor's blocks to a
                   // different item's note.
                   key: ValueKey('notes-$slug-${item.text}'),
+                  slug: slug,
                   initialMarkdown: item.notes,
-                  shrinkWrap: true,
                   onChanged: onNotesChanged,
-                  onOpenProject: (slug) =>
-                      context.read<AppState>().select(slug),
                 ),
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// The editor for a note opened inside a row.
+///
+/// Stateful only to hold the keys the image handling needs: a note opened in
+/// place can take a pasted or dropped picture, the same as one on its own
+/// screen — before this it could not, which made pasting a screenshot depend
+/// on which editor happened to be open.
+class _InlineNotes extends StatefulWidget {
+  const _InlineNotes({
+    super.key,
+    required this.slug,
+    required this.initialMarkdown,
+    required this.onChanged,
+  });
+
+  final String slug;
+  final String initialMarkdown;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_InlineNotes> createState() => _InlineNotesState();
+}
+
+class _InlineNotesState extends State<_InlineNotes> {
+  final _editor = GlobalKey<NoteBlocksEditorState>();
+  final _images = GlobalKey<NoteImageTargetState>();
+
+  @override
+  Widget build(BuildContext context) {
+    return NoteImageTarget(
+      key: _images,
+      slug: widget.slug,
+      editor: _editor,
+      // A row in a list has no room for a progress bar; the picture appearing
+      // is the feedback.
+      showProgress: false,
+      child: NoteBlocksEditor(
+        key: _editor,
+        initialMarkdown: widget.initialMarkdown,
+        shrinkWrap: true,
+        onChanged: widget.onChanged,
+        onPaste: () async => _images.currentState?.paste(),
+        onOpenProject: (slug) => context.read<AppState>().select(slug),
       ),
     );
   }
@@ -590,11 +672,16 @@ class _AddItemBar extends StatelessWidget {
     required this.controller,
     required this.focusNode,
     required this.onSubmit,
+    required this.onSubmitStarred,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final VoidCallback onSubmit;
+
+  /// Ctrl+Enter: add it and star it in one go, rather than adding it and then
+  /// hunting for the star on a list that has just moved.
+  final VoidCallback onSubmitStarred;
 
   @override
   Widget build(BuildContext context) {
@@ -604,13 +691,28 @@ class _AddItemBar extends StatelessWidget {
         child: Row(
           children: [
             Expanded(
-              child: TextField(
-                controller: controller,
-                focusNode: focusNode,
-                textCapitalization: TextCapitalization.sentences,
-                textInputAction: TextInputAction.done,
-                decoration: const InputDecoration(hintText: 'Add an item'),
-                onSubmitted: (_) => onSubmit(),
+              child: CallbackShortcuts(
+                bindings: {
+                  const SingleActivator(LogicalKeyboardKey.enter, control: true):
+                      onSubmitStarred,
+                  const SingleActivator(LogicalKeyboardKey.enter, meta: true):
+                      onSubmitStarred,
+                  const SingleActivator(
+                    LogicalKeyboardKey.numpadEnter,
+                    control: true,
+                  ): onSubmitStarred,
+                },
+                child: TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  textCapitalization: TextCapitalization.sentences,
+                  textInputAction: TextInputAction.done,
+                  decoration: const InputDecoration(
+                    hintText: 'Add an item',
+                    helperText: 'Ctrl+Enter adds it starred',
+                  ),
+                  onSubmitted: (_) => onSubmit(),
+                ),
               ),
             ),
             const SizedBox(width: 8),

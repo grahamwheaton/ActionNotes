@@ -16,12 +16,17 @@ class ActionNotesApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => AppState()..init(),
-      child: MaterialApp(
-        title: 'ActionNotes',
-        debugShowCheckedModeBanner: false,
-        theme: AppTheme.light(),
-        darkTheme: AppTheme.dark(),
-        home: const HomeShell(),
+      // Watches rather than reads: choosing light or dark in Settings has to
+      // reach the MaterialApp, which is above every screen.
+      child: Consumer<AppState>(
+        builder: (context, state, _) => MaterialApp(
+          title: 'ActionNotes',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.light(),
+          darkTheme: AppTheme.dark(),
+          themeMode: state.themeMode,
+          home: const HomeShell(),
+        ),
       ),
     );
   }

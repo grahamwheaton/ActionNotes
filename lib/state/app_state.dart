@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 
 import '../markdown/project_merge.dart';
 import '../models/checklist_item.dart';
@@ -75,6 +75,7 @@ class AppState extends ChangeNotifier {
   String? _message;
   String? _selectedSlug;
   NoteTarget? _openNote;
+  ThemeMode _themeMode = ThemeMode.system;
   List<ProjectConflict> _conflicts = [];
 
   List<Project> get projects => List.unmodifiable(_projects);
@@ -133,7 +134,19 @@ class AppState extends ChangeNotifier {
     return null;
   }
 
+  /// Light, dark, or the system's choice. Read once on start and written
+  /// whenever it changes, so the override survives a restart.
+  ThemeMode get themeMode => _themeMode;
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    if (_themeMode == mode) return;
+    _themeMode = mode;
+    notifyListeners();
+    await _settingsStore.saveThemeMode(mode);
+  }
+
   Future<void> init() async {
+    _themeMode = await _settingsStore.loadThemeMode();
     _config = await _settingsStore.load();
     _projects = await _localStore.loadAll();
     _loading = false;
@@ -290,10 +303,14 @@ class AppState extends ChangeNotifier {
 
   /// Adds an item at the top, where it can be seen — the list is read
   /// newest-first, and the file keeps that same order.
-  Future<void> addItem(String slug, String text) => _mutate(
+  Future<void> addItem(String slug, String text, {bool starred = false}) =>
+      _mutate(
         slug,
         (project) => project.copyWith(
-          items: [ChecklistItem(text: text.trim()), ...project.items],
+          items: [
+            ChecklistItem(text: text.trim(), starred: starred),
+            ...project.items,
+          ],
         ),
       );
 
@@ -355,9 +372,9 @@ class AppState extends ChangeNotifier {
     final name = AttachmentStore.uniqueFileName(encoded.fileName, taken);
     final repoPath = AttachmentStore.repoPath(slug, name);
 
-    final client = GitHubClient(_config);
     try {
-      await client.writeBytes(
+      await _syncService.uploadAttachment(
+        _config,
         path: repoPath,
         bytes: encoded.bytes,
         message: 'Add attachment $name to ${project.title}',
@@ -373,8 +390,6 @@ class AppState extends ChangeNotifier {
       _message = 'Could not reach GitHub to upload the image.';
       notifyListeners();
       return null;
-    } finally {
-      client.dispose();
     }
   }
 

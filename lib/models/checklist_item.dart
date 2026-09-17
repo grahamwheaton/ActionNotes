@@ -21,8 +21,16 @@ class ChecklistItem {
 
   bool get hasNotes => notes.trim().isNotEmpty;
 
-  /// The tags written inline in [text] as `[tag]`.
-  List<String> get tags => ItemTags.parse(text);
+  /// The tags on this item, written as `[tag]` either on its own line or
+  /// anywhere in its notes.
+  ///
+  /// Computed rather than stored, because the item is immutable and the text
+  /// it is read from is the only copy there should be.
+  List<String> get tags => ItemTags.parseAll(text: text, notes: notes);
+
+  /// The tags written on the item's own line, which are the ones [title]
+  /// takes out. A tag from the notes is shown but not removed from anything.
+  List<String> get ownTags => ItemTags.parse(text);
 
   /// [text] without its tag markers — what the row shows beside the pills.
   /// The markers stay in [text], which is what the file holds and what an

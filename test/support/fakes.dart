@@ -1,4 +1,9 @@
+import 'package:flutter/material.dart';
+
+import 'dart:io';
+
 import 'package:actionnotes/models/project.dart';
+import 'package:actionnotes/storage/attachment_store.dart';
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/storage/github_client.dart';
 import 'package:actionnotes/storage/local_store.dart';
@@ -21,6 +26,35 @@ class FakeLocalStore implements LocalStore {
   Future<void> delete(String slug) async => saved.remove(slug);
 }
 
+/// Keeps attachments in memory, in a temporary directory: the real store
+/// writes to the documents directory, which a test has no plugin for.
+class FakeAttachmentStore extends AttachmentStore {
+  final Map<String, List<int>> saved = {};
+
+  Directory? _dir;
+
+  Directory get _root =>
+      _dir ??= Directory.systemTemp.createTempSync('actionnotes-test');
+
+  File _fileFor(String repoPath) =>
+      File('${_root.path}/${repoPath.replaceAll('/', '_')}');
+
+  @override
+  Future<File> save(String repoPath, List<int> bytes) async {
+    saved[repoPath] = bytes;
+    return _fileFor(repoPath)..writeAsBytesSync(bytes);
+  }
+
+  @override
+  Future<File?> cached(String repoPath) async {
+    final file = _fileFor(repoPath);
+    return file.existsSync() ? file : null;
+  }
+
+  @override
+  Future<File?> resolve(String repoPath, GitHubConfig config) => cached(repoPath);
+}
+
 /// Reports no repo configured by default, so nothing tries to reach the
 /// network unless a test opts in with a complete config.
 class FakeSettingsStore implements SettingsStore {
@@ -33,11 +67,20 @@ class FakeSettingsStore implements SettingsStore {
 
   final GitHubConfig config;
 
+  /// What a test's app was last told to remember.
+  ThemeMode themeMode = ThemeMode.system;
+
   @override
   Future<GitHubConfig> load() async => config;
 
   @override
   Future<void> save(GitHubConfig config) async {}
+
+  @override
+  Future<ThemeMode> loadThemeMode() async => themeMode;
+
+  @override
+  Future<void> saveThemeMode(ThemeMode mode) async => themeMode = mode;
 }
 
 /// Adds items so the project reads in this order, top first.

@@ -1,18 +1,17 @@
 import 'dart:async';
 
-import 'package:desktop_drop/desktop_drop.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:pasteboard/pasteboard.dart';
 import 'package:provider/provider.dart';
 
-import '../markdown/note_blocks.dart';
+import '../markdown/item_tags.dart';
 import '../markdown/project_links.dart';
 import '../state/app_state.dart';
 import 'home_shell.dart';
 import 'note_blocks_editor.dart';
+import 'note_images.dart';
 import 'project_picker.dart';
+import 'tag_pill.dart';
 
 /// Edits one item's notes in a single view: headings are drawn as headings,
 /// images as pictures, and typing a markdown marker converts the line rather
@@ -29,6 +28,10 @@ class NoteEditor extends StatefulWidget {
 
   final String slug;
   final int index;
+
+  /// The item's line as written, tag markers and all. The bar shows it the
+  /// way the list does: the title, then its tags as pills — so a tagged task
+  /// still says what it is tagged while its note is open.
   final String title;
   final String initialNotes;
 
@@ -71,10 +74,9 @@ class NoteEditor extends StatefulWidget {
 
 class _NoteEditorState extends State<NoteEditor> {
   final _editor = GlobalKey<NoteBlocksEditorState>();
+  final _images = GlobalKey<NoteImageTargetState>();
 
   late String _markdown = widget.initialNotes;
-  bool _busy = false;
-  bool _dropping = false;
 
   /// In the pane, edits settle and save as they go. A route is left by
   /// popping, which saves on the way out; a pane can be replaced by anything
@@ -171,65 +173,6 @@ class _NoteEditorState extends State<NoteEditor> {
     return ProjectLinks.linkTo(project);
   }
 
-  Future<void> _pickImage() async {
-    final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(
-          label: 'Images',
-          extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
-        ),
-      ],
-    );
-    if (file == null || !mounted) return;
-    await _upload(file.name, await file.readAsBytes());
-  }
-
-  /// Pastes an image when the clipboard holds one, and lets the focused block
-  /// handle the paste itself otherwise.
-  Future<void> _paste() async {
-    final image = await Pasteboard.image;
-    if (!mounted) return;
-
-    if (image != null && image.isNotEmpty) {
-      final stamp = DateTime.now().toUtc().toIso8601String().split('.').first;
-      await _upload('pasted-${stamp.replaceAll(RegExp('[:-]'), '')}.png', image);
-      return;
-    }
-
-    final text = await Clipboard.getData(Clipboard.kTextPlain);
-    if (!mounted) return;
-    final value = text?.text;
-    if (value != null && value.isNotEmpty) {
-      _editor.currentState?.insertInline(value);
-    }
-  }
-
-  Future<void> _onDrop(DropDoneDetails details) async {
-    for (final file in details.files) {
-      if (!mounted) return;
-      await _upload(file.name, await file.readAsBytes());
-    }
-  }
-
-  Future<void> _upload(String fileName, List<int> bytes) async {
-    setState(() => _busy = true);
-
-    final reference = await context.read<AppState>().attachImage(
-          widget.slug,
-          fileName: fileName,
-          bytes: bytes,
-        );
-    if (!mounted) return;
-    setState(() => _busy = false);
-
-    // A failed upload already surfaced a message on the state.
-    if (reference == null) return;
-
-    // attachImage hands back the markdown; the editor wants the parts.
-    final block = NoteBlocks.parse(reference).firstOrNull;
-    if (block != null) _editor.currentState?.insertBlock(block);
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -254,14 +197,7 @@ class _NoteEditorState extends State<NoteEditor> {
           toolbarHeight: 78,
           title: Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
-            child: Text(
-              widget.title,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            child: _EditorTitle(text: widget.title),
           ),
           actions: [
             IconButton(
@@ -286,7 +222,7 @@ class _NoteEditorState extends State<NoteEditor> {
             IconButton(
               tooltip: 'Attach image',
               icon: const Icon(Icons.image_outlined),
-              onPressed: _busy ? null : _pickImage,
+              onPressed: () => _images.currentState?.pickImage(),
             ),
             Padding(
               padding: const EdgeInsets.only(right: 8),
@@ -299,8 +235,7 @@ class _NoteEditorState extends State<NoteEditor> {
         ),
         body: Column(
           children: [
-            if (_busy) const LinearProgressIndicator(),
-            Expanded(child: _buildBody(theme)),
+            Expanded(child: _buildBody()),
             _Hint(theme: theme),
           ],
         ),
@@ -308,13 +243,9 @@ class _NoteEditorState extends State<NoteEditor> {
     );
   }
 
-  Widget _buildBody(ThemeData theme) {
+  Widget _buildBody() {
     final editor = CallbackShortcuts(
       bindings: {
-        // Replaces the default paste so an image on the clipboard can be
-        // uploaded instead of silently doing nothing.
-        const SingleActivator(LogicalKeyboardKey.keyV, control: true): _paste,
-        const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _paste,
         const SingleActivator(LogicalKeyboardKey.keyZ, control: true): _undo,
         const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): _undo,
         const SingleActivator(
@@ -339,6 +270,7 @@ class _NoteEditorState extends State<NoteEditor> {
           if (mounted) setState(() {});
         },
         onRequestLink: _pickLink,
+        onPaste: () async => _images.currentState?.paste(),
         onOpenProject: (slug) async {
           // Leave the note before switching, so the editor is not left
           // pointing at an item in another project — saving on the way out,
@@ -355,27 +287,52 @@ class _NoteEditorState extends State<NoteEditor> {
       ),
     );
 
-    return DropTarget(
-      onDragEntered: (_) => setState(() => _dropping = true),
-      onDragExited: (_) => setState(() => _dropping = false),
-      onDragDone: (details) {
-        setState(() => _dropping = false);
-        _onDrop(details);
-      },
-      child: Container(
-        // Barely any horizontal inset: the block gutter already indents the
-        // text, and stacking margins on top of it pushed notes well clear of
-        // the edge on a phone.
-        margin: const EdgeInsets.fromLTRB(2, 4, 2, 0),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: _dropping ? theme.colorScheme.primary : Colors.transparent,
-            width: 2,
-          ),
-        ),
+    return Padding(
+      // Barely any horizontal inset: the block gutter already indents the
+      // text, and stacking margins on top of it pushed notes well clear of
+      // the edge on a phone.
+      padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
+      child: NoteImageTarget(
+        key: _images,
+        slug: widget.slug,
+        editor: _editor,
         child: editor,
       ),
+    );
+  }
+}
+
+/// The item's line at the top of the editor, with its tags as pills.
+class _EditorTitle extends StatelessWidget {
+  const _EditorTitle({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = theme.textTheme.titleMedium?.copyWith(
+      fontWeight: FontWeight.w600,
+    );
+
+    final tags = ItemTags.parse(text);
+    final title = ItemTags.strip(text);
+
+    if (tags.isEmpty) {
+      return Text(text, maxLines: 3, overflow: TextOverflow.ellipsis, style: style);
+    }
+
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        // No Flexible: a Wrap gives its children their own width, and a
+        // long title wraps onto another line rather than squeezing the pills.
+        if (title.isNotEmpty)
+          Text(title, maxLines: 3, overflow: TextOverflow.ellipsis, style: style),
+        for (final tag in tags) TagPill(tag: tag, faded: false),
+      ],
     );
   }
 }

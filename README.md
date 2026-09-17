@@ -22,23 +22,31 @@ pasting one file — or by pointing the model at the repo.
 - Project sidebar on wide windows, pushed screens on a phone — one layout,
   two shapes.
 - Checklists group open items first, with completed ones collapsed under a
-  header at the bottom. New items are added at the top.
+  header at the bottom. New items are added at the top — Enter adds one,
+  Ctrl+Enter adds it starred.
 - Star any item, the way Microsoft To Do does. Starred items pin above the
   rest of the open ones and their rows are tinted, while the file keeps its
   own order.
-- Tag an item by writing `[tag]` in its text. The brackets are shown as pills
-  after the title, and tapping one finds everything carrying that tag. The
-  tags live in the markdown line itself, so anything reading the file sees
-  them.
+- Tag an item by writing `[tag]` in its text, or anywhere in its notes. The
+  brackets are shown as pills after the title, and tapping one finds
+  everything carrying that tag. The tags live in the markdown itself, so
+  anything reading the file sees them.
 - Search across every project's titles, items and notes, saying where each
   hit came from. `[tag]` in the search box asks for that tag exactly.
+- **Light or dark**, or whatever the system is doing — an override in
+  Settings, remembered between runs.
 - Per-item notes in markdown, with images pasted, dropped or picked from disk
-  and stored in the repo. Every item opens its notes
+  and stored in the repo, from either editor — the note on its own screen and
+  the one that opens in the row share the same handling, so pasting a
+  screenshot does not depend on which is open, and on a phone the block
+  menu's own Paste takes an image too. Every item opens its notes
   underneath itself in the list — as the editor itself, so a checkbox in a note
   ticks and the text can be changed without going anywhere. Edits settle for a
   moment and then save, and closing the note writes it at once.
 - Anywhere on an item opens its notes: the checkbox, star, notes marker and
-  drag handle keep their own taps. On a wide window the note opens in the
+  drag handle keep their own taps. **Alt-clicking** a notes marker opens or
+  closes every item's notes in the project at once, following the row you
+  clicked. On a wide window the note opens in the
   detail pane, so the project sidebar stays where it is and another project
   is one click away; on a phone it is a screen of its own, there being no
   sidebar to keep. A note in the pane writes as it goes and again when the

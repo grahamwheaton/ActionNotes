@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -9,8 +10,26 @@ class SettingsStore {
   static const _repoKey = 'github_repo';
   static const _branchKey = 'github_branch';
   static const _tokenKey = 'github_token';
+  static const _themeKey = 'theme_mode';
 
   final _secure = const FlutterSecureStorage();
+
+  /// Light, dark, or whatever the system says. Stored by name rather than by
+  /// index, so reordering [ThemeMode] could never silently change someone's
+  /// setting.
+  Future<ThemeMode> loadThemeMode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return switch (prefs.getString(_themeKey)) {
+      'light' => ThemeMode.light,
+      'dark' => ThemeMode.dark,
+      _ => ThemeMode.system,
+    };
+  }
+
+  Future<void> saveThemeMode(ThemeMode mode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_themeKey, mode.name);
+  }
 
   Future<GitHubConfig> load() async {
     final prefs = await SharedPreferences.getInstance();
