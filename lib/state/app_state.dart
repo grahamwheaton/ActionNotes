@@ -12,6 +12,25 @@ import '../storage/local_store.dart';
 import '../storage/settings_store.dart';
 import '../storage/sync_service.dart';
 
+/// Which item's notes the desktop layout is editing in its detail pane.
+///
+/// The index is into the project's own item list, which is what every other
+/// item operation takes; [NoteTarget] exists so the pane can tell "no note
+/// open" from "the first item's note".
+class NoteTarget {
+  const NoteTarget(this.slug, this.index);
+
+  final String slug;
+  final int index;
+
+  @override
+  bool operator ==(Object other) =>
+      other is NoteTarget && other.slug == slug && other.index == index;
+
+  @override
+  int get hashCode => Object.hash(slug, index);
+}
+
 /// Single source of truth for the UI.
 ///
 /// Every mutation writes to the local cache immediately and schedules a push,
@@ -45,6 +64,7 @@ class AppState extends ChangeNotifier {
   bool _syncing = false;
   String? _message;
   String? _selectedSlug;
+  NoteTarget? _openNote;
   List<ProjectConflict> _conflicts = [];
 
   List<Project> get projects => List.unmodifiable(_projects);
@@ -71,6 +91,28 @@ class AppState extends ChangeNotifier {
   void select(String? slug) {
     if (_selectedSlug == slug) return;
     _selectedSlug = slug;
+    // A note belongs to the project it was opened from, and its index means
+    // nothing in another one.
+    _openNote = null;
+    notifyListeners();
+  }
+
+  /// The note being edited beside the sidebar, or null when the pane is
+  /// showing the checklist. Only the wide layout sets this; a phone pushes
+  /// the editor as a screen instead.
+  NoteTarget? get openNote => _openNote;
+
+  void showNote(String slug, int index) {
+    final target = NoteTarget(slug, index);
+    if (_openNote == target) return;
+    _openNote = target;
+    _selectedSlug = slug;
+    notifyListeners();
+  }
+
+  void hideNote() {
+    if (_openNote == null) return;
+    _openNote = null;
     notifyListeners();
   }
 
@@ -279,10 +321,16 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> removeItem(String slug, int index) => _mutate(slug, (project) {
-        final items = [...project.items]..removeAt(index);
-        return project.copyWith(items: items);
-      });
+  Future<void> removeItem(String slug, int index) {
+    // Removing an item shifts the indexes after it, so a note open on this
+    // project can no longer be trusted to point at the item it was opened on.
+    if (_openNote?.slug == slug) _openNote = null;
+
+    return _mutate(slug, (project) {
+      final items = [...project.items]..removeAt(index);
+      return project.copyWith(items: items);
+    });
+  }
 
   /// Reorders the items occupying [slots], which are positions in the
   /// project's own item list, ascending. [newIndex] counts within [slots] and
@@ -325,6 +373,7 @@ class AppState extends ChangeNotifier {
 
     _pendingPushes.remove(slug)?.cancel();
     if (_selectedSlug == slug) _selectedSlug = null;
+    if (_openNote?.slug == slug) _openNote = null;
     _projects = _projects.where((p) => p.slug != slug).toList();
     await _localStore.delete(slug);
     notifyListeners();

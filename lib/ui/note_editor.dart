@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +10,7 @@ import 'package:provider/provider.dart';
 import '../markdown/note_blocks.dart';
 import '../markdown/project_links.dart';
 import '../state/app_state.dart';
+import 'home_shell.dart';
 import 'note_blocks_editor.dart';
 import 'project_picker.dart';
 
@@ -21,6 +24,7 @@ class NoteEditor extends StatefulWidget {
     required this.index,
     required this.title,
     required this.initialNotes,
+    this.onClose,
   });
 
   final String slug;
@@ -28,14 +32,28 @@ class NoteEditor extends StatefulWidget {
   final String title;
   final String initialNotes;
 
+  /// Set when the editor is living in the desktop detail pane rather than on
+  /// its own route: there is nothing to pop, so closing is the pane's to do.
+  final VoidCallback? onClose;
+
+  /// Opens the note, beside the sidebar on a wide window and as its own
+  /// screen on a narrow one.
+  ///
+  /// Every caller goes through here, so where the editor appears is decided
+  /// in one place rather than at each row and menu item.
   static Future<void> open(
     BuildContext context, {
     required String slug,
     required int index,
     required String title,
     required String initialNotes,
-  }) {
-    return Navigator.of(context).push(
+  }) async {
+    if (MediaQuery.sizeOf(context).width >= HomeShell.sidebarBreakpoint) {
+      context.read<AppState>().showNote(slug, index);
+      return;
+    }
+
+    await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => NoteEditor(
           slug: slug,
@@ -58,6 +76,60 @@ class _NoteEditorState extends State<NoteEditor> {
   bool _busy = false;
   bool _dropping = false;
 
+  /// In the pane, edits settle and save as they go. A route is left by
+  /// popping, which saves on the way out; a pane can be replaced by anything
+  /// that changes what the detail side shows, so there is no single moment to
+  /// hang the write on.
+  Timer? _autosave;
+
+  bool get _inPane => widget.onClose != null;
+
+  /// Held so the note can still be written after this widget is gone, which
+  /// is the one moment a pane cannot reach for its context.
+  AppState? _state;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _state = context.read<AppState>();
+  }
+
+  @override
+  void dispose() {
+    _autosave?.cancel();
+    // A pane is taken away by whatever changes the detail side — choosing
+    // another project, the item being deleted — and none of those routes
+    // through Save or back. Write on the way out so nothing typed is lost.
+    if (_inPane) _persistAfterFrame();
+    super.dispose();
+  }
+
+  /// Writes the note once the frame this teardown belongs to is over.
+  ///
+  /// Not immediately: saving notifies listeners, and doing that part way
+  /// through a build is exactly the error it sounds like.
+  void _persistAfterFrame() {
+    final state = _state;
+    if (state == null) return;
+
+    final notes = ProjectLinks.normalize(_markdown, state.projects);
+    if (notes.trim() == widget.initialNotes.trim()) return;
+
+    final slug = widget.slug;
+    final index = widget.index;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      state.setItemNotes(slug, index, notes);
+    });
+  }
+
+  void _scheduleAutosave() {
+    if (!_inPane) return;
+    _autosave?.cancel();
+    _autosave = Timer(const Duration(seconds: 1), () {
+      if (mounted) _persist();
+    });
+  }
+
   /// Writes the note. Called by Save and by leaving the screen, so a note is
   /// never lost to pressing back.
   Future<void> _persist() async {
@@ -71,8 +143,16 @@ class _NoteEditorState extends State<NoteEditor> {
   }
 
   Future<void> _saveAndClose() async {
+    _autosave?.cancel();
     await _persist();
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+
+    final close = widget.onClose;
+    if (close != null) {
+      close();
+    } else {
+      Navigator.of(context).pop();
+    }
   }
 
   void _undo() => setState(() => _editor.currentState?.undo());
@@ -164,6 +244,11 @@ class _NoteEditorState extends State<NoteEditor> {
       },
       child: Scaffold(
         appBar: AppBar(
+          // In the pane there is no route to pop, so the arrow has to be put
+          // there rather than left to the route to supply.
+          // A BackButton rather than any arrow, so it reads and behaves as
+          // the one a route would have supplied.
+          leading: _inPane ? BackButton(onPressed: _saveAndClose) : null,
           // A task title is a sentence more often than a label, so give it
           // room to wrap instead of cutting it off mid-word.
           toolbarHeight: 78,
@@ -249,6 +334,7 @@ class _NoteEditorState extends State<NoteEditor> {
         initialMarkdown: widget.initialNotes,
         onChanged: (markdown) {
           _markdown = markdown;
+          _scheduleAutosave();
           // Keeps the undo and redo buttons in step with the history.
           if (mounted) setState(() {});
         },
@@ -257,10 +343,14 @@ class _NoteEditorState extends State<NoteEditor> {
           // Leave the note before switching, so the editor is not left
           // pointing at an item in another project — saving on the way out,
           // as leaving by any other route does.
+          _autosave?.cancel();
           await _persist();
           if (!mounted) return;
+
+          // Selecting another project closes the pane by itself; a route has
+          // to be popped.
           context.read<AppState>().select(slug);
-          Navigator.of(context).pop();
+          if (!_inPane && mounted) Navigator.of(context).pop();
         },
       ),
     );

@@ -1,5 +1,6 @@
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/ui/home_shell.dart';
+import 'package:actionnotes/ui/note_blocks_editor.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -38,7 +39,14 @@ Future<AppState> openNote(
   return state;
 }
 
-Finder blockField(int index) => find.byType(TextField).at(index);
+/// A note's own block, not just any field on screen: with a note open in the
+/// desktop pane the sidebar's project search is still there.
+Finder blockField(int index) => find
+    .descendant(
+      of: find.byType(NoteBlocksEditor),
+      matching: find.byType(TextField),
+    )
+    .at(index);
 
 /// Puts the caret in a row, then reaches down over [rows] more of them.
 Future<void> selectDown(WidgetTester tester, int from, int rows) async {
@@ -322,7 +330,13 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.delete);
       await tester.pumpAndSettle();
 
-      expect(find.byType(TextField), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(NoteBlocksEditor),
+          matching: find.byType(TextField),
+        ),
+        findsOneWidget,
+      );
       expect(await saveAndRead(tester, store), '');
     });
 

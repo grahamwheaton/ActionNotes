@@ -2,6 +2,7 @@ import 'package:actionnotes/models/checklist_item.dart';
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/storage/attachment_store.dart';
 import 'package:actionnotes/ui/home_shell.dart';
+import 'package:actionnotes/ui/note_blocks_editor.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -10,6 +11,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
 import 'support/fakes.dart';
+
+/// The fields inside the open note, rather than any field on screen: with a
+/// note open in the desktop pane, the sidebar's project search is still
+/// there, and it comes first.
+Finder noteFields() => find.descendant(
+      of: find.byType(NoteBlocksEditor),
+      matching: find.byType(TextField),
+    );
 
 Future<AppState> pumpShell(
   WidgetTester tester,
@@ -419,7 +428,7 @@ void main() {
       final store = FakeLocalStore();
       await openNote(tester, store);
 
-      await tester.enterText(find.byType(TextField).first, 'Typed then back.');
+      await tester.enterText(noteFields().first, 'Typed then back.');
       await tester.pumpAndSettle();
 
       // The app bar's back arrow, the thing a person actually presses.
@@ -433,7 +442,7 @@ void main() {
       final store = FakeLocalStore();
       await openNote(tester, store, size: const Size(420, 900));
 
-      await tester.enterText(find.byType(TextField).first, 'Android back.');
+      await tester.enterText(noteFields().first, 'Android back.');
       await tester.pumpAndSettle();
 
       // What Android's back gesture delivers to the engine.
@@ -447,7 +456,7 @@ void main() {
       final store = FakeLocalStore();
       await openNote(tester, store);
 
-      await tester.enterText(find.byType(TextField).first, 'Saved.');
+      await tester.enterText(noteFields().first, 'Saved.');
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Save'));
@@ -485,7 +494,12 @@ void main() {
       return state;
     }
 
-    Finder blockField(int index) => find.byType(TextField).at(index);
+    Finder blockField(int index) => find
+        .descendant(
+          of: find.byType(NoteBlocksEditor),
+          matching: find.byType(TextField),
+        )
+        .at(index);
 
     testWidgets('typing "# " makes a heading and takes the marker away',
         (tester) async {
@@ -561,7 +575,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Four editable blocks, each holding its text without its marker.
-      expect(find.byType(TextField), findsNWidgets(4));
+      expect(noteFields(), findsNWidgets(4));
       expect(
         tester.widget<TextField>(blockField(0)).controller!.text,
         'Heading',
@@ -800,7 +814,7 @@ void main() {
 
       // The accident: caret at the start of the second block, backspace
       // joins it onto the first, and there was no way back.
-      final second = find.byType(TextField).at(1);
+      final second = noteFields().at(1);
       await tester.tap(second);
       await tester.pumpAndSettle();
       tester.widget<TextField>(second).controller!.selection =
@@ -808,12 +822,12 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
       await tester.pumpAndSettle();
 
-      expect(find.byType(TextField), findsOneWidget);
+      expect(noteFields(), findsOneWidget);
 
       await tester.tap(find.byTooltip('Undo'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(TextField), findsNWidgets(2));
+      expect(noteFields(), findsNWidgets(2));
 
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
@@ -845,7 +859,7 @@ void main() {
       await openWithNotes(tester, store, 'Heading here');
 
       // Converting a block is one step.
-      await tester.enterText(find.byType(TextField).first, '# Heading here');
+      await tester.enterText(noteFields().first, '# Heading here');
       await tester.pumpAndSettle();
 
       await tester.tap(find.byTooltip('Undo'));
@@ -904,7 +918,12 @@ void main() {
       return state;
     }
 
-    Finder blockField(int index) => find.byType(TextField).at(index);
+    Finder blockField(int index) => find
+        .descendant(
+          of: find.byType(NoteBlocksEditor),
+          matching: find.byType(TextField),
+        )
+        .at(index);
 
     testWidgets('a newline from a soft keyboard starts the next bullet',
         (tester) async {
@@ -1037,7 +1056,7 @@ void main() {
       await tester.tap(find.text('Quote doors'));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byType(TextField).first, 'See [[');
+      await tester.enterText(noteFields().first, 'See [[');
       await tester.pumpAndSettle();
 
       // The picker offers the other project, not the one being edited.
@@ -1073,7 +1092,7 @@ void main() {
 
       // Typed in full, so the [[ handler does not fire mid-word.
       await tester.enterText(
-        find.byType(TextField).first,
+        noteFields().first,
         'Blocked by [[House move]]',
       );
       await tester.pumpAndSettle();
@@ -1099,7 +1118,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.enterText(
-        find.byType(TextField).first,
+        noteFields().first,
         'See [[Not A Project]]',
       );
       await tester.pumpAndSettle();

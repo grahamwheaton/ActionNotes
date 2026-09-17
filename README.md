@@ -37,8 +37,13 @@ pasting one file — or by pointing the model at the repo.
   underneath itself in the list — as the editor itself, so a checkbox in a note
   ticks and the text can be changed without going anywhere. Edits settle for a
   moment and then save, and closing the note writes it at once.
-- Anywhere on an item opens its notes full-screen: the checkbox, star, notes
-  marker and drag handle keep their own taps.
+- Anywhere on an item opens its notes: the checkbox, star, notes marker and
+  drag handle keep their own taps. On a wide window the note opens in the
+  detail pane, so the project sidebar stays where it is and another project
+  is one click away; on a phone it is a screen of its own, there being no
+  sidebar to keep. A note in the pane writes as it goes and again when the
+  pane is taken away, because choosing another project or deleting the item
+  does not route through Save or back.
 - Links between projects: type `[[` for a picker, or write a normal markdown
   link. Tap one in the preview to jump there.
 - Right-click (or long-press) an item or a project for star, notes, rename and

@@ -9,6 +9,7 @@ import '../storage/sync_service.dart';
 import 'checklist_view.dart';
 import 'conflict_dialog.dart';
 import 'context_menu.dart';
+import 'note_editor.dart';
 import 'search_screen.dart';
 import 'settings_screen.dart';
 import 'text_prompt.dart';
@@ -69,23 +70,61 @@ class _TwoPaneLayout extends StatelessWidget {
           Expanded(
             child: selected == null
                 ? const _NoProjectSelected()
-                : Column(
-                    children: [
-                      _DetailHeader(project: selected),
-                      Expanded(
-                        child: ChecklistView(
-                          // Keyed so switching project rebuilds the view's
-                          // own state rather than reusing the last one's.
-                          key: ValueKey(selected.slug),
-                          slug: selected.slug,
-                          showAppBar: false,
-                        ),
-                      ),
-                    ],
-                  ),
+                : _DetailPane(project: selected),
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The right-hand side: a project's checklist, or one item's notes.
+///
+/// A note edited here keeps the sidebar, which is the point — on a phone the
+/// editor is a screen of its own, because there is no sidebar to keep.
+class _DetailPane extends StatelessWidget {
+  const _DetailPane({required this.project});
+
+  final Project project;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final note = state.openNote;
+
+    // An index only means something against the list it came from. Anything
+    // that shortens the list closes the note, but a sync landing another
+    // device's edit can still take the item away underneath us.
+    if (note != null &&
+        note.slug == project.slug &&
+        note.index < project.items.length) {
+      final item = project.items[note.index];
+
+      return NoteEditor(
+        // Keyed by the item so opening another note builds a fresh editor
+        // rather than handing this one the last note's blocks.
+        key: ValueKey('note-${project.slug}-${note.index}'),
+        slug: project.slug,
+        index: note.index,
+        title: item.title,
+        initialNotes: item.notes,
+        onClose: state.hideNote,
+      );
+    }
+
+    return Column(
+      children: [
+        _DetailHeader(project: project),
+        Expanded(
+          child: ChecklistView(
+            // Keyed so switching project rebuilds the view's own state
+            // rather than reusing the last one's.
+            key: ValueKey(project.slug),
+            slug: project.slug,
+            showAppBar: false,
+          ),
+        ),
+      ],
     );
   }
 }
