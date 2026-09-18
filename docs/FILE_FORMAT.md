@@ -97,11 +97,73 @@ items first and groups completed ones under a collapsible header, but it does
 not rewrite the file to match that view: reordering in the app moves open items
 among themselves and leaves completed items where they are.
 
+## Notes as a conversation
+
+A note can hold an exchange rather than just prose. The convention is a
+**signed paragraph**: a line holding nothing but a bold name — optionally
+followed by `·` and when it was said — starts a message, and everything until
+the next such line is what was said.
+
+```markdown
+- [ ] Fix the sync
+  **Claude** · 2026-09-18T09:12Z
+  Found it: a push threw away the SHA it was given. Fixed, with five tests.
+
+  **grahamwheaton** · 2026-09-18T09:30Z
+  Thanks — does it need a release?
+```
+
+- The app shows such a note as a stream of bubbles, yours on one side and a
+  model's on the other, with a box at the bottom to add one. The markdown is
+  still the note: anything written there is as editable in the block editor,
+  in a text editor, or on GitHub as ever.
+- **Times are written in UTC**, to the minute, so the file cannot be misread
+  in another timezone. The app shows them in local time.
+- A line of bold text is a signature only if that is *all* the line holds, so
+  `**important**` in the middle of a sentence is still just bold.
+- Text before the first signature belongs to nobody: an older note that was
+  never a conversation keeps its words, rather than being attributed to
+  whoever writes next.
+- A model writing into a repo should sign with its own name — `**Claude**` or
+  `**ChatGPT**` — which is what lets the app put the two sides apart, and what
+  the notes repo's own README asks for.
+
 ## Archive
 
 Archiving a project's completed items appends them to
 `archive/<project-slug>.md`, as the same `- [x]` lines with the same indented
-notes, under an `## Archived <date>` heading. The directory is deliberately
+notes, under an `## Notes as a conversation
+
+A note can hold an exchange rather than just prose. The convention is a
+**signed paragraph**: a line holding nothing but a bold name — optionally
+followed by `·` and when it was said — starts a message, and everything until
+the next such line is what was said.
+
+```markdown
+- [ ] Fix the sync
+  **Claude** · 2026-09-18T09:12Z
+  Found it: a push threw away the SHA it was given. Fixed, with five tests.
+
+  **grahamwheaton** · 2026-09-18T09:30Z
+  Thanks — does it need a release?
+```
+
+- The app shows such a note as a stream of bubbles, yours on one side and a
+  model's on the other, with a box at the bottom to add one. The markdown is
+  still the note: anything written there is as editable in the block editor,
+  in a text editor, or on GitHub as ever.
+- **Times are written in UTC**, to the minute, so the file cannot be misread
+  in another timezone. The app shows them in local time.
+- A line of bold text is a signature only if that is *all* the line holds, so
+  `**important**` in the middle of a sentence is still just bold.
+- Text before the first signature belongs to nobody: an older note that was
+  never a conversation keeps its words, rather than being attributed to
+  whoever writes next.
+- A model writing into a repo should sign with its own name — `**Claude**` or
+  `**ChatGPT**` — which is what lets the app put the two sides apart, and what
+  the notes repo's own README asks for.
+
+## Archived <date>` heading. The directory is deliberately
 outside `projects/`, which is the only one the app scans, so an archived item
 is kept and readable — on GitHub, in an editor, by a model — without coming
 back as a checklist. Nothing is deleted.

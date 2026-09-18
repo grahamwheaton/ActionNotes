@@ -5,9 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../markdown/item_tags.dart';
+import '../markdown/note_conversation.dart';
 import '../markdown/project_links.dart';
 import '../models/checklist_item.dart';
 import '../state/app_state.dart';
+import 'conversation_view.dart';
 import 'home_shell.dart';
 import 'note_blocks_editor.dart';
 import 'note_images.dart';
@@ -90,6 +92,11 @@ class _NoteEditorState extends State<NoteEditor> {
   /// Held so the note can still be written after this widget is gone, which
   /// is the one moment a pane cannot reach for its context.
   AppState? _state;
+
+  /// Chat or markdown. A note that already holds signed messages opens as a
+  /// conversation; anything else opens as the editor it always was.
+  late bool _asConversation =
+      NoteConversation.looksConversational(widget.initialNotes);
 
   @override
   void didChangeDependencies() {
@@ -225,6 +232,19 @@ class _NoteEditorState extends State<NoteEditor> {
                     .read<AppState>()
                     .toggleStar(widget.slug, widget.index),
               ),
+            IconButton(
+              tooltip: _asConversation ? 'Edit as markdown' : 'Conversation',
+              icon: Icon(
+                _asConversation ? Icons.edit_note : Icons.forum_outlined,
+              ),
+              onPressed: () {
+                // Leaving the chat writes what is in hand, so switching views
+                // cannot lose a message.
+                if (_asConversation) _autosave?.cancel();
+                _persist();
+                setState(() => _asConversation = !_asConversation);
+              },
+            ),
             if (tight)
               _OverflowMenu(
                 canUndo: _editor.currentState?.canUndo ?? false,
@@ -278,6 +298,22 @@ class _NoteEditorState extends State<NoteEditor> {
   }
 
   Widget _buildBody() {
+    if (_asConversation) {
+      return ConversationView(
+        markdown: _markdown,
+        onSend: (markdown) {
+          setState(() => _markdown = markdown);
+          // A message is a whole thought, so it is written at once rather
+          // than waiting for a pause the way typing does.
+          _persist();
+        },
+        onOpenProject: (slug) {
+          context.read<AppState>().select(slug);
+          if (!_inPane && mounted) Navigator.of(context).pop();
+        },
+      );
+    }
+
     final editor = CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyZ, control: true): _undo,
@@ -296,7 +332,9 @@ class _NoteEditorState extends State<NoteEditor> {
       },
       child: NoteBlocksEditor(
         key: _editor,
-        initialMarkdown: widget.initialNotes,
+        // What the note holds now, not what it held on opening: switching
+        // back from the conversation has to bring the messages with it.
+        initialMarkdown: _markdown,
         onChanged: (markdown) {
           _markdown = markdown;
           _scheduleAutosave();

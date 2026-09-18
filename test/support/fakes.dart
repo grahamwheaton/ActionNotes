@@ -76,6 +76,14 @@ class FakeSettingsStore implements SettingsStore {
   @override
   Future<void> save(GitHubConfig config) async {}
 
+  String? login;
+
+  @override
+  Future<String?> loadLogin() async => login;
+
+  @override
+  Future<void> saveLogin(String? value) async => login = value;
+
   @override
   Future<ThemeMode> loadThemeMode() async => themeMode;
 

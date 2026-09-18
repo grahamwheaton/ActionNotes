@@ -96,6 +96,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _login = login;
         if (_owner.text.trim().isEmpty) _owner.text = login;
       });
+      // Kept, so a message written into a note is signed with a real name
+      // rather than "me".
+      await context.read<AppState>().setLogin(login);
     } catch (_) {
       // Nothing is lost: the owner can still be typed, and testing the
       // connection reports anything actually wrong with the token.

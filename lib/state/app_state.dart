@@ -97,6 +97,7 @@ class AppState extends ChangeNotifier {
   NoteTarget? _openNote;
   NoteTarget? _revealed;
   DateTime? _lastSynced;
+  String? _login;
   ThemeMode _themeMode = ThemeMode.system;
   List<ProjectConflict> _conflicts = [];
 
@@ -222,8 +223,26 @@ class AppState extends ChangeNotifier {
     await _settingsStore.saveThemeMode(mode);
   }
 
+  /// Who a message in a note is signed as: the signed-in account if there is
+  /// one, the repo owner otherwise, and a plain fallback if neither — a note
+  /// should still be able to hold a conversation before anyone has signed in.
+  String get me {
+    final login = _login;
+    if (login != null && login.isNotEmpty) return login;
+    if (_config.owner.isNotEmpty) return _config.owner;
+    return 'me';
+  }
+
+  /// Remembers the signed-in account's name, so notes can be signed with it.
+  Future<void> setLogin(String? login) async {
+    _login = login;
+    notifyListeners();
+    await _settingsStore.saveLogin(login);
+  }
+
   Future<void> init() async {
     _themeMode = await _settingsStore.loadThemeMode();
+    _login = await _settingsStore.loadLogin();
     _config = await _settingsStore.load();
     _projects = await _localStore.loadAll();
     _loading = false;

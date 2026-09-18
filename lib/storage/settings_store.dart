@@ -11,6 +11,7 @@ class SettingsStore {
   static const _branchKey = 'github_branch';
   static const _tokenKey = 'github_token';
   static const _themeKey = 'theme_mode';
+  static const _loginKey = 'github_login';
 
   final _secure = const FlutterSecureStorage();
 
@@ -29,6 +30,24 @@ class SettingsStore {
   Future<void> saveThemeMode(ThemeMode mode) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_themeKey, mode.name);
+  }
+
+  /// The signed-in account's name, used to sign a message in a note. Not a
+  /// secret — it is written into the markdown — so preferences are the right
+  /// place for it.
+  Future<String?> loadLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    final login = prefs.getString(_loginKey);
+    return (login == null || login.isEmpty) ? null : login;
+  }
+
+  Future<void> saveLogin(String? login) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (login == null || login.trim().isEmpty) {
+      await prefs.remove(_loginKey);
+    } else {
+      await prefs.setString(_loginKey, login.trim());
+    }
   }
 
   Future<GitHubConfig> load() async {

@@ -45,6 +45,11 @@ pasting one file — or by pointing the model at the repo.
   actually reached GitHub counts.
 - **Images open full size**: click one in a note for a zoomable view, or
   right-click for copy, save a copy, and show in folder on desktop.
+- **A note can be a conversation.** A line that is nothing but a bold name
+  starts a message, so a note reads as an exchange — your messages on one
+  side, a model's on the other, with a box at the bottom to add one. It is
+  ordinary markdown, so a model can write into the file without knowing
+  anything about this app, and the same note still opens in the block editor.
 - **It says when a new version is out**, checked against the repo's latest
   release on start and from Settings, with one tap to the download. Installing
   it is still a decision you make — see below.
