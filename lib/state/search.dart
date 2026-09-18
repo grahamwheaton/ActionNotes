@@ -1,4 +1,5 @@
 import '../markdown/item_tags.dart';
+import '../markdown/mentions.dart';
 import '../models/project.dart';
 
 /// A tag and how many items carry it.
@@ -45,6 +46,11 @@ class ProjectSearch {
     // other than "contains this".
     final tag = ItemTags.queryTag(query);
     if (tag != null) return byTag(projects, tag);
+
+    // `@claude` asks who is being waited on, which is the question the
+    // mention was written to ask.
+    final name = Mentions.queryName(query);
+    if (name != null) return byMention(projects, name);
 
     final needle = query.trim().toLowerCase();
     if (needle.isEmpty) return const [];
@@ -153,6 +159,61 @@ class ProjectSearch {
           : a.tag.toLowerCase().compareTo(b.tag.toLowerCase());
     });
     return tags;
+  }
+
+  /// Every item mentioning [name] that has not been answered, across every
+  /// project. This is the model's inbox, and the person's way of seeing what
+  /// they have asked for.
+  static List<SearchHit> byMention(List<Project> projects, String name) {
+    final wanted = name.trim().toLowerCase().replaceFirst('@', '');
+    final hits = <SearchHit>[];
+
+    for (final project in projects) {
+      for (var index = 0; index < project.items.length; index++) {
+        final item = project.items[index];
+        if (!item.awaiting.any((who) => who.toLowerCase() == wanted)) continue;
+
+        hits.add(SearchHit(
+          project: project,
+          field: SearchField.itemText,
+          text: item.text,
+          itemIndex: index,
+        ));
+      }
+    }
+
+    return hits;
+  }
+
+  /// Who is being waited on, and how many items each, most first. Shown in
+  /// the search screen beside the tags, since it answers the same kind of
+  /// question.
+  static List<TagCount> mentions(List<Project> projects) {
+    final counts = <String, int>{};
+    final spellings = <String, String>{};
+
+    for (final project in projects) {
+      for (final item in project.items) {
+        if (item.done) continue;
+        for (final name in item.awaiting) {
+          final key = name.toLowerCase();
+          counts[key] = (counts[key] ?? 0) + 1;
+          spellings.putIfAbsent(key, () => name);
+        }
+      }
+    }
+
+    final names = [
+      for (final entry in counts.entries)
+        TagCount(spellings[entry.key]!, entry.value),
+    ];
+    names.sort((a, b) {
+      final byCount = b.count.compareTo(a.count);
+      return byCount != 0
+          ? byCount
+          : a.tag.toLowerCase().compareTo(b.tag.toLowerCase());
+    });
+    return names;
   }
 
   /// The first line of [text] containing [needle], trimmed, or null.

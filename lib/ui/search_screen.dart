@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../markdown/item_tags.dart';
+import '../markdown/mentions.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
 import '../state/search.dart';
@@ -68,15 +69,19 @@ class _SearchScreenState extends State<SearchScreen> {
           // what there is to search for belong together.
           ? _TagIndex(
               projects: state.projects,
-              onPick: (tag) => setState(
-                () => _controller.text = ItemTags.marker(tag),
-              ),
+              onPick: (query) => setState(() => _controller.text = query),
             )
           : hits.isEmpty
               ? _Message(
-                  text: ItemTags.queryTag(query) == null
-                      ? 'Nothing matches "$query".'
-                      : 'Nothing is tagged ${ItemTags.queryTag(query)}.',
+                  text: switch ((
+                    ItemTags.queryTag(query),
+                    Mentions.queryName(query),
+                  )) {
+                    (final String tag, _) => 'Nothing is tagged $tag.',
+                    (_, final String name) =>
+                      'Nothing is waiting on @$name.',
+                    _ => 'Nothing matches "$query".',
+                  },
                   theme: theme,
                 )
               : ListView.separated(
@@ -184,6 +189,7 @@ class _TagIndex extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final tags = ProjectSearch.tags(projects);
+    final waiting = ProjectSearch.mentions(projects);
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
@@ -194,6 +200,42 @@ class _TagIndex extends StatelessWidget {
             color: theme.colorScheme.onSurfaceVariant,
           ),
         ),
+        if (waiting.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          Text(
+            'Waiting on',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Items that mention @someone and have had no reply yet.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final name in waiting)
+                ActionChip(
+                  avatar: Text(
+                    '${name.count}',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onTertiaryContainer,
+                    ),
+                  ),
+                  label: Text('@${name.tag}'),
+                  backgroundColor: theme.colorScheme.tertiaryContainer,
+                  side: BorderSide.none,
+                  onPressed: () => onPick('@${name.tag}'),
+                ),
+            ],
+          ),
+        ],
         if (tags.isNotEmpty) ...[
           const SizedBox(height: 24),
           Text(
@@ -225,7 +267,7 @@ class _TagIndex extends StatelessWidget {
                   label: Text(tag.tag),
                   backgroundColor: theme.colorScheme.secondaryContainer,
                   side: BorderSide.none,
-                  onPressed: () => onPick(tag.tag),
+                  onPressed: () => onPick(ItemTags.marker(tag.tag)),
                 ),
             ],
           ),

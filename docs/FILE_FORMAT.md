@@ -97,6 +97,29 @@ items first and groups completed ones under a collapsible header, but it does
 not rewrite the file to match that view: reordering in the app moves open items
 among themselves and leaves completed items where they are.
 
+## Asking someone: `@name`
+
+`@name` anywhere in an item or its notes asks that person — usually a model —
+to pick it up.
+
+```markdown
+- [ ] Work out why the sync conflicts @Claude
+  **graham** · 2026-09-18T09:30Z
+  Happens when I type while it is pushing.
+```
+
+- The app shows an **@Claude** pill on any item waiting on a name, and
+  `@claude` in the search box lists them. The search screen's "Waiting on"
+  row says who is owed what, across every project.
+- **A mention is answered by a reply, not by being deleted.** A name is
+  waiting only while the last message in the note is from someone else, so
+  asking again later makes the item wait again, and nothing has to be edited
+  away to mark it done. That matters when the other party is a model that has
+  been told not to delete anything.
+- The mention stays in the sentence, unlike a `[tag]`: "@Claude pick this up"
+  says nothing with the name taken out.
+- An email address is not a mention — the `@` there follows a word character.
+
 ## Notes as a conversation
 
 A note can hold an exchange rather than just prose. The convention is a
@@ -132,7 +155,30 @@ the next such line is what was said.
 
 Archiving a project's completed items appends them to
 `archive/<project-slug>.md`, as the same `- [x]` lines with the same indented
-notes, under an `## Notes as a conversation
+notes, under an `## Asking someone: `@name`
+
+`@name` anywhere in an item or its notes asks that person — usually a model —
+to pick it up.
+
+```markdown
+- [ ] Work out why the sync conflicts @Claude
+  **graham** · 2026-09-18T09:30Z
+  Happens when I type while it is pushing.
+```
+
+- The app shows an **@Claude** pill on any item waiting on a name, and
+  `@claude` in the search box lists them. The search screen's "Waiting on"
+  row says who is owed what, across every project.
+- **A mention is answered by a reply, not by being deleted.** A name is
+  waiting only while the last message in the note is from someone else, so
+  asking again later makes the item wait again, and nothing has to be edited
+  away to mark it done. That matters when the other party is a model that has
+  been told not to delete anything.
+- The mention stays in the sentence, unlike a `[tag]`: "@Claude pick this up"
+  says nothing with the name taken out.
+- An email address is not a mention — the `@` there follows a word character.
+
+## Notes as a conversation
 
 A note can hold an exchange rather than just prose. The convention is a
 **signed paragraph**: a line holding nothing but a bold name — optionally

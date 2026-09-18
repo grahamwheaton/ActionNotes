@@ -45,6 +45,10 @@ pasting one file — or by pointing the model at the repo.
   actually reached GitHub counts.
 - **Images open full size**: click one in a note for a zoomable view, or
   right-click for copy, save a copy, and show in folder on desktop.
+- **Ask a model to pick something up** by writing `@Claude` in an item or its
+  notes. The row shows who it is waiting on, `@claude` in the search box lists
+  everything owed, and a reply settles it — a mention is answered rather than
+  deleted.
 - **A note can be a conversation.** A line that is nothing but a bold name
   starts a message, so a note reads as an exchange — your messages on one
   side, a model's on the other, with a box at the bottom to add one. It is

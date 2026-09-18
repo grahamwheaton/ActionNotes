@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../markdown/note_conversation.dart';
 import '../markdown/project_links.dart';
 import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
 import 'context_menu.dart';
+import 'conversation_view.dart';
 import 'note_blocks_editor.dart';
 import 'note_editor.dart';
 import 'note_images.dart';
@@ -653,23 +655,67 @@ class _InlineNotesState extends State<_InlineNotes> {
   final _editor = GlobalKey<NoteBlocksEditorState>();
   final _images = GlobalKey<NoteImageTargetState>();
 
+  /// A conversation reads as an exchange here too, rather than as its own
+  /// signatures in raw markdown — which is what a quick back-and-forth in a
+  /// list actually wants. Anything else is the block editor, as before.
+  late bool _asConversation =
+      NoteConversation.looksConversational(widget.initialMarkdown);
+
+  /// What the note holds now, so switching views does not lose a message.
+  late String _markdown = widget.initialMarkdown;
+
   @override
   Widget build(BuildContext context) {
-    return NoteImageTarget(
-      key: _images,
-      slug: widget.slug,
-      editor: _editor,
-      // A row in a list has no room for a progress bar; the picture appearing
-      // is the feedback.
-      showProgress: false,
-      child: NoteBlocksEditor(
-        key: _editor,
-        initialMarkdown: widget.initialMarkdown,
-        shrinkWrap: true,
-        onChanged: widget.onChanged,
-        onPaste: () async => _images.currentState?.paste(),
-        onOpenProject: (slug) => context.read<AppState>().select(slug),
-      ),
+    final theme = Theme.of(context);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_asConversation)
+          InlineConversation(
+            markdown: _markdown,
+            onSend: (markdown) {
+              setState(() => _markdown = markdown);
+              widget.onChanged(markdown);
+            },
+            onOpenProject: (slug) => context.read<AppState>().select(slug),
+          )
+        else
+          NoteImageTarget(
+            key: _images,
+            slug: widget.slug,
+            editor: _editor,
+            // A row in a list has no room for a progress bar; the picture
+            // appearing is the feedback.
+            showProgress: false,
+            child: NoteBlocksEditor(
+              key: _editor,
+              initialMarkdown: _markdown,
+              shrinkWrap: true,
+              onChanged: (markdown) {
+                _markdown = markdown;
+                widget.onChanged(markdown);
+              },
+              onPaste: () async => _images.currentState?.paste(),
+              onOpenProject: (slug) => context.read<AppState>().select(slug),
+            ),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              textStyle: theme.textTheme.labelSmall,
+            ),
+            icon: Icon(
+              _asConversation ? Icons.edit_note : Icons.forum_outlined,
+              size: 16,
+            ),
+            label: Text(_asConversation ? 'Edit as markdown' : 'Conversation'),
+            onPressed: () => setState(() => _asConversation = !_asConversation),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -741,7 +787,10 @@ class _ItemTitle extends StatelessWidget {
     );
 
     final tags = item.tags;
-    if (tags.isEmpty) return Text(item.text, style: style);
+    final awaiting = item.done ? const <String>[] : item.awaiting;
+    if (tags.isEmpty && awaiting.isEmpty) {
+      return Text(item.text, style: style);
+    }
 
     return Wrap(
       spacing: 6,
@@ -749,9 +798,12 @@ class _ItemTitle extends StatelessWidget {
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         // A title made of nothing but tags would otherwise render an empty
-        // line above the pills.
+        // line above the pills. The mention itself stays in the text, because
+        // "@Claude pick this up" is a sentence and taking the name out of it
+        // would leave it saying nothing.
         if (item.title.isNotEmpty) Text(item.title, style: style),
         for (final tag in tags) TagPill(tag: tag, faded: item.done),
+        for (final name in awaiting) WaitingPill(name: name),
       ],
     );
   }

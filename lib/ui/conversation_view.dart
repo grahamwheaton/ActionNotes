@@ -253,3 +253,111 @@ class _Composer extends StatelessWidget {
     );
   }
 }
+
+/// A conversation inside a checklist row: the last few messages and a box to
+/// reply in.
+///
+/// Shortened on purpose — a row is not the place to read a long exchange, and
+/// the full editor is one tap away on the item itself.
+class InlineConversation extends StatefulWidget {
+  const InlineConversation({
+    super.key,
+    required this.markdown,
+    required this.onSend,
+    this.onOpenProject,
+    this.showLast = 3,
+  });
+
+  final String markdown;
+  final ValueChanged<String> onSend;
+  final void Function(String slug)? onOpenProject;
+
+  /// How many of the most recent messages to show.
+  final int showLast;
+
+  @override
+  State<InlineConversation> createState() => _InlineConversationState();
+}
+
+class _InlineConversationState extends State<InlineConversation> {
+  final _composer = TextEditingController();
+
+  @override
+  void dispose() {
+    _composer.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final said = _composer.text.trim();
+    if (said.isEmpty) return;
+
+    widget.onSend(NoteConversation.append(
+      widget.markdown,
+      speaker: context.read<AppState>().me,
+      body: said,
+    ));
+    _composer.clear();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final me = context.watch<AppState>().me;
+    final all = NoteConversation.parse(widget.markdown);
+    final hidden = all.length - widget.showLast;
+    final shown = hidden > 0 ? all.sublist(hidden) : all;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (hidden > 0)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(
+              '$hidden earlier ${hidden == 1 ? 'message' : 'messages'} — open '
+              'the item to read them',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        for (final message in shown)
+          _Bubble(
+            message: message,
+            mine: _ConversationViewState._isMine(message.speaker, me),
+            onOpenProject: widget.onOpenProject,
+          ),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _composer,
+                  minLines: 1,
+                  maxLines: 4,
+                  style: theme.textTheme.bodyMedium,
+                  textCapitalization: TextCapitalization.sentences,
+                  decoration: const InputDecoration(
+                    hintText: 'Reply',
+                    isDense: true,
+                  ),
+                  onSubmitted: (_) => _send(),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton.filled(
+                tooltip: 'Send',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.send, size: 16),
+                onPressed: _send,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}

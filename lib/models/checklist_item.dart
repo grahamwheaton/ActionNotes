@@ -1,4 +1,5 @@
 import '../markdown/item_tags.dart';
+import '../markdown/mentions.dart';
 
 /// A single `- [ ]` line in a project file, plus anything indented under it.
 class ChecklistItem {
@@ -27,6 +28,13 @@ class ChecklistItem {
   /// Computed rather than stored, because the item is immutable and the text
   /// it is read from is the only copy there should be.
   List<String> get tags => ItemTags.parseAll(text: text, notes: notes);
+
+  /// Names mentioned as `@name`, in the item or its notes.
+  List<String> get mentions =>
+      [...Mentions.parse(text), ...Mentions.parse(notes)];
+
+  /// Who this item is still waiting on: a mention that has had no reply.
+  List<String> get awaiting => Mentions.awaiting(text: text, notes: notes);
 
   /// The tags written on the item's own line, which are the ones [title]
   /// takes out. A tag from the notes is shown but not removed from anything.
