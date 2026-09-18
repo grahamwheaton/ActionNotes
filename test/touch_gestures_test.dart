@@ -208,6 +208,39 @@ void main() {
       expect(find.text('Ctrl+Enter adds it starred'), findsOneWidget);
     });
 
+    testWidgets('a long item grows the box instead of scrolling past it', (
+      tester,
+    ) async {
+      await pumpPhoneList(tester, [], touch: true);
+
+      final field = find.byType(TextField).last;
+      final oneLine = tester.getSize(field).height;
+
+      await tester.enterText(
+        field,
+        'A new item with a long name that will overflow the one line it used '
+        'to have and keep going for a while yet',
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.getSize(field).height, greaterThan(oneLine));
+    });
+
+    testWidgets('a grown box still adds the item on the action key', (
+      tester,
+    ) async {
+      final state = await pumpPhoneList(tester, [], touch: true);
+
+      const long = 'A new item with a long name that will overflow the line';
+      await tester.enterText(find.byType(TextField).last, long);
+      await tester.pumpAndSettle();
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      // One item, not one per line: the box wraps, it does not split.
+      expect(state.projects.single.items.single.text, long);
+    });
+
     testWidgets('the button lines up with the text field it belongs to', (
       tester,
     ) async {

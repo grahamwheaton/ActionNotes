@@ -974,6 +974,16 @@ class _AddItemBar extends StatelessWidget {
                       controller: controller,
                       focusNode: focusNode,
                       textCapitalization: TextCapitalization.sentences,
+                      // Grows with what is being typed, up to five lines, so
+                      // a long item reads as it will read in the list instead
+                      // of scrolling past the left edge of a one-line box.
+                      // An item is still a single line of text — this is
+                      // wrapping, not newlines — so the action key stays
+                      // "done" and still adds it, and Enter on a keyboard
+                      // does not break the item in half.
+                      minLines: 1,
+                      maxLines: 5,
+                      keyboardType: TextInputType.text,
                       textInputAction: TextInputAction.done,
                       // No helperText: it hangs below the field, and a row that
                       // centres its children then sits the button lower than the
