@@ -256,7 +256,10 @@ jobs:
 
             $source = (Resolve-Path 'build/windows/x64/runner/Release').Path
             $version = ($env:TAG -replace '[^A-Za-z0-9._-]', '-')
-            & $makensis "/DVERSION=$version" "/DSOURCE=$source" windows/portable.nsi
+            $target = Join-Path (Get-Location).Path $out
+            Write-Host "Writing $target"
+            & $makensis "/DVERSION=$version" "/DSOURCE=$source" "/DOUT=$target" `
+              windows/portable.nsi
             if ($LASTEXITCODE -ne 0) { throw "makensis exited $LASTEXITCODE" }
 
             # It has to be an executable, not whatever fell out of the build:

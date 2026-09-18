@@ -9,7 +9,12 @@
 
 Unicode true
 Name "ActionNotes"
-OutFile "actionnotes-portable.exe"
+; Absolute, passed in: a relative OutFile lands beside this script rather than
+; where the build is run from, which is where the first attempt went looking.
+!ifndef OUT
+  !define OUT "actionnotes-portable.exe"
+!endif
+OutFile "${OUT}"
 ; Per-user, so it never asks for admin.
 RequestExecutionLevel user
 SilentInstall silent
