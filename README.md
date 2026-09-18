@@ -317,8 +317,23 @@ keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA \
 
 It asks for a keystore password, a key password — the same one is fine — and
 some name and place fields, none of which matter for an app that is not going
-to the Play Store. Then turn the file into base64, which is how a secret holds
-a binary:
+to the Play Store. `Unknown` will do for all of them.
+
+On Windows, PowerShell does not search the current directory, so `keytool` on
+its own is not found even from inside that folder — use the full path, and
+keep the keystore out of `Program Files`, which needs admin to write to:
+
+```powershell
+& "C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe" `
+  -genkey -v -keystore "$HOME\upload-keystore.jks" `
+  -keyalg RSA -keysize 2048 -validity 10000 -alias upload
+```
+
+Then turn the file into base64, which is how a secret holds a binary.
+**That text is the private signing key** — treat it like a password: put it
+straight into the GitHub secret field and paste it nowhere else, not into a
+chat, an issue, or a commit. Anyone holding both it and the keystore password
+can sign a build that installs over yours.
 
 ```sh
 base64 -w0 upload-keystore.jks          # Linux
@@ -327,8 +342,8 @@ base64 upload-keystore.jks | tr -d '\n' # macOS
 
 ```powershell
 # Windows PowerShell, into a file so nothing is lost to the console buffer
-[Convert]::ToBase64String([IO.File]::ReadAllBytes("upload-keystore.jks")) |
-  Set-Content -NoNewline keystore.base64.txt
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("$HOME\upload-keystore.jks")) |
+  Set-Content -NoNewline "$HOME\keystore.base64.txt"
 ```
 
 Then add four repository secrets under Settings → Secrets and variables →
