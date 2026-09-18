@@ -252,6 +252,15 @@ for you:
   its own running executable. The download lands in your browser; unzip it
   over the old folder with the app closed.
 
+There is also a **single-file portable** on each release,
+`actionnotes-<tag>-portable.exe`: the same build wrapped as a self-extracting
+executable, for carrying about on a stick. A Flutter app cannot be one binary
+— `actionnotes.exe` is a launcher and the engine loads `flutter_windows.dll`,
+the plugin DLLs and `data/` from disk — so this unpacks to a temporary folder
+and starts the app from there. It takes a moment longer to start, and some
+antivirus dislikes self-extracting executables on principle; the zip is the
+one to fall back on. It makes copying easier, not updating.
+
 ## Building
 
 Android APK:

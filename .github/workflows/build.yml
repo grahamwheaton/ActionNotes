@@ -218,11 +218,72 @@ jobs:
       - name: Report toolchain
         run: flutter doctor -v
       - run: flutter build windows --release
+
+      # One file to carry about, as well as the folder. A Flutter build is an
+      # exe plus its DLLs and data/, and the engine loads those from disk, so
+      # a true single binary is not on the table — this is a self-extracting
+      # archive that unpacks to a temp folder and starts the app.
+      - name: Build the single-file portable
+        id: portable
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $build = 'build/windows/x64/runner/Release'
+          & 7z a -mx=9 payload.7z "$build/*" | Out-Null
+
+          # 7zSD.sfx is the module that runs a program after extracting, and
+          # it ships in 7-Zip Extra rather than the ordinary install. Without
+          # it the fallback still gives one file, but it unpacks rather than
+          # launching.
+          $module = $null
+          try {
+            Invoke-WebRequest -Uri 'https://www.7-zip.org/a/7z2409-extra.7z' `
+              -OutFile extra.7z -TimeoutSec 60
+            & 7z x extra.7z -oextra -y | Out-Null
+            if (Test-Path extra/7zSD.sfx) { $module = 'extra/7zSD.sfx' }
+          } catch {
+            Write-Host "::warning::Could not fetch 7-Zip Extra: $_"
+          }
+
+          if ($module) {
+            # Written as an array rather than a here-string: a here-string
+            # has to start at column 0, which would end this YAML block.
+            # CRLF, which is what the SFX module expects.
+            $config = @(
+              ';!@Install@!UTF-8!',
+              'Title="ActionNotes"',
+              'RunProgram="actionnotes.exe"',
+              'GUIMode="2"',
+              ';!@InstallEnd@!',
+              ''
+            ) -join "`r`n"
+            [IO.File]::WriteAllText("$pwd/config.txt", $config, [Text.UTF8Encoding]::new($false))
+            cmd /c copy /b "$module" + config.txt + payload.7z actionnotes-portable.exe | Out-Null
+            "runs=true" >> $env:GITHUB_OUTPUT
+          } else {
+            $fallback = 'C:/Program Files/7-Zip/7z.sfx'
+            if (-not (Test-Path $fallback)) { throw 'No SFX module available' }
+            cmd /c copy /b "`"$fallback`"" + payload.7z actionnotes-portable.exe | Out-Null
+            "runs=false" >> $env:GITHUB_OUTPUT
+          }
+
+          $size = [math]::Round((Get-Item actionnotes-portable.exe).Length / 1MB, 1)
+          Write-Host "Portable build: $size MB, launches the app: $(
+            if ($module) { 'yes' } else { 'no, it unpacks only' })"
+
       - uses: actions/upload-artifact@v4
         with:
           name: actionnotes-windows
           path: build/windows/x64/runner/Release/
           if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: hashFiles('actionnotes-portable.exe') != ''
+        with:
+          name: actionnotes-portable
+          path: actionnotes-portable.exe
+          if-no-files-found: warn
 
   publish:
     name: Publish release
@@ -244,6 +305,13 @@ jobs:
           name: actionnotes-windows
           path: windows-build
 
+      # Best effort: a release is still a release without it.
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: actionnotes-portable
+          path: portable
+
       - name: Package the builds
         id: package
         env:
@@ -257,17 +325,41 @@ jobs:
           mv "apk/actionnotes-$TAG.apk" .
           echo "signing=$(cat apk/signing.txt)" >> "$GITHUB_OUTPUT"
 
+          # The single-file portable, when the Windows job managed to make one.
+          if [ -f portable/actionnotes-portable.exe ]; then
+            mv portable/actionnotes-portable.exe "actionnotes-$TAG-portable.exe"
+            echo "portable=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "portable=no" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ inputs.version || github.ref_name }}
           SIGNING: ${{ steps.package.outputs.signing }}
+          PORTABLE: ${{ steps.package.outputs.portable }}
         run: |
           set -euo pipefail
           if [ "$SIGNING" = "signed" ]; then
             signing_note="Signed with the project's upload key, so it installs over a previous release."
           else
             signing_note="**Debug-signed.** No release keystore is configured, and CI generates a fresh debug key each run, so this APK will not install over another build — uninstall the old one first. See the README to set up signing."
+          fi
+
+          extra_assets=()
+          portable_note=""
+          if [ "$PORTABLE" = "yes" ]; then
+            extra_assets+=("actionnotes-$TAG-portable.exe")
+            portable_note="**Windows, one file** — \`actionnotes-$TAG-portable.exe\`
+
+          The same build as a self-extracting executable: one file to copy
+          about, which unpacks to a temporary folder and starts the app. A
+          Flutter app cannot be a single binary — the engine loads its DLLs
+          and \`data\` from disk — so this is a wrapper around the same
+          folder, and it takes a moment longer to start. Some antivirus is
+          suspicious of self-extracting executables; the zip above is the
+          one to use if yours objects."
           fi
           cat > notes.md <<EOF
           ActionNotes $TAG.
@@ -286,6 +378,8 @@ jobs:
           files together — the executable needs the DLLs and \`data\` folder
           beside it. Windows may warn about an unrecognised app, as the build
           is not code-signed.
+
+          $portable_note
           EOF
           # --repo because this job checks nothing out, so gh has no git
           # remote to infer the repository from.
@@ -297,4 +391,5 @@ jobs:
             --title "ActionNotes $TAG" \
             --notes-file notes.md \
             "actionnotes-$TAG.apk" \
-            "actionnotes-$TAG-windows.zip"
+            "actionnotes-$TAG-windows.zip" \
+            "${extra_assets[@]}"
