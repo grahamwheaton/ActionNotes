@@ -25,6 +25,20 @@ void main() {
       expect(Mentions.parse('over to you @Claude.'), ['Claude']);
     });
 
+    // Writing about the convention should not invoke it, which is how these
+    // notes accidentally asked for something the first time round.
+    test('a mention inside code is being talked about, not said', () {
+      expect(Mentions.parse('write `@Claude` to ask for something'), isEmpty);
+      expect(
+        Mentions.parse('```\n- [ ] thing @Claude\n```'),
+        isEmpty,
+      );
+    });
+
+    test('code does not join words either side of it into a name', () {
+      expect(Mentions.parse('see `x` @Claude now'), ['Claude']);
+    });
+
     test('a bare at sign is nothing', () {
       expect(Mentions.parse('costs 5 @ each'), isEmpty);
       expect(Mentions.parse('@'), isEmpty);

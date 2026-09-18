@@ -14,11 +14,24 @@ class Mentions {
   /// there the `@` follows a word character.
   static final _pattern = RegExp(r'(?<![\w@./])@([A-Za-z][A-Za-z0-9.\-]{0,30})');
 
+  /// Code spans and fenced blocks, whose contents are being talked about
+  /// rather than said. Writing `@Claude` about the convention should not ask
+  /// Claude for anything — which is exactly what happened the first time
+  /// these notes described the feature.
+  static final _code = RegExp(r'```[\s\S]*?```|`[^`\n]*`');
+
   /// Every name mentioned in [text], in order, each once, case as written.
   static List<String> parse(String text) {
     final found = <String, String>{};
 
-    for (final match in _pattern.allMatches(text)) {
+    // Blanked rather than removed, so nothing either side of a code span can
+    // be joined into a name that was never written.
+    final prose = text.replaceAllMapped(
+      _code,
+      (match) => ' ' * match.group(0)!.length,
+    );
+
+    for (final match in _pattern.allMatches(prose)) {
       final name = match.group(1)!;
       // A trailing dot is sentence punctuation, not part of a name.
       final cleaned = name.replaceAll(RegExp(r'[.\-]+$'), '');

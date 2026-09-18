@@ -119,6 +119,10 @@ to pick it up.
 - The mention stays in the sentence, unlike a `[tag]`: "@Claude pick this up"
   says nothing with the name taken out.
 - An email address is not a mention — the `@` there follows a word character.
+- **A mention inside a code span or fenced block is not an ask**, so writing
+  `` `@Claude` `` while explaining the convention does not quietly request
+  anything. (These notes managed exactly that the first time they described
+  it.)
 
 ## Notes as a conversation
 
@@ -177,6 +181,10 @@ to pick it up.
 - The mention stays in the sentence, unlike a `[tag]`: "@Claude pick this up"
   says nothing with the name taken out.
 - An email address is not a mention — the `@` there follows a word character.
+- **A mention inside a code span or fenced block is not an ask**, so writing
+  `` `@Claude` `` while explaining the convention does not quietly request
+  anything. (These notes managed exactly that the first time they described
+  it.)
 
 ## Notes as a conversation
 
