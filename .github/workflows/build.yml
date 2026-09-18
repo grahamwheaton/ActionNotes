@@ -223,38 +223,60 @@ jobs:
       # exe plus its DLLs and data/, and the engine loads those from disk, so
       # a true single binary is not on the table — this wraps the folder in an
       # executable that unpacks it once and runs it.
+      #
+      # NSIS is installed rather than assumed: the image has neither it nor a
+      # 7-Zip SFX module that can launch a program, which is how the first two
+      # attempts at this went wrong.
+      - name: Install NSIS
+        continue-on-error: true
+        run: choco install nsis --no-progress -y
+
       - name: Build the single-file portable
         id: portable
         shell: pwsh
+        # The zip is the release; this is a convenience. A failure here says
+        # so in the log and leaves the asset off, rather than taking the
+        # release with it.
+        continue-on-error: true
         env:
           TAG: ${{ inputs.version || github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
-
-          # NSIS is on the image, so nothing is downloaded at build time. The
-          # first attempt at this fetched a 7-Zip SFX module that 404'd, fell
-          # through to a module that cannot launch anything, and shipped a
-          # file that was not even an executable.
-          $makensis = (Get-Command makensis -ErrorAction SilentlyContinue)?.Source
-          if (-not $makensis) { $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe' }
-          if (-not (Test-Path $makensis)) { throw "No makensis at $makensis" }
-
-          $source = (Resolve-Path 'build/windows/x64/runner/Release').Path
-          $version = ($env:TAG -replace '[^A-Za-z0-9._-]', '-')
-          & $makensis "/DVERSION=$version" "/DSOURCE=$source" windows/portable.nsi
-
-          # It has to be an executable, not whatever fell out of the build:
-          # the first version of this step shipped a bare archive named .exe,
-          # and nothing checked.
           $out = 'actionnotes-portable.exe'
-          if (-not (Test-Path $out)) { throw 'makensis produced nothing' }
-          $bytes = [IO.File]::ReadAllBytes($out)[0..1]
-          if ([char]$bytes[0] -ne 'M' -or [char]$bytes[1] -ne 'Z') {
-            throw 'The portable build is not a Windows executable'
+
+          try {
+            $makensis = (Get-Command makensis -ErrorAction SilentlyContinue)?.Source
+            foreach ($guess in @(
+              'C:\Program Files (x86)\NSIS\makensis.exe',
+              'C:\Program Files\NSIS\makensis.exe'
+            )) {
+              if (-not $makensis -and (Test-Path $guess)) { $makensis = $guess }
+            }
+            if (-not $makensis) { throw 'NSIS is not installed on this runner' }
+
+            $source = (Resolve-Path 'build/windows/x64/runner/Release').Path
+            $version = ($env:TAG -replace '[^A-Za-z0-9._-]', '-')
+            & $makensis "/DVERSION=$version" "/DSOURCE=$source" windows/portable.nsi
+            if ($LASTEXITCODE -ne 0) { throw "makensis exited $LASTEXITCODE" }
+
+            # It has to be an executable, not whatever fell out of the build:
+            # the first version of this step shipped a bare archive named
+            # .exe, and nothing checked.
+            if (-not (Test-Path $out)) { throw 'makensis produced nothing' }
+            $head = [IO.File]::ReadAllBytes($out)[0..1]
+            if ([char]$head[0] -ne 'M' -or [char]$head[1] -ne 'Z') {
+              throw 'The portable build is not a Windows executable'
+            }
+            $size = [math]::Round((Get-Item $out).Length / 1MB, 1)
+            if ($size -lt 5) { throw "The portable build is only $size MB" }
+            Write-Host "Portable build: $size MB, a real PE that launches the app"
+          } catch {
+            # Leave nothing behind for the upload to find, so a half-made file
+            # cannot reach a release.
+            if (Test-Path $out) { Remove-Item $out -Force }
+            Write-Host "::warning::No portable build: $_"
+            throw
           }
-          $size = [math]::Round((Get-Item $out).Length / 1MB, 1)
-          if ($size -lt 5) { throw "The portable build is only $size MB" }
-          Write-Host "Portable build: $size MB, a real PE that launches the app"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -263,6 +285,7 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
+        if: hashFiles('actionnotes-portable.exe') != ''
         with:
           name: actionnotes-portable
           path: actionnotes-portable.exe
