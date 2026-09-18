@@ -50,6 +50,7 @@ class ProjectMerge {
       title: local.title,
       items: items,
       notes: _mergeText(local.notes, remote.notes),
+      blocks: _mergeBlocks(local.blocks, remote.blocks),
       updated: DateTime.now().toUtc(),
       // Front matter keys only GitHub knows about are worth keeping.
       extraFrontMatter: {...remote.extraFrontMatter, ...local.extraFrontMatter},
@@ -57,13 +58,40 @@ class ProjectMerge {
   }
 
   /// Ticked or starred on either side wins, so a completion made on the phone
-  /// is not undone by a stale desktop copy.
+  /// is not undone by a stale desktop copy. Which block it sits in follows the
+  /// local copy, since that is the arrangement in front of whoever is looking.
   static ChecklistItem _combine(ChecklistItem local, ChecklistItem remote) {
     return local.copyWith(
       done: local.done || remote.done,
       starred: local.starred || remote.starred,
       notes: _mergeText(local.notes, remote.notes),
     );
+  }
+
+  /// Headings from both sides, local order first, and each block's prose
+  /// merged the same way the project's own is.
+  ///
+  /// A block is kept even when nothing is under it any more: a heading is
+  /// something someone wrote, and losing it silently reorganises a list.
+  static List<ProjectBlock> _mergeBlocks(
+    List<ProjectBlock> local,
+    List<ProjectBlock> remote,
+  ) {
+    final theirs = {for (final block in remote) block.title: block};
+    final merged = <ProjectBlock>[];
+
+    for (final block in local) {
+      final counterpart = theirs.remove(block.title);
+      merged.add(
+        counterpart == null
+            ? block
+            : block.copyWith(body: _mergeText(block.body, counterpart.body)),
+      );
+    }
+    for (final block in remote) {
+      if (theirs.remove(block.title) != null) merged.add(block);
+    }
+    return merged;
   }
 
   /// Keeps both sides when they differ, rather than picking one and losing the

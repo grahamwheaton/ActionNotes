@@ -435,12 +435,12 @@ void main() {
       final state = stateFor(repo, FakeLocalStore());
       await state.init();
       await state.createProject('List');
-      await state.addItem('list', 'Task');
+      await state.addItem('list', 'Write the report');
       await pumpShell(tester, state, size: const Size(420, 900));
 
       await tester.tap(find.text('List'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Task'));
+      await tester.tap(find.text('Write the report'));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byTooltip('Star'));
@@ -457,10 +457,10 @@ void main() {
       final state = stateFor(repo, FakeLocalStore());
       await state.init();
       await state.createProject('List');
-      await state.addItem('list', 'Task');
+      await state.addItem('list', 'Write the report');
       await pumpShell(tester, state);
 
-      await tester.tap(find.text('Task'));
+      await tester.tap(find.text('Write the report'));
       await tester.pumpAndSettle();
 
       expect(find.byTooltip('Undo'), findsOneWidget);

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,12 +11,14 @@ import '../markdown/project_links.dart';
 import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
+import 'composer.dart';
 import 'context_menu.dart';
 import 'conversation_view.dart';
 import 'note_blocks_editor.dart';
 import 'note_editor.dart';
 import 'note_images.dart';
 import 'note_view.dart';
+import 'project_notes_view.dart';
 import 'project_picker.dart';
 import 'tag_pill.dart';
 import 'text_prompt.dart';
@@ -206,16 +209,63 @@ class _ChecklistViewState extends State<ChecklistView> {
     });
   }
 
-  /// Adds what has been typed. [starred] comes from Ctrl+Enter, for an item
-  /// that matters as soon as it is written.
+  /// What the composer will add: an item, or a `##` section of notes.
+  AddKind _addKind = AddKind.task;
+
+  /// Adds what has been typed. [starred] comes from Ctrl+Enter or from holding
+  /// the send button, for an item that matters as soon as it is written.
   void _addItem({bool starred = false}) {
     final text = _newItemController.text.trim();
     if (text.isEmpty) return;
 
-    context.read<AppState>().addItem(widget.slug, text, starred: starred);
+    final state = context.read<AppState>();
+    if (_addKind == AddKind.note) {
+      // What was typed is the heading: a note block is named, and its body is
+      // written underneath it once it is there.
+      state.addBlock(widget.slug, text);
+    } else {
+      state.addItem(widget.slug, text, starred: starred);
+    }
     _newItemController.clear();
     // Keep focus so a list can be typed out without reaching for the field.
     _newItemFocus.requestFocus();
+  }
+
+  /// Picks a photo and adds an item holding it.
+  ///
+  /// The item is what was typed, or "Photo" if nothing was — an attachment has
+  /// to hang on something, and an item with the picture in its notes is the
+  /// thing that survives being read on GitHub.
+  Future<void> _attachPhoto() async {
+    final state = context.read<AppState>();
+    final file = await openFile(
+      acceptedTypeGroups: const [
+        XTypeGroup(
+          label: 'Images',
+          extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'],
+        ),
+      ],
+    );
+    if (file == null || !mounted) return;
+
+    final text = _newItemController.text.trim();
+    final reference = await state.attachImage(
+      widget.slug,
+      fileName: file.name,
+      bytes: await file.readAsBytes(),
+    );
+    if (reference == null || !mounted) return;
+
+    await state.addItem(widget.slug, text.isEmpty ? 'Photo' : text);
+    if (!mounted) return;
+    // The new item is at the top of the ungrouped items, which is where
+    // addItem puts it.
+    final index = state
+        .projectBySlug(widget.slug)!
+        .items
+        .indexWhere((item) => item.block == null);
+    if (index >= 0) await state.setItemNotes(widget.slug, index, reference);
+    _newItemController.clear();
   }
 
   @override
@@ -230,6 +280,26 @@ class _ChecklistViewState extends State<ChecklistView> {
       );
     }
 
+    // A notes project is a document, not a list. The items are still in the
+    // file and come back if it is switched again — this is a second view, not
+    // a second format.
+    if (opensAsNotes(project)) {
+      return Scaffold(
+        appBar: widget.showAppBar
+            ? AppBar(
+                title: Text(project.title),
+                actions: [_ProjectMenu(project: project)],
+              )
+            : null,
+        body: ProjectNotesView(
+          // Keyed by the project so switching to another one does not hand
+          // the second project the first one's blocks.
+          key: ValueKey('notes-${widget.slug}'),
+          slug: widget.slug,
+        ),
+      );
+    }
+
     // Indices are into project.items, so edits address the right line even
     // though the view is grouped. Starred items are pinned above the rest of
     // the open ones; each group keeps its own order from the file.
@@ -238,6 +308,9 @@ class _ChecklistViewState extends State<ChecklistView> {
     final done = <int>[];
     for (var i = 0; i < project.items.length; i++) {
       final item = project.items[i];
+      // Items under a `##` heading are drawn in their own section below, in
+      // the order the file has them.
+      if (item.block != null) continue;
       if (item.done) {
         done.add(i);
       } else if (item.starred) {
@@ -248,7 +321,12 @@ class _ChecklistViewState extends State<ChecklistView> {
     }
 
     // What the list shows, in order, so a search can be told where a row is.
-    final viewOrder = [...starred, ...open, if (_completedExpanded) ...done];
+    final viewOrder = [
+      ...starred,
+      ...open,
+      if (_completedExpanded) ...done,
+      for (final block in project.blocks) ...project.indicesIn(block.title),
+    ];
 
     final revealed = context.watch<AppState>().revealed;
     if (revealed != null && revealed.slug == widget.slug) {
@@ -272,7 +350,7 @@ class _ChecklistViewState extends State<ChecklistView> {
       body: Column(
         children: [
           Expanded(
-            child: project.items.isEmpty
+            child: project.items.isEmpty && project.blocks.isEmpty
                 ? const _EmptyChecklist()
                 : CustomScrollView(
                     controller: _scroll,
@@ -375,16 +453,35 @@ class _ChecklistViewState extends State<ChecklistView> {
                             );
                           },
                         ),
+                      for (final block in project.blocks)
+                        SliverToBoxAdapter(
+                          child: _BlockSection(
+                            key: ValueKey(
+                              'block-${widget.slug}-${block.title}',
+                            ),
+                            slug: widget.slug,
+                            block: block,
+                            indices: project.indicesIn(block.title),
+                            items: project.itemsIn(block.title),
+                            expandedNotes: _expandedNotes,
+                            flashing: _flashing,
+                            onToggleNotes: _toggleNotes,
+                            onNotesChanged: _notesChanged,
+                          ),
+                        ),
                       const SliverToBoxAdapter(child: SizedBox(height: 8)),
                     ],
                   ),
           ),
           if (project.notes.trim().isNotEmpty) _ProjectNotes(project: project),
-          _AddItemBar(
+          Composer(
             controller: _newItemController,
             focusNode: _newItemFocus,
+            kind: _addKind,
+            onKindChanged: (kind) => setState(() => _addKind = kind),
             onSubmit: _addItem,
             onSubmitStarred: () => _addItem(starred: true),
+            onAttach: _attachPhoto,
           ),
         ],
       ),
@@ -492,9 +589,20 @@ class _ItemTile extends StatelessWidget {
         icon: item.starred ? Icons.star_border : Icons.star,
         onSelected: () => state.toggleStar(slug, index),
       ),
+      // On a phone this is the only way to open the notes in place, the
+      // marker having come off the row to give the title its width.
       ContextMenuAction(
-        label: item.hasNotes ? 'Edit notes' : 'Add notes',
-        icon: Icons.notes_outlined,
+        label: notesExpanded
+            ? 'Hide notes'
+            : item.hasNotes
+            ? 'Show notes'
+            : 'Add notes',
+        icon: notesExpanded ? Icons.expand_less : Icons.notes_outlined,
+        onSelected: onToggleNotes,
+      ),
+      ContextMenuAction(
+        label: 'Open in editor',
+        icon: Icons.open_in_full,
         onSelected: () => NoteEditor.open(
           context,
           slug: slug,
@@ -570,11 +678,16 @@ class _ItemTile extends StatelessWidget {
             ),
           ),
         ),
-        _NotesToggle(
-          expanded: notesExpanded,
-          hasNotes: item.hasNotes,
-          onTap: onToggleNotes,
-        ),
+        // Not on a phone: a tap on the row already opens the notes, and the
+        // marker was a fourth control competing with the title for the width.
+        // It is in the ⋮ menu instead, which is where the rest of the row's
+        // actions live there.
+        if (!touch)
+          _NotesToggle(
+            expanded: notesExpanded,
+            hasNotes: item.hasNotes,
+            onTap: onToggleNotes,
+          ),
         IconButton(
           tooltip: item.starred ? 'Remove star' : 'Star',
           icon: Icon(
@@ -925,123 +1038,192 @@ class _ItemTitle extends StatelessWidget {
   }
 }
 
-class _AddItemBar extends StatelessWidget {
-  const _AddItemBar({
-    required this.controller,
-    required this.focusNode,
-    required this.onSubmit,
-    required this.onSubmitStarred,
+/// One `##` section of a project: its heading, its items and its prose.
+///
+/// Deliberately plainer than the ungrouped list above it — no separate
+/// Completed group, and one order rather than three — because a block is
+/// already a grouping and grouping inside a grouping reads as noise.
+class _BlockSection extends StatelessWidget {
+  const _BlockSection({
+    super.key,
+    required this.slug,
+    required this.block,
+    required this.indices,
+    required this.items,
+    required this.expandedNotes,
+    required this.flashing,
+    required this.onToggleNotes,
+    required this.onNotesChanged,
   });
 
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final VoidCallback onSubmit;
+  final String slug;
+  final ProjectBlock block;
 
-  /// Ctrl+Enter: add it and star it in one go, rather than adding it and then
-  /// hunting for the star on a list that has just moved.
-  final VoidCallback onSubmitStarred;
+  /// Where this block's items are in the project's flat list, so an edit still
+  /// addresses the right line.
+  final List<int> indices;
+  final List<ChecklistItem> items;
+
+  final Set<String> expandedNotes;
+  final String? flashing;
+  final void Function(int index, String itemText) onToggleNotes;
+  final void Function(String itemText, String notes) onNotesChanged;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final touch = TouchInput.isPrimary;
+    final state = context.read<AppState>();
 
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: CallbackShortcuts(
-                    bindings: {
-                      const SingleActivator(
-                        LogicalKeyboardKey.enter,
-                        control: true,
-                      ): onSubmitStarred,
-                      const SingleActivator(
-                        LogicalKeyboardKey.enter,
-                        meta: true,
-                      ): onSubmitStarred,
-                      const SingleActivator(
-                        LogicalKeyboardKey.numpadEnter,
-                        control: true,
-                      ): onSubmitStarred,
-                    },
-                    child: TextField(
-                      controller: controller,
-                      focusNode: focusNode,
-                      textCapitalization: TextCapitalization.sentences,
-                      // Grows with what is being typed, up to five lines, so
-                      // a long item reads as it will read in the list instead
-                      // of scrolling past the left edge of a one-line box.
-                      // An item is still a single line of text — this is
-                      // wrapping, not newlines — so the action key stays
-                      // "done" and still adds it, and Enter on a keyboard
-                      // does not break the item in half.
-                      minLines: 1,
-                      maxLines: 5,
-                      keyboardType: TextInputType.text,
-                      textInputAction: TextInputAction.done,
-                      // No helperText: it hangs below the field, and a row that
-                      // centres its children then sits the button lower than the
-                      // box it belongs to. The hint is its own line below the
-                      // row instead, where it lines up with the field.
-                      decoration: const InputDecoration(
-                        hintText: 'Add an item',
-                      ),
-                      onSubmitted: (_) => onSubmit(),
-                    ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 18, 8, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  block.title,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
-                ),
-                const SizedBox(width: 8),
-                // Holding the button adds it starred, which is what Ctrl+Enter
-                // does for a keyboard. A phone has no Ctrl, and this is the
-                // same action on the control that already adds things.
-                //
-                // One widget owning both gestures, rather than a long-press
-                // wrapped round an IconButton: two recognizers competing for
-                // the same pointer left the hold going to the button's own tap
-                // and the star never happening.
-                Tooltip(
-                  message: 'Add item — hold to add it starred',
-                  child: Material(
-                    color: theme.colorScheme.primary,
-                    shape: const CircleBorder(),
-                    child: InkWell(
-                      customBorder: const CircleBorder(),
-                      onTap: onSubmit,
-                      onLongPress: () {
-                        HapticFeedback.mediumImpact();
-                        onSubmitStarred();
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Icon(
-                          Icons.add,
-                          color: theme.colorScheme.onPrimary,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            Padding(
-              padding: const EdgeInsets.only(top: 6, left: 12),
-              child: Text(
-                touch
-                    ? 'Hold + to add it starred'
-                    : 'Ctrl+Enter adds it starred',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
-            ),
-          ],
+              ItemMenuButton(
+                tooltip: 'Section actions',
+                actions: [
+                  ContextMenuAction(
+                    label: 'Add an item here',
+                    icon: Icons.add,
+                    onSelected: () async {
+                      final text = await TextPromptDialog.show(
+                        context,
+                        title: 'New item in ${block.title}',
+                      );
+                      if (text != null) {
+                        await state.addItem(slug, text, block: block.title);
+                      }
+                    },
+                  ),
+                  ContextMenuAction(
+                    label: 'Rename section',
+                    icon: Icons.drive_file_rename_outline,
+                    onSelected: () async {
+                      final title = await TextPromptDialog.show(
+                        context,
+                        title: 'Rename section',
+                        initialValue: block.title,
+                      );
+                      if (title != null) {
+                        await state.renameBlock(slug, block.title, title);
+                      }
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
+        for (var position = 0; position < items.length; position++)
+          _ItemTile(
+            key: ValueKey('block-${block.title}-${indices[position]}'),
+            slug: slug,
+            index: indices[position],
+            item: items[position],
+            notesExpanded: expandedNotes.contains(items[position].text),
+            flashing: flashing == items[position].text,
+            onToggleNotes: () =>
+                onToggleNotes(indices[position], items[position].text),
+            onNotesChanged: (notes) =>
+                onNotesChanged(items[position].text, notes),
+          ),
+        // A section with no items is a note, and a section with both shows its
+        // prose under them. Always present so a heading just added has
+        // somewhere to type.
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
+          child: _BlockBody(
+            key: ValueKey('body-$slug-${block.title}'),
+            slug: slug,
+            title: block.title,
+            initialMarkdown: block.body,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The prose under a `##` heading, edited in place.
+class _BlockBody extends StatefulWidget {
+  const _BlockBody({
+    super.key,
+    required this.slug,
+    required this.title,
+    required this.initialMarkdown,
+  });
+
+  final String slug;
+  final String title;
+  final String initialMarkdown;
+
+  @override
+  State<_BlockBody> createState() => _BlockBodyState();
+}
+
+class _BlockBodyState extends State<_BlockBody> {
+  final _editor = GlobalKey<NoteBlocksEditorState>();
+  final _images = GlobalKey<NoteImageTargetState>();
+
+  String? _pending;
+  Timer? _autosave;
+  late AppState _state;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _state = context.read<AppState>();
+  }
+
+  @override
+  void dispose() {
+    _autosave?.cancel();
+    _persist();
+    super.dispose();
+  }
+
+  void _changed(String markdown) {
+    _pending = markdown;
+    _autosave?.cancel();
+    _autosave = Timer(const Duration(milliseconds: 700), _persist);
+  }
+
+  void _persist() {
+    final markdown = _pending;
+    _pending = null;
+    if (markdown == null) return;
+    _state.setBlockBody(
+      widget.slug,
+      widget.title,
+      ProjectLinks.normalize(markdown, _state.projects),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return NoteImageTarget(
+      key: _images,
+      slug: widget.slug,
+      editor: _editor,
+      showProgress: false,
+      child: NoteBlocksEditor(
+        key: _editor,
+        initialMarkdown: widget.initialMarkdown,
+        shrinkWrap: true,
+        onChanged: _changed,
+        onPaste: () async => _images.currentState?.paste(),
+        onOpenProject: (slug) => context.read<AppState>().select(slug),
       ),
     );
   }
@@ -1093,6 +1275,13 @@ class _ProjectMenu extends StatelessWidget {
             ScaffoldMessenger.of(
               context,
             ).showSnackBar(SnackBar(content: Text(problem)));
+          case 'mode':
+            await state.setMode(
+              project.slug,
+              project.mode == ProjectMode.notes
+                  ? ProjectMode.tasks
+                  : ProjectMode.notes,
+            );
           case 'notes':
             final notes = await TextPromptDialog.show(
               context,
@@ -1106,9 +1295,19 @@ class _ProjectMenu extends StatelessWidget {
             if (notes != null) await state.setNotes(project.slug, notes);
         }
       },
-      itemBuilder: (_) => const [
-        PopupMenuItem(value: 'archive', child: Text('Archive completed')),
-        PopupMenuItem(value: 'notes', child: Text('Project notes')),
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'mode',
+          child: Text(
+            project.mode == ProjectMode.notes
+                ? 'Turn into a checklist'
+                : 'Turn into notes',
+          ),
+        ),
+        if (project.mode != ProjectMode.notes) ...const [
+          PopupMenuItem(value: 'archive', child: Text('Archive completed')),
+          PopupMenuItem(value: 'notes', child: Text('Project notes')),
+        ],
       ],
     );
   }

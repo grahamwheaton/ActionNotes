@@ -70,7 +70,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(find.widgetWithText(TextField, 'Add an item'), 'Milk');
-    await tester.tap(find.byTooltip('Add item — hold to add it starred'));
+    await tester.tap(find.byTooltip('Add — hold to add it starred'));
     await tester.pumpAndSettle();
 
     expect(find.text('Milk'), findsOneWidget);

@@ -47,12 +47,12 @@ class AppState extends ChangeNotifier {
     Duration pushDelay = defaultPushDelay,
     Duration syncInterval = defaultSyncInterval,
     UpdateCheck? updateCheck,
-  })  : _updateCheck = updateCheck,
-        _localStore = localStore ?? LocalStore(),
-        _settingsStore = settingsStore ?? SettingsStore(),
-        _pushDelay = pushDelay,
-        _syncInterval = syncInterval,
-        attachments = attachmentStore ?? AttachmentStore() {
+  }) : _updateCheck = updateCheck,
+       _localStore = localStore ?? LocalStore(),
+       _settingsStore = settingsStore ?? SettingsStore(),
+       _pushDelay = pushDelay,
+       _syncInterval = syncInterval,
+       attachments = attachmentStore ?? AttachmentStore() {
     _syncService = syncService ?? SyncService(localStore: _localStore);
   }
 
@@ -89,7 +89,12 @@ class AppState extends ChangeNotifier {
   final Set<String> _pushing = {};
 
   List<Project> _projects = [];
-  GitHubConfig _config = const GitHubConfig(owner: '', repo: '', branch: 'main', token: '');
+  GitHubConfig _config = const GitHubConfig(
+    owner: '',
+    repo: '',
+    branch: 'main',
+    token: '',
+  );
   bool _loading = true;
   bool _syncing = false;
   String? _message;
@@ -304,10 +309,7 @@ class AppState extends ChangeNotifier {
   /// older self: the edit disappears from the list, and the SHA it carries is
   /// the one from before the sync wrote the file — which the next push sends,
   /// and GitHub refuses as a conflict nobody caused.
-  List<Project> _reconcile(
-    Map<String, Project> before,
-    List<Project> synced,
-  ) {
+  List<Project> _reconcile(Map<String, Project> before, List<Project> synced) {
     final live = {for (final project in _projects) project.slug: project};
     final reconciled = <Project>[];
 
@@ -318,7 +320,8 @@ class AppState extends ChangeNotifier {
       // Every edit stamps a new time, so a changed stamp is an edit; the
       // dirty check is there for the edit that lands inside the same
       // millisecond the sync started.
-      final editedDuringSync = current != null &&
+      final editedDuringSync =
+          current != null &&
           (start == null ||
               current.updated != start.updated ||
               (current.dirty && !start.dirty));
@@ -326,9 +329,11 @@ class AppState extends ChangeNotifier {
       // Keep the newer content, but take the SHA the sync learned: that is
       // what the file on GitHub has now, so it is what the next push has to
       // be sent against.
-      reconciled.add(editedDuringSync
-          ? current.copyWith(sha: project.sha, dirty: true)
-          : project);
+      reconciled.add(
+        editedDuringSync
+            ? current.copyWith(sha: project.sha, dirty: true)
+            : project,
+      );
     }
 
     // A project created while the sync was running is not in its answer at
@@ -359,7 +364,8 @@ class AppState extends ChangeNotifier {
     ]..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
 
     if (settled.dirty) {
-      _message = 'Resolved "${settled.title}" here, but the push has not gone '
+      _message =
+          'Resolved "${settled.title}" here, but the push has not gone '
           'through yet — it will retry on the next sync.';
     }
     notifyListeners();
@@ -383,16 +389,19 @@ class AppState extends ChangeNotifier {
       return null;
     } on GitHubException catch (error) {
       return switch (error.statusCode) {
-        401 => 'Token rejected. Check it was copied in full and has not expired.',
-        403 => 'Token lacks permission for this repo. It needs Contents: Read and write.',
+        401 =>
+          'Token rejected. Check it was copied in full and has not expired.',
+        403 =>
+          'Token lacks permission for this repo. It needs Contents: Read and write.',
         // Signing in and installing the app are separate steps on GitHub, and
         // a sign-in that skipped the install lands here with a valid token
         // that can see nothing. Say so, rather than implying a typo.
-        404 => 'Cannot see ${config.owner}/${config.repo}. Check the names, and '
-            'that the ActionNotes app is installed on this repo — signing in '
-            'does not install it, and an app installed nowhere can see '
-            'nothing. Install it from its Install App tab under '
-            'github.com/settings/apps.',
+        404 =>
+          'Cannot see ${config.owner}/${config.repo}. Check the names, and '
+              'that the ActionNotes app is installed on this repo — signing in '
+              'does not install it, and an app installed nowhere can see '
+              'nothing. Install it from its Install App tab under '
+              'github.com/settings/apps.',
         _ => error.message,
       };
     } catch (_) {
@@ -413,9 +422,8 @@ class AppState extends ChangeNotifier {
       dirty: true,
     );
 
-    _projects = [..._projects, project]..sort(
-        (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
-      );
+    _projects = [..._projects, project]
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
     await _localStore.save(project);
     notifyListeners();
     _schedulePush(slug);
@@ -427,22 +435,78 @@ class AppState extends ChangeNotifier {
 
   /// Adds an item at the top, where it can be seen — the list is read
   /// newest-first, and the file keeps that same order.
-  Future<void> addItem(String slug, String text, {bool starred = false}) =>
-      _mutate(
-        slug,
-        (project) => project.copyWith(
-          items: [
-            ChecklistItem(text: text.trim(), starred: starred),
-            ...project.items,
+  ///
+  /// [block] names the `##` section it belongs to. Within a block the new item
+  /// goes above that block's others rather than above the whole project, so it
+  /// appears where it was added.
+  Future<void> addItem(
+    String slug,
+    String text, {
+    bool starred = false,
+    String? block,
+  }) => _mutate(slug, (project) {
+    final item = ChecklistItem(
+      text: text.trim(),
+      starred: starred,
+      block: block,
+    );
+    if (block == null) return project.copyWith(items: [item, ...project.items]);
+
+    final items = [...project.items];
+    final at = items.indexWhere((existing) => existing.block == block);
+    items.insert(at < 0 ? items.length : at, item);
+    return project.copyWith(items: items);
+  });
+
+  /// Adds a `##` section. A repeated name is left alone rather than making a
+  /// second block that could not be told from the first.
+  Future<void> addBlock(String slug, String title) => _mutate(slug, (project) {
+    final name = title.trim();
+    if (name.isEmpty || project.blocks.any((b) => b.title == name)) {
+      return project;
+    }
+    return project.copyWith(
+      blocks: [
+        ...project.blocks,
+        ProjectBlock(title: name),
+      ],
+    );
+  });
+
+  Future<void> setBlockBody(String slug, String title, String body) =>
+      _mutate(slug, (project) {
+        final blocks = [
+          for (final block in project.blocks)
+            block.title == title ? block.copyWith(body: body) : block,
+        ];
+        return project.copyWith(blocks: blocks);
+      });
+
+  /// Renames a section, carrying its items with it — they name their block, so
+  /// renaming one without the other would orphan them.
+  Future<void> renameBlock(String slug, String from, String to) =>
+      _mutate(slug, (project) {
+        final name = to.trim();
+        if (name.isEmpty || name == from) return project;
+        if (project.blocks.any((block) => block.title == name)) return project;
+
+        return project.copyWith(
+          blocks: [
+            for (final block in project.blocks)
+              block.title == from ? block.copyWith(title: name) : block,
           ],
-        ),
-      );
+          items: [
+            for (final item in project.items)
+              item.block == from ? item.copyWith(block: name) : item,
+          ],
+        );
+      });
 
   Future<void> toggleItem(String slug, int index) => _mutate(slug, (project) {
-        final items = [...project.items];
-        items[index] = items[index].copyWith(done: !items[index].done);
-        return project.copyWith(items: items);
-      });
+    final items = [...project.items];
+    items[index] = items[index].copyWith(done: !items[index].done);
+    return project.copyWith(items: items);
+  });
 
   Future<void> editItem(String slug, int index, String text) =>
       _mutate(slug, (project) {
@@ -452,10 +516,10 @@ class AppState extends ChangeNotifier {
       });
 
   Future<void> toggleStar(String slug, int index) => _mutate(slug, (project) {
-        final items = [...project.items];
-        items[index] = items[index].copyWith(starred: !items[index].starred);
-        return project.copyWith(items: items);
-      });
+    final items = [...project.items];
+    items[index] = items[index].copyWith(starred: !items[index].starred);
+    return project.copyWith(items: items);
+  });
 
   Future<void> setItemNotes(String slug, int index, String notes) =>
       _mutate(slug, (project) {
@@ -484,8 +548,9 @@ class AppState extends ChangeNotifier {
     // the same filename does not overwrite the first.
     final taken = <String>{};
     for (final item in project.items) {
-      for (final match
-          in RegExp(r'attachments/[^/]+/([^)\s]+)').allMatches(item.notes)) {
+      for (final match in RegExp(
+        r'attachments/[^/]+/([^)\s]+)',
+      ).allMatches(item.notes)) {
         taken.add(match.group(1)!);
       }
     }
@@ -574,7 +639,10 @@ class AppState extends ChangeNotifier {
     await _mutate(
       toSlug,
       (project) => project.copyWith(
-        items: [item.copyWith(notes: notes), ...project.items],
+        items: [
+          item.copyWith(notes: notes),
+          ...project.items,
+        ],
       ),
     );
     return null;
@@ -634,17 +702,16 @@ class AppState extends ChangeNotifier {
     List<int> slots,
     int oldIndex,
     int newIndex,
-  ) =>
-      _mutate(slug, (project) {
-        final picked = [for (final slot in slots) project.items[slot]];
-        picked.insert(newIndex, picked.removeAt(oldIndex));
+  ) => _mutate(slug, (project) {
+    final picked = [for (final slot in slots) project.items[slot]];
+    picked.insert(newIndex, picked.removeAt(oldIndex));
 
-        final items = [...project.items];
-        for (var i = 0; i < slots.length; i++) {
-          items[slots[i]] = picked[i];
-        }
-        return project.copyWith(items: items);
-      });
+    final items = [...project.items];
+    for (var i = 0; i < slots.length; i++) {
+      items[slots[i]] = picked[i];
+    }
+    return project.copyWith(items: items);
+  });
 
   /// Moves completed items out of the list and into `archive/<slug>.md`.
   ///
@@ -676,6 +743,14 @@ class AppState extends ChangeNotifier {
   Future<void> setNotes(String slug, String notes) =>
       _mutate(slug, (project) => project.copyWith(notes: notes));
 
+  /// Switches a project between a checklist and a document.
+  ///
+  /// Nothing is converted: the items and the body are both kept, so a project
+  /// turned into notes and back is the file it was. Only which view opens
+  /// changes, and a checklist keeps its front matter untouched.
+  Future<void> setMode(String slug, ProjectMode mode) =>
+      _mutate(slug, (project) => project.copyWith(mode: mode));
+
   Future<void> deleteProject(String slug) async {
     final project = projectBySlug(slug);
     if (project == null) return;
@@ -704,10 +779,9 @@ class AppState extends ChangeNotifier {
     final current = projectBySlug(slug);
     if (current == null) return;
 
-    final updated = change(current).copyWith(
-      updated: DateTime.now().toUtc(),
-      dirty: true,
-    );
+    final updated = change(
+      current,
+    ).copyWith(updated: DateTime.now().toUtc(), dirty: true);
 
     _projects = _projects.map((p) => p.slug == slug ? updated : p).toList()
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));

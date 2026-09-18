@@ -21,6 +21,19 @@ pasting one file — or by pointing the model at the repo.
 
 - Project sidebar on wide windows, pushed screens on a phone — one layout,
   two shapes.
+- **A project can be a checklist or a document.** "Turn into notes" in the
+  project menu opens it as one piece of prose instead of a list; the file is
+  the same either way — a notes project is one with no checklist lines — so
+  turning it back loses nothing, and the items are still there.
+- **Sections.** A `##` heading in a project file is a section with its own
+  items and its own prose, so one project can hold a list, a set of notes, and
+  another list. There is nothing to declare: a section holding checklist lines
+  is a list and one holding prose is a note. A file with no headings is exactly
+  the file it was.
+- **The composer** at the bottom of a project is a card with the text above and
+  the controls below: + attaches a photo, a pill picks whether you are adding a
+  task or a section of notes, and the round button adds it — held, it adds it
+  starred.
 - Checklists group open items first, with completed ones collapsed under a
   header at the bottom. New items are added at the top — Enter adds one,
   Ctrl+Enter adds it starred, and on a phone holding the + button does the

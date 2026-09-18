@@ -41,11 +41,64 @@ Four parts, in this order:
 1. **Front matter** — a `---` fenced block of `key: value` lines. Keys:
    - `title` (required) — display name of the project.
    - `created` / `updated` — UTC ISO-8601 timestamps, maintained by the app.
+   - `mode` — `notes` opens the project as a document instead of a checklist.
+     Absent means a checklist, and the app writes it only when it is `notes`,
+     so a checklist's file is untouched by this existing. An unrecognised
+     value reads as a checklist.
    - Unknown keys are preserved verbatim on write, so you can add your own.
 2. **Heading** — a single `# Title` line mirroring the front-matter title, so the
    file reads well on GitHub and when pasted into a chat. Optional on read.
 3. **Items** — the checklist. See below.
 4. **Project notes** — any unindented free text after the items.
+5. **Sections** — optional `##` headings, each with its own items and prose.
+   See below.
+
+## Sections: `##`
+
+A `##` heading starts a section. Everything after it, until the next heading,
+belongs to it:
+
+```markdown
+# House move
+
+- [ ] Redirect post
+
+## Packing
+
+- [ ] Boxes from the shop
+- [ ] Label the kitchen ones
+
+## Notes from the survey
+
+Damp in the back bedroom, and the boiler is 2011.
+```
+
+There is nothing to declare. A section holding checklist lines is a list; one
+holding prose is a note; one holding both shows its items and then its prose.
+The kind is read from what is in it, which is why headings were used for this
+rather than new syntax — a section typed on GitHub becomes one in the app
+without anyone saying which sort it is.
+
+What the parser does with them:
+
+- Items above the first `##` stay where they have always been. A file with no
+  headings is exactly the file it was before sections existed.
+- Two or more hashes start a section; the project's own `# Title` does not. A
+  `###` is a section too rather than a nested one — one level is what the app
+  offers, and a deeper heading typed by hand should still land somewhere.
+- An **indented** `##` belongs to the note above it, the same as an indented
+  `- [ ]` does. That is what keeps a heading written inside an item's notes
+  inside them.
+- A repeated heading joins the first one rather than becoming a second section
+  of the same name, since an item names its section and two of one name could
+  not be told apart.
+- A heading with nothing under it is kept, so a section made before anything is
+  written into it survives.
+
+Sections are one level deep on purpose. Arbitrary nesting would make search,
+starring, moving, archiving and the merge each need a story for a tree instead
+of a list; a section that wants to contain a section usually wanted to be its
+own project, and `[[` links one.
 
 ## Items
 
@@ -256,6 +309,14 @@ once renders offline afterwards.
   stay small and reviewable.
 - Anything the app does not understand in the front matter is round-tripped
   unchanged rather than dropped.
+- An item remembers which `##` section it is under, so the project's items stay
+  one flat list in one order. Everything addressed by position — search,
+  reveal, move, reorder, the merge — goes on meaning what it meant before
+  sections existed.
+- A merge keeps the sections from both sides, local order first, and merges
+  each section's prose the way it merges a project's. A heading is kept even
+  when nothing is left under it: someone wrote it, and dropping it silently
+  reorganises the list.
 
 ## What the note editor understands
 

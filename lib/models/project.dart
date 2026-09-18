@@ -1,5 +1,48 @@
 import 'checklist_item.dart';
 
+/// How a project is meant to be read.
+///
+/// The file format is the same either way — a notes project is simply one with
+/// no checklist lines — so this only decides which view opens, and a project
+/// switched to notes and back loses nothing.
+enum ProjectMode {
+  tasks,
+  notes;
+
+  static ProjectMode parse(String? raw) =>
+      raw?.trim().toLowerCase() == 'notes' ? ProjectMode.notes : ProjectMode.tasks;
+
+  String get name => this == ProjectMode.notes ? 'notes' : 'tasks';
+}
+
+/// A `##` section of a project.
+///
+/// A block holds items (the project's items carrying this title), prose, or
+/// both. Its kind is read from what is in it rather than declared, so a heading
+/// typed on GitHub becomes a block without anyone having to say which sort —
+/// which is the point of using headings for this rather than inventing syntax.
+class ProjectBlock {
+  const ProjectBlock({required this.title, this.body = ''});
+
+  final String title;
+
+  /// Prose under the heading, below any of its items.
+  final String body;
+
+  ProjectBlock copyWith({String? title, String? body}) =>
+      ProjectBlock(title: title ?? this.title, body: body ?? this.body);
+
+  @override
+  bool operator ==(Object other) =>
+      other is ProjectBlock && other.title == title && other.body == body;
+
+  @override
+  int get hashCode => Object.hash(title, body);
+
+  @override
+  String toString() => 'ProjectBlock($title)';
+}
+
 /// One markdown file under `projects/`, parsed into something the UI can edit.
 class Project {
   Project({
@@ -7,6 +50,8 @@ class Project {
     required this.title,
     this.items = const [],
     this.notes = '',
+    this.mode = ProjectMode.tasks,
+    this.blocks = const [],
     this.created,
     this.updated,
     this.extraFrontMatter = const {},
@@ -19,8 +64,18 @@ class Project {
   final String title;
   final List<ChecklistItem> items;
 
-  /// Free text that follows the checklist in the file.
+  /// Free text that follows the checklist in the file. In a notes project it
+  /// is the whole of the body.
   final String notes;
+
+  /// Which view opens for this project. Written to the front matter only when
+  /// it is not the default, so a task project's file does not change.
+  final ProjectMode mode;
+
+  /// The `##` headings in the file, in the order they appear. Empty for a
+  /// project that has none, which is every project written before blocks
+  /// existed — so their files are untouched by this.
+  final List<ProjectBlock> blocks;
 
   final DateTime? created;
   final DateTime? updated;
@@ -40,10 +95,27 @@ class Project {
 
   int get doneCount => items.where((i) => i.done).length;
 
+  /// The items under [title], or the ones above the first heading for null.
+  List<ChecklistItem> itemsIn(String? title) =>
+      items.where((item) => item.block == title).toList();
+
+  /// Indices into [items] for the items under [title], so a grouped view can
+  /// still address the flat list.
+  List<int> indicesIn(String? title) => [
+    for (var i = 0; i < items.length; i++)
+      if (items[i].block == title) i,
+  ];
+
+  /// True when the project is one plain list, as every project was before
+  /// blocks — the case the view should not dress up with headings.
+  bool get isFlat => blocks.isEmpty;
+
   Project copyWith({
     String? title,
     List<ChecklistItem>? items,
     String? notes,
+    ProjectMode? mode,
+    List<ProjectBlock>? blocks,
     DateTime? created,
     DateTime? updated,
     Map<String, String>? extraFrontMatter,
@@ -55,6 +127,8 @@ class Project {
       title: title ?? this.title,
       items: items ?? this.items,
       notes: notes ?? this.notes,
+      mode: mode ?? this.mode,
+      blocks: blocks ?? this.blocks,
       created: created ?? this.created,
       updated: updated ?? this.updated,
       extraFrontMatter: extraFrontMatter ?? this.extraFrontMatter,

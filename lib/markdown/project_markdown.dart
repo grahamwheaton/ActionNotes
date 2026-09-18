@@ -17,6 +17,13 @@ class ProjectMarkdown {
 
   static final _frontMatterFence = RegExp(r'^---\s*$');
   static final _headingPattern = RegExp(r'^#\s+(.*)$');
+
+  /// A block heading. Two or more hashes, so the project's own `# Title` is
+  /// not one. Deeper headings are blocks too rather than nesting, because one
+  /// level is what the app offers and a `###` typed on GitHub should still
+  /// land somewhere rather than be swallowed into the block above it.
+  static final _blockPattern = RegExp(r'^#{2,}\s+(.*)$');
+
   /// Deliberately anchored at column 0: an indented `- [ ]` belongs to the
   /// note above it, which is how a checklist inside a note stays inside it
   /// rather than being read as another item of the project.
@@ -30,7 +37,8 @@ class ProjectMarkdown {
     final frontMatter = <String, String>{};
     if (lines.isNotEmpty && _frontMatterFence.hasMatch(lines.first)) {
       index = 1;
-      while (index < lines.length && !_frontMatterFence.hasMatch(lines[index])) {
+      while (index < lines.length &&
+          !_frontMatterFence.hasMatch(lines[index])) {
         final line = lines[index];
         final colon = line.indexOf(':');
         if (colon > 0) {
@@ -47,6 +55,14 @@ class ProjectMarkdown {
     String? headingTitle;
     final items = <ChecklistItem>[];
     final projectNotes = <String>[];
+
+    // The `##` sections, in the order they appear, and the prose under each.
+    final blocks = <String>[];
+    final blockBody = <String, List<String>>{};
+
+    // Which block the lines being read belong to. Null until the first
+    // heading, which is where a project written before blocks stays.
+    String? currentBlock;
 
     // Non-null while lines could still belong to the item just read.
     List<String>? itemNotes;
@@ -66,6 +82,27 @@ class ProjectMarkdown {
     for (; index < lines.length; index++) {
       final line = lines[index];
 
+      // A heading only starts a block outside an item's notes: an indented
+      // `## ` belongs to the note above it, the same as an indented item does.
+      if (itemNotes == null || !_isIndented(line)) {
+        final block = _blockPattern.firstMatch(line);
+        if (block != null) {
+          flushItemNotes();
+          final title = block.group(1)!.trim();
+          if (title.isNotEmpty) {
+            // A repeated heading joins the first one rather than becoming a
+            // second block of the same name, since the items name their block
+            // and two of one name could not be told apart.
+            if (!blocks.contains(title)) {
+              blocks.add(title);
+              blockBody[title] = <String>[];
+            }
+            currentBlock = title;
+            continue;
+          }
+        }
+      }
+
       final item = _itemPattern.firstMatch(line);
       if (item != null) {
         flushItemNotes();
@@ -74,11 +111,14 @@ class ProjectMarkdown {
         final starred = _starPattern.hasMatch(text);
         if (starred) text = text.replaceFirst(_starPattern, '').trim();
 
-        items.add(ChecklistItem(
-          text: text,
-          done: item.group(1)!.toLowerCase() == 'x',
-          starred: starred,
-        ));
+        items.add(
+          ChecklistItem(
+            text: text,
+            done: item.group(1)!.toLowerCase() == 'x',
+            starred: starred,
+            block: currentBlock,
+          ),
+        );
         itemNotes = <String>[];
         continue;
       }
@@ -106,20 +146,33 @@ class ProjectMarkdown {
         }
       }
 
-      projectNotes.add(line);
+      if (currentBlock == null) {
+        projectNotes.add(line);
+      } else {
+        blockBody[currentBlock]!.add(line);
+      }
     }
     flushItemNotes();
 
     final extra = Map<String, String>.from(frontMatter)
       ..remove('title')
       ..remove('created')
-      ..remove('updated');
+      ..remove('updated')
+      ..remove('mode');
 
     return Project(
       slug: slug,
       title: _firstNonEmpty([frontMatter['title'], headingTitle, slug])!,
       items: items,
       notes: _trimBlankEdges(projectNotes).join('\n'),
+      mode: ProjectMode.parse(frontMatter['mode']),
+      blocks: [
+        for (final title in blocks)
+          ProjectBlock(
+            title: title,
+            body: _trimBlankEdges(blockBody[title]!).join('\n'),
+          ),
+      ],
       created: _parseDate(frontMatter['created']),
       updated: _parseDate(frontMatter['updated']),
       extraFrontMatter: extra,
@@ -152,6 +205,12 @@ class ProjectMarkdown {
     buffer.writeln('created: ${_formatDate(created)}');
     buffer.writeln('updated: ${_formatDate(project.updated ?? created)}');
 
+    // Only when it is not the default, so a checklist's file is unchanged by
+    // this existing at all.
+    if (project.mode != ProjectMode.tasks) {
+      buffer.writeln('mode: ${project.mode.name}');
+    }
+
     final extraKeys = project.extraFrontMatter.keys.toList()..sort();
     for (final key in extraKeys) {
       buffer.writeln('$key: ${project.extraFrontMatter[key]}');
@@ -163,17 +222,25 @@ class ProjectMarkdown {
       ..writeln('# ${project.title}')
       ..writeln();
 
-    for (final item in project.items) {
-      final star = item.starred ? '$starMarker ' : '';
-      buffer.writeln('- [${item.done ? 'x' : ' '}] $star${item.text}');
+    void writeItems(String? block) {
+      for (final item in project.items) {
+        if (item.block != block) continue;
+        final star = item.starred ? '$starMarker ' : '';
+        buffer.writeln('- [${item.done ? 'x' : ' '}] $star${item.text}');
 
-      if (item.hasNotes) {
-        for (final line in item.notes.trim().split('\n')) {
-          // Keep blank lines genuinely blank rather than indented whitespace.
-          buffer.writeln(line.trim().isEmpty ? '' : '$_noteIndent$line');
+        if (item.hasNotes) {
+          for (final line in item.notes.trim().split('\n')) {
+            // Keep blank lines genuinely blank rather than indented
+            // whitespace.
+            buffer.writeln(line.trim().isEmpty ? '' : '$_noteIndent$line');
+          }
         }
       }
     }
+
+    // Everything above the first heading first, exactly as a project without
+    // blocks has always been written.
+    writeItems(null);
 
     final notes = project.notes.trim();
     if (notes.isNotEmpty) {
@@ -182,8 +249,42 @@ class ProjectMarkdown {
         ..writeln(notes);
     }
 
+    // An item naming a block the project does not list would otherwise be
+    // dropped, so the headings written are the listed ones plus any the items
+    // ask for, in the order the items ask.
+    final written = <String>{};
+    final headings = <String>[for (final block in project.blocks) block.title];
+    for (final item in project.items) {
+      final block = item.block;
+      if (block != null && !headings.contains(block)) headings.add(block);
+    }
+
+    for (final title in headings) {
+      if (!written.add(title)) continue;
+      buffer
+        ..writeln()
+        ..writeln('## $title')
+        ..writeln();
+      writeItems(title);
+
+      final body = project.blocks
+          .firstWhere(
+            (block) => block.title == title,
+            orElse: () => const ProjectBlock(title: '', body: ''),
+          )
+          .body
+          .trim();
+      if (body.isNotEmpty) {
+        if (project.items.any((item) => item.block == title)) buffer.writeln();
+        buffer.writeln(body);
+      }
+    }
+
     return buffer.toString();
   }
+
+  static bool _isIndented(String line) =>
+      line.startsWith(' ') || line.startsWith('\t');
 
   /// Removes one level of note indentation, tolerating tabs and deeper indents
   /// from hand-edited files.

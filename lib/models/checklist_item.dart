@@ -8,6 +8,7 @@ class ChecklistItem {
     this.done = false,
     this.starred = false,
     this.notes = '',
+    this.block,
   });
 
   final String text;
@@ -19,6 +20,15 @@ class ChecklistItem {
   /// Markdown indented beneath the item. May reference images in the repo's
   /// attachments directory.
   final String notes;
+
+  /// The `##` heading this item sits under, or null for the items above the
+  /// first heading.
+  ///
+  /// The item keeps the label rather than the block keeping a list of items,
+  /// so the project's items stay one flat list addressed by one index. Every
+  /// index there is — search, reveal, move, reorder, the merge — goes on
+  /// meaning what it meant before blocks existed.
+  final String? block;
 
   bool get hasNotes => notes.trim().isNotEmpty;
 
@@ -50,12 +60,15 @@ class ChecklistItem {
     bool? done,
     bool? starred,
     String? notes,
+    String? block,
+    bool clearBlock = false,
   }) {
     return ChecklistItem(
       text: text ?? this.text,
       done: done ?? this.done,
       starred: starred ?? this.starred,
       notes: notes ?? this.notes,
+      block: clearBlock ? null : (block ?? this.block),
     );
   }
 
@@ -65,10 +78,11 @@ class ChecklistItem {
       other.text == text &&
       other.done == done &&
       other.starred == starred &&
-      other.notes == notes;
+      other.notes == notes &&
+      other.block == block;
 
   @override
-  int get hashCode => Object.hash(text, done, starred, notes);
+  int get hashCode => Object.hash(text, done, starred, notes, block);
 
   @override
   String toString() =>

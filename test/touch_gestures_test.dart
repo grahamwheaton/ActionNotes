@@ -173,7 +173,8 @@ void main() {
       await tester.enterText(find.byType(TextField).last, 'Urgent');
       await tester.pumpAndSettle();
 
-      await tester.longPress(find.byIcon(Icons.add));
+      // The send button, not the + — which attaches a photo now.
+      await tester.longPress(find.byIcon(Icons.arrow_upward));
       await tester.pumpAndSettle();
 
       final item = state.projects.single.items.single;
@@ -187,7 +188,7 @@ void main() {
       await tester.enterText(find.byType(TextField).last, 'Ordinary');
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byIcon(Icons.add));
+      await tester.tap(find.byIcon(Icons.arrow_upward));
       await tester.pumpAndSettle();
 
       expect(state.projects.single.items.single.starred, isFalse);
@@ -197,7 +198,7 @@ void main() {
       tester,
     ) async {
       await pumpPhoneList(tester, [], touch: true);
-      expect(find.text('Hold + to add it starred'), findsOneWidget);
+      expect(find.text('Hold ↑ to add it starred'), findsOneWidget);
       expect(find.text('Ctrl+Enter adds it starred'), findsNothing);
     });
 
@@ -241,22 +242,44 @@ void main() {
       expect(state.projects.single.items.single.text, long);
     });
 
-    testWidgets('the button lines up with the text field it belongs to', (
+    testWidgets('the controls sit below the text, not beside it', (
       tester,
     ) async {
       await pumpPhoneList(tester, [], touch: true);
 
       final field = tester.getRect(find.byType(TextField).last);
-      final button = tester.getRect(find.byIcon(Icons.add));
+      final send = tester.getRect(find.byIcon(Icons.arrow_upward));
+      final attach = tester.getRect(find.byIcon(Icons.add));
 
-      // Within a couple of logical pixels, the two share a centre line. The
-      // helper text used to hang below the field and drag the row's centre
-      // down with it, leaving the button visibly low.
-      expect(
-        (field.center.dy - button.center.dy).abs(),
-        lessThan(2.0),
-        reason: 'field ${field.center.dy} vs button ${button.center.dy}',
-      );
+      // The Claude-app shape: the text has the full width and the buttons
+      // have their own row under it, which is what stopped the button and the
+      // box arguing about where the middle was.
+      expect(send.top, greaterThanOrEqualTo(field.bottom - 1));
+      expect(attach.top, greaterThanOrEqualTo(field.bottom - 1));
+      // Attach on the left, send on the right.
+      expect(attach.center.dx, lessThan(send.center.dx));
+    });
+
+    testWidgets('the pill says what will be added, and can change it', (
+      tester,
+    ) async {
+      final state = await pumpPhoneList(tester, [], touch: true);
+
+      expect(find.text('Task'), findsOneWidget);
+
+      await tester.tap(find.text('Task'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Note').last);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).last, 'Thoughts');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.arrow_upward));
+      await tester.pumpAndSettle();
+
+      // A note adds a section, not an item.
+      expect(state.projects.single.blocks.single.title, 'Thoughts');
+      expect(state.projects.single.items, isEmpty);
     });
   });
 }
