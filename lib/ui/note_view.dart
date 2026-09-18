@@ -7,6 +7,8 @@ import 'package:provider/provider.dart';
 import '../markdown/project_links.dart';
 import '../state/app_state.dart';
 import '../storage/attachment_store.dart';
+import 'context_menu.dart';
+import 'image_viewer.dart';
 import 'theme.dart';
 
 /// Renders an item's notes as markdown, resolving image references against the
@@ -137,6 +139,24 @@ class _NoteImage extends StatefulWidget {
 class _NoteImageState extends State<_NoteImage> {
   late Future<File?> _file;
 
+  String _fileName(File file) {
+    final alt = widget.alt?.trim();
+    if (alt != null && alt.isNotEmpty && alt.contains('.')) return alt;
+    return file.uri.pathSegments.last;
+  }
+
+  /// Runs one of the image actions and reports what happened, holding the
+  /// messenger rather than the context across the await.
+  Future<void> _run(
+    BuildContext context,
+    Future<String?> Function() action,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final message = await action();
+    if (message == null) return;
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   void initState() {
     super.initState();
@@ -194,11 +214,60 @@ class _NoteImageState extends State<_NoteImage> {
           );
         }
 
+        // Tap for the full size, right-click for what else can be done with
+        // it: the note draws it at the width of the note, which is no use for
+        // a screenshot of anything detailed.
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.file(file, fit: BoxFit.contain),
+          child: ItemContextMenu(
+            actions: [
+              ContextMenuAction(
+                label: 'Open full size',
+                icon: Icons.open_in_full,
+                onSelected: () =>
+                    showImageViewer(context, file: file, alt: widget.alt),
+              ),
+              ContextMenuAction(
+                label: 'Copy image',
+                icon: Icons.copy_all_outlined,
+                onSelected: () => _run(context, () => ImageActions.copy(file)),
+              ),
+              ContextMenuAction(
+                label: 'Save a copy...',
+                icon: Icons.download_outlined,
+                onSelected: () => _run(
+                  context,
+                  () => ImageActions.saveCopy(file, _fileName(file)),
+                ),
+              ),
+              if (ImageActions.canReveal)
+                ContextMenuAction(
+                  label: 'Show in folder',
+                  icon: Icons.folder_open_outlined,
+                  onSelected: () =>
+                      _run(context, () => ImageActions.reveal(file)),
+                ),
+            ],
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: GestureDetector(
+                onTap: () =>
+                    showImageViewer(context, file: file, alt: widget.alt),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  // A minimum, so there is somewhere to click while the file
+                  // is still decoding — and so that a tiny picture is still
+                  // worth aiming at.
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    child: Image.file(file, fit: BoxFit.contain),
+                  ),
+                ),
+              ),
+            ),
           ),
         );
       },

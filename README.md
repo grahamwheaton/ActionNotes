@@ -38,6 +38,16 @@ pasting one file — or by pointing the model at the repo.
   browsing and searching in the same place.
 - **Light or dark**, or whatever the system is doing — an override in
   Settings, remembered between runs.
+- **One view of everything starred**, from every project, with the project
+  each came from. The sidebar's star button carries the count.
+- **The sidebar says when it last heard from GitHub** — "synced 3 minutes
+  ago", and how many edits are still waiting to go up. Only a sync that
+  actually reached GitHub counts.
+- **Images open full size**: click one in a note for a zoomable view, or
+  right-click for copy, save a copy, and show in folder on desktop.
+- **It says when a new version is out**, checked against the repo's latest
+  release on start and from Settings, with one tap to the download. Installing
+  it is still a decision you make — see below.
 - Per-item notes in markdown, with images pasted, dropped or picked from disk
   and stored in the repo, from either editor — the note on its own screen and
   the one that opens in the row share the same handling, so pasting a
@@ -217,6 +227,21 @@ in Settings still takes a fine-grained token scoped to the one repo with
 
 Either way the token is held in the platform keystore (Android Keystore /
 Windows DPAPI) via `flutter_secure_storage`, not in plain preferences.
+
+## Updating
+
+The app checks the repo's latest release when it starts and offers a one-tap
+download beside the projects. What it deliberately does not do is install it
+for you:
+
+- **Android** will not install a package without you agreeing, and it refuses
+  outright to replace a build signed with a different key. CI mints a fresh
+  debug key per run, so **until a release keystore is configured** every
+  update means uninstalling the old app first. Setting that up (below) is what
+  turns updating into a normal install-over-the-top.
+- **Windows** builds are a portable zip, and a program cannot tidily replace
+  its own running executable. The download lands in your browser; unzip it
+  over the old folder with the app closed.
 
 ## Building
 

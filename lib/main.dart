@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'state/app_state.dart';
+import 'storage/update_check.dart';
 import 'ui/home_shell.dart';
 import 'ui/theme.dart';
 
@@ -18,13 +19,16 @@ class ActionNotesApp extends StatefulWidget {
 
 class _ActionNotesAppState extends State<ActionNotesApp>
     with WidgetsBindingObserver {
-  late final AppState _state = AppState()..init();
+  late final AppState _state = AppState(updateCheck: UpdateCheck())..init();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _state.startWatching();
+    // Once, on start: often enough to stop a build going stale for weeks,
+    // rarely enough that it is not a request per launch of the window.
+    _state.checkForUpdate();
   }
 
   @override

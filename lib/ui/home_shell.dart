@@ -11,6 +11,9 @@ import 'conflict_dialog.dart';
 import 'context_menu.dart';
 import 'note_editor.dart';
 import 'search_screen.dart';
+import 'starred_screen.dart';
+import 'sync_status.dart';
+import 'update_banner.dart';
 import 'shortcuts_sheet.dart';
 import 'settings_screen.dart';
 import 'text_prompt.dart';
@@ -445,6 +448,7 @@ class _SidebarHeader extends StatelessWidget {
           ),
           // Search and settings have their own places below now; syncing is
           // the one thing you reach for from anywhere.
+          const _StarredAction(),
           const _SyncAction(),
         ],
       ),
@@ -527,7 +531,12 @@ class _SidebarFooter extends StatelessWidget {
             ),
           ),
         ),
+        const UpdateBanner(),
         Divider(height: 1, color: theme.colorScheme.outlineVariant),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+          child: Align(alignment: Alignment.centerLeft, child: SyncStatus()),
+        ),
         // Settings sits at the foot of the sidebar rather than among the
         // icons at the top: it is the thing you open least.
         InkWell(
@@ -703,6 +712,25 @@ class _ProjectTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _StarredAction extends StatelessWidget {
+  const _StarredAction();
+
+  @override
+  Widget build(BuildContext context) {
+    final count = starredAcross(context.watch<AppState>().projects).length;
+
+    return IconButton(
+      tooltip: 'Everything starred',
+      icon: Badge(
+        isLabelVisible: count > 0,
+        label: Text('$count'),
+        child: const Icon(Icons.star_border),
+      ),
+      onPressed: () => StarredScreen.open(context),
     );
   }
 }

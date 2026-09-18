@@ -212,6 +212,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 12),
           const _ThemePicker(),
           const SizedBox(height: 24),
+          Text(
+            'Updates',
+            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          const _UpdateRow(),
+          const SizedBox(height: 24),
           Row(
             children: [
               Expanded(
@@ -255,6 +262,43 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ],
         ],
       ),
+    );
+  }
+}
+
+/// Says whether this build is current, and offers the newer one.
+class _UpdateRow extends StatelessWidget {
+  const _UpdateRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final state = context.watch<AppState>();
+    final update = state.update;
+
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            state.checkingUpdate
+                ? 'Checking...'
+                : update == null
+                    ? 'Checked against the latest release on GitHub. '
+                        'An update shows up beside the projects.'
+                    : 'Version ${update.version} is out.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        OutlinedButton(
+          onPressed: state.checkingUpdate
+              ? null
+              : () => context.read<AppState>().checkForUpdate(),
+          child: const Text('Check now'),
+        ),
+      ],
     );
   }
 }

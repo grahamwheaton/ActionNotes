@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../markdown/project_links.dart';
 import '../markdown/project_merge.dart';
@@ -12,6 +13,7 @@ import '../storage/image_encoder.dart';
 import '../storage/local_store.dart';
 import '../storage/settings_store.dart';
 import '../storage/sync_service.dart';
+import '../storage/update_check.dart';
 
 /// Which item's notes the desktop layout is editing in its detail pane.
 ///
@@ -44,7 +46,9 @@ class AppState extends ChangeNotifier {
     AttachmentStore? attachmentStore,
     Duration pushDelay = defaultPushDelay,
     Duration syncInterval = defaultSyncInterval,
-  })  : _localStore = localStore ?? LocalStore(),
+    UpdateCheck? updateCheck,
+  })  : _updateCheck = updateCheck,
+        _localStore = localStore ?? LocalStore(),
         _settingsStore = settingsStore ?? SettingsStore(),
         _pushDelay = pushDelay,
         _syncInterval = syncInterval,
@@ -64,6 +68,12 @@ class AppState extends ChangeNotifier {
   final Duration _pushDelay;
   final Duration _syncInterval;
   Timer? _watch;
+
+  /// Left null in tests that do not care, so nothing reaches the network for
+  /// an update nobody asked about.
+  final UpdateCheck? _updateCheck;
+  AvailableUpdate? _update;
+  bool _checkingUpdate = false;
 
   final LocalStore _localStore;
   final SettingsStore _settingsStore;
@@ -86,6 +96,7 @@ class AppState extends ChangeNotifier {
   String? _selectedSlug;
   NoteTarget? _openNote;
   NoteTarget? _revealed;
+  DateTime? _lastSynced;
   ThemeMode _themeMode = ThemeMode.system;
   List<ProjectConflict> _conflicts = [];
 
@@ -118,6 +129,44 @@ class AppState extends ChangeNotifier {
     _openNote = null;
     notifyListeners();
   }
+
+  /// A newer release than the running build, once asked for. Null means
+  /// either "up to date" or "not asked", which the UI treats the same: it
+  /// only ever shows something when there is something to show.
+  AvailableUpdate? get update => _update;
+  bool get checkingUpdate => _checkingUpdate;
+
+  /// Asks GitHub for the latest release and compares it with the running
+  /// build. Silent about failure: a version check is a convenience.
+  Future<AvailableUpdate?> checkForUpdate() async {
+    final checker = _updateCheck;
+    if (checker == null || _checkingUpdate) return _update;
+
+    _checkingUpdate = true;
+    notifyListeners();
+    try {
+      final info = await PackageInfo.fromPlatform();
+      _update = await checker.latest(info.version);
+    } catch (_) {
+      _update = null;
+    } finally {
+      _checkingUpdate = false;
+      notifyListeners();
+    }
+    return _update;
+  }
+
+  /// Stops the banner offering the same version again.
+  void dismissUpdate() {
+    if (_update == null) return;
+    _update = null;
+    notifyListeners();
+  }
+
+  /// When the app last heard from GitHub, or null if it has not yet. Shown
+  /// in the sidebar, because a list is only as trustworthy as its last sync —
+  /// especially on a phone that has been in a pocket.
+  DateTime? get lastSynced => _lastSynced;
 
   /// An item a search asked to be shown, for the list to scroll to and mark
   /// for a moment. Cleared as soon as the list has taken it, so coming back
@@ -221,6 +270,10 @@ class AppState extends ChangeNotifier {
     _projects = _reconcile(before, result.projects);
     _message = result.error;
     _conflicts = result.conflicts;
+    // Only a sync that actually reached GitHub counts as having heard from
+    // it: saying "synced a minute ago" after a failed attempt would be worse
+    // than saying nothing.
+    if (result.error == null) _lastSynced = DateTime.now();
     _syncing = false;
     notifyListeners();
   }

@@ -1,6 +1,7 @@
 import 'package:actionnotes/models/checklist_item.dart';
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/storage/attachment_store.dart';
+import 'package:actionnotes/ui/checklist_view.dart';
 import 'package:actionnotes/ui/home_shell.dart';
 import 'package:actionnotes/ui/note_blocks_editor.dart';
 import 'package:actionnotes/ui/theme.dart';
@@ -177,15 +178,22 @@ void main() {
       await state.addItem('list', 'Important thing');
       await tester.pumpAndSettle();
 
-      expect(find.byIcon(Icons.star_border), findsOneWidget);
+      // The row's own star, not the sidebar's "everything starred" button,
+      // which wears the same icon.
+      Finder rowStar(IconData icon) => find.descendant(
+            of: find.byType(ChecklistView),
+            matching: find.byIcon(icon),
+          );
 
-      await tester.tap(find.byIcon(Icons.star_border));
+      expect(rowStar(Icons.star_border), findsOneWidget);
+
+      await tester.tap(rowStar(Icons.star_border));
       await tester.pumpAndSettle();
 
       expect(store.saved['list']!.items.single.starred, isTrue);
-      expect(find.byIcon(Icons.star), findsOneWidget);
+      expect(rowStar(Icons.star), findsOneWidget);
 
-      await tester.tap(find.byIcon(Icons.star));
+      await tester.tap(rowStar(Icons.star));
       await tester.pumpAndSettle();
 
       expect(store.saved['list']!.items.single.starred, isFalse);

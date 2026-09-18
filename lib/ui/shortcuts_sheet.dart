@@ -28,6 +28,8 @@ const shortcutGroups = [
   ShortcutGroup('Anywhere', [
     Shortcut('Ctrl+K', 'Search across every project'),
     Shortcut('Ctrl+/ or ?', 'This list'),
+    Shortcut('Click an image', 'Open it full size; right-click for more'),
+    Shortcut('Star button', 'Everything starred, from every project'),
   ]),
   ShortcutGroup('A checklist', [
     Shortcut('Enter', 'Add the item you have typed'),
