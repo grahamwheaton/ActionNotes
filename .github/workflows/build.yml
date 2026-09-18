@@ -367,13 +367,14 @@ jobs:
             extra_assets+=("actionnotes-$TAG-portable.exe")
             portable_note="**Windows, one file** — \`actionnotes-$TAG-portable.exe\`
 
-          The same build as a self-extracting executable: one file to copy
-          about, which unpacks to a temporary folder and starts the app. A
+          The same build wrapped in one executable, for carrying about. A
           Flutter app cannot be a single binary — the engine loads its DLLs
-          and \`data\` from disk — so this is a wrapper around the same
-          folder, and it takes a moment longer to start. Some antivirus is
-          suspicious of self-extracting executables; the zip above is the
-          one to use if yours objects."
+          and \`data\` from disk — so this unpacks the folder to
+          \`%LOCALAPPDATA%\\ActionNotes\\$TAG\` the first time you run it and
+          starts it from there; after that it opens straight away. It is
+          per-user and never asks for admin. Some antivirus dislikes a
+          program that unpacks and launches another; the zip above is the one
+          to use if yours objects."
           fi
           cat > notes.md <<EOF
           ActionNotes $TAG.
