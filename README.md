@@ -286,12 +286,29 @@ Without a keystore the release build falls back to debug keys, and CI generates
 a fresh debug key on every run, so those APKs will not install over one another
 — Android treats each as a different app and makes you uninstall first.
 
-To sign properly, generate an upload key once:
+To sign properly, generate an upload key once. `keytool` comes with any JDK;
+on Windows, Android Studio bundles one at
+`C:\Program Files\Android\Android Studio\jbr\bin\keytool.exe`.
 
 ```sh
 keytool -genkey -v -keystore upload-keystore.jks -keyalg RSA \
   -keysize 2048 -validity 10000 -alias upload
-base64 -w0 upload-keystore.jks
+```
+
+It asks for a keystore password, a key password — the same one is fine — and
+some name and place fields, none of which matter for an app that is not going
+to the Play Store. Then turn the file into base64, which is how a secret holds
+a binary:
+
+```sh
+base64 -w0 upload-keystore.jks          # Linux
+base64 upload-keystore.jks | tr -d '\n' # macOS
+```
+
+```powershell
+# Windows PowerShell, into a file so nothing is lost to the console buffer
+[Convert]::ToBase64String([IO.File]::ReadAllBytes("upload-keystore.jks")) |
+  Set-Content -NoNewline keystore.base64.txt
 ```
 
 Then add four repository secrets under Settings → Secrets and variables →
@@ -304,10 +321,17 @@ Actions:
 | `ANDROID_KEY_ALIAS` | `upload` |
 | `ANDROID_KEY_PASSWORD` | the key password |
 
-The next tag picks them up automatically. Keep `upload-keystore.jks` somewhere
-safe and out of the repo — losing it means future builds can no longer upgrade
-an installed app. `.gitignore` already excludes keystores and
-`android/key.properties`.
+The next release picks them up automatically, and the build says which key it
+used, so it is obvious whether the secrets took.
+
+**The first signed build still needs the old app uninstalled** — it is the
+change of key that Android objects to, and that happens once. Every release
+after it installs over the top, which is what makes the update prompt useful.
+
+Keep `upload-keystore.jks` and its password somewhere safe and out of the repo:
+losing either means future builds can no longer upgrade an installed app, and
+the only way back is uninstalling again. `.gitignore` already excludes
+keystores and `android/key.properties`.
 
 ## Using it with Claude or ChatGPT
 
