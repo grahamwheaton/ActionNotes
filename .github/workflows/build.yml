@@ -221,56 +221,40 @@ jobs:
 
       # One file to carry about, as well as the folder. A Flutter build is an
       # exe plus its DLLs and data/, and the engine loads those from disk, so
-      # a true single binary is not on the table — this is a self-extracting
-      # archive that unpacks to a temp folder and starts the app.
+      # a true single binary is not on the table — this wraps the folder in an
+      # executable that unpacks it once and runs it.
       - name: Build the single-file portable
         id: portable
         shell: pwsh
-        continue-on-error: true
+        env:
+          TAG: ${{ inputs.version || github.ref_name }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $build = 'build/windows/x64/runner/Release'
-          & 7z a -mx=9 payload.7z "$build/*" | Out-Null
 
-          # 7zSD.sfx is the module that runs a program after extracting, and
-          # it ships in 7-Zip Extra rather than the ordinary install. Without
-          # it the fallback still gives one file, but it unpacks rather than
-          # launching.
-          $module = $null
-          try {
-            Invoke-WebRequest -Uri 'https://www.7-zip.org/a/7z2409-extra.7z' `
-              -OutFile extra.7z -TimeoutSec 60
-            & 7z x extra.7z -oextra -y | Out-Null
-            if (Test-Path extra/7zSD.sfx) { $module = 'extra/7zSD.sfx' }
-          } catch {
-            Write-Host "::warning::Could not fetch 7-Zip Extra: $_"
+          # NSIS is on the image, so nothing is downloaded at build time. The
+          # first attempt at this fetched a 7-Zip SFX module that 404'd, fell
+          # through to a module that cannot launch anything, and shipped a
+          # file that was not even an executable.
+          $makensis = (Get-Command makensis -ErrorAction SilentlyContinue)?.Source
+          if (-not $makensis) { $makensis = 'C:\Program Files (x86)\NSIS\makensis.exe' }
+          if (-not (Test-Path $makensis)) { throw "No makensis at $makensis" }
+
+          $source = (Resolve-Path 'build/windows/x64/runner/Release').Path
+          $version = ($env:TAG -replace '[^A-Za-z0-9._-]', '-')
+          & $makensis "/DVERSION=$version" "/DSOURCE=$source" windows/portable.nsi
+
+          # It has to be an executable, not whatever fell out of the build:
+          # the first version of this step shipped a bare archive named .exe,
+          # and nothing checked.
+          $out = 'actionnotes-portable.exe'
+          if (-not (Test-Path $out)) { throw 'makensis produced nothing' }
+          $bytes = [IO.File]::ReadAllBytes($out)[0..1]
+          if ([char]$bytes[0] -ne 'M' -or [char]$bytes[1] -ne 'Z') {
+            throw 'The portable build is not a Windows executable'
           }
-
-          if ($module) {
-            # Written as an array rather than a here-string: a here-string
-            # has to start at column 0, which would end this YAML block.
-            # CRLF, which is what the SFX module expects.
-            $config = @(
-              ';!@Install@!UTF-8!',
-              'Title="ActionNotes"',
-              'RunProgram="actionnotes.exe"',
-              'GUIMode="2"',
-              ';!@InstallEnd@!',
-              ''
-            ) -join "`r`n"
-            [IO.File]::WriteAllText("$pwd/config.txt", $config, [Text.UTF8Encoding]::new($false))
-            cmd /c copy /b "$module" + config.txt + payload.7z actionnotes-portable.exe | Out-Null
-            "runs=true" >> $env:GITHUB_OUTPUT
-          } else {
-            $fallback = 'C:/Program Files/7-Zip/7z.sfx'
-            if (-not (Test-Path $fallback)) { throw 'No SFX module available' }
-            cmd /c copy /b "`"$fallback`"" + payload.7z actionnotes-portable.exe | Out-Null
-            "runs=false" >> $env:GITHUB_OUTPUT
-          }
-
-          $size = [math]::Round((Get-Item actionnotes-portable.exe).Length / 1MB, 1)
-          Write-Host "Portable build: $size MB, launches the app: $(
-            if ($module) { 'yes' } else { 'no, it unpacks only' })"
+          $size = [math]::Round((Get-Item $out).Length / 1MB, 1)
+          if ($size -lt 5) { throw "The portable build is only $size MB" }
+          Write-Host "Portable build: $size MB, a real PE that launches the app"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -279,11 +263,10 @@ jobs:
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
-        if: hashFiles('actionnotes-portable.exe') != ''
         with:
           name: actionnotes-portable
           path: actionnotes-portable.exe
-          if-no-files-found: warn
+          if-no-files-found: error
 
   publish:
     name: Publish release
@@ -325,11 +308,16 @@ jobs:
           mv "apk/actionnotes-$TAG.apk" .
           echo "signing=$(cat apk/signing.txt)" >> "$GITHUB_OUTPUT"
 
-          # The single-file portable, when the Windows job managed to make one.
-          if [ -f portable/actionnotes-portable.exe ]; then
-            mv portable/actionnotes-portable.exe "actionnotes-$TAG-portable.exe"
+          # The single-file portable, when the Windows job made one. Checked
+          # here as well as there, because a release is public the moment it
+          # is created and an asset that is not an executable is worse than a
+          # missing one.
+          portable=portable/actionnotes-portable.exe
+          if [ -f "$portable" ] && [ "$(head -c 2 "$portable")" = "MZ" ]; then
+            mv "$portable" "actionnotes-$TAG-portable.exe"
             echo "portable=yes" >> "$GITHUB_OUTPUT"
           else
+            echo "::warning::No usable portable build; releasing without it"
             echo "portable=no" >> "$GITHUB_OUTPUT"
           fi
 
