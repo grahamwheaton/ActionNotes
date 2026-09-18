@@ -23,7 +23,8 @@ pasting one file — or by pointing the model at the repo.
   two shapes.
 - Checklists group open items first, with completed ones collapsed under a
   header at the bottom. New items are added at the top — Enter adds one,
-  Ctrl+Enter adds it starred.
+  Ctrl+Enter adds it starred, and on a phone holding the + button does the
+  same as Ctrl+Enter.
 - Star any item, the way Microsoft To Do does. Starred items pin above the
   rest of the open ones and their rows are tinted, while the file keeps its
   own order.
@@ -65,15 +66,21 @@ pasting one file — or by pointing the model at the repo.
   underneath itself in the list — as the editor itself, so a checkbox in a note
   ticks and the text can be changed without going anywhere. Edits settle for a
   moment and then save, and closing the note writes it at once.
-- Anywhere on an item opens its notes: the checkbox, star, notes marker and
-  drag handle keep their own taps. **Alt-clicking** a notes marker opens or
-  closes every item's notes in the project at once, following the row you
-  clicked. On a wide window the note opens in the
+- **A mouse and a finger get different gestures**, because a tap is easier to
+  make by accident than a click and long-press is the only gesture spare.
+  With a mouse, clicking an item's title opens the full editor. With a finger,
+  a tap opens the notes underneath the row and a double tap opens the editor.
+  Either way the checkbox, star and notes marker keep their own taps.
+  **Alt-clicking** a notes marker opens or closes every item's notes in the
+  project at once, following the row you clicked. On a wide window the note opens in the
   detail pane, so the project sidebar stays where it is and another project
   is one click away; on a phone it is a screen of its own, there being no
   sidebar to keep. A note in the pane writes as it goes and again when the
   pane is taken away, because choosing another project or deleting the item
-  does not route through Save or back.
+  does not route through Save or back. On a narrow screen the item's title
+  sits on its own line below the bar rather than in it, so a title that is a
+  sentence has the whole width instead of the column left over beside the
+  buttons.
 - Links between projects: type `[[` for a picker, or write a normal markdown
   link. Tap one in the preview to jump there.
 - **Move an item to another project**, from its right-click menu. Its notes
@@ -89,10 +96,13 @@ pasting one file — or by pointing the model at the repo.
   45 seconds, stopped when the app goes to the background, and one straight
   away when it comes back. A push in flight is allowed to land first, so the
   two can never write against the same SHA.
-- Right-click (or long-press) an item or a project for star, notes, rename,
-  move and
-  delete.
-- Drag open items to reorder them, by the handle on the right.
+- Right-click an item or a project for star, notes, rename, move and delete.
+  With a mouse a long-press opens the same menu; on a phone it is the ⋮ button
+  at the end of the row, because holding a row there picks it up to move it.
+- Reorder open items by dragging. With a mouse, by the handle on the right;
+  on a phone, hold the row until it lifts and then move it. Starred and
+  unstarred items reorder within their own group, so a drag cannot silently
+  unstar something.
 - When a project changes both on a device and on GitHub, the app says so and
   offers a choice: keep yours, take GitHub's, or merge both.
 

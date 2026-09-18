@@ -625,7 +625,7 @@ void main() {
           find.widgetWithText(TextField, 'Add an item'),
           text,
         );
-        await tester.tap(find.byTooltip('Add item'));
+        await tester.tap(find.byTooltip('Add item — hold to add it starred'));
         await tester.pumpAndSettle();
       }
 

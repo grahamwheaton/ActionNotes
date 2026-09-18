@@ -95,8 +95,9 @@ class _NoteEditorState extends State<NoteEditor> {
 
   /// Chat or markdown. A note that already holds signed messages opens as a
   /// conversation; anything else opens as the editor it always was.
-  late bool _asConversation =
-      NoteConversation.looksConversational(widget.initialNotes);
+  late bool _asConversation = NoteConversation.looksConversational(
+    widget.initialNotes,
+  );
 
   @override
   void didChangeDependencies() {
@@ -214,23 +215,31 @@ class _NoteEditorState extends State<NoteEditor> {
           // the one a route would have supplied.
           leading: _inPane ? BackButton(onPressed: _saveAndClose) : null,
           // A task title is a sentence more often than a label, so give it
-          // room to wrap instead of cutting it off mid-word — and more of it
-          // where the bar is narrow, which is where it runs out first.
-          toolbarHeight: tight ? 116 : 78,
-          titleSpacing: tight ? 4 : null,
-          title: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            child: _EditorTitle(text: widget.title, maxLines: tight ? 5 : 3),
-          ),
+          // room to wrap instead of cutting it off mid-word.
+          //
+          // On a narrow bar it does not go here at all. Sharing the row with
+          // the back arrow and four controls left it a column a few words
+          // wide, wrapping to five lines beside an empty screen; below the
+          // bar it has the whole width and needs two. The bar keeps its
+          // ordinary height, since there is nothing tall in it any more.
+          toolbarHeight: tight ? null : 78,
+          titleSpacing: tight ? 0 : null,
+          title: tight
+              ? null
+              : Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: _EditorTitle(text: widget.title, maxLines: 3),
+                ),
           actions: [
             if (item != null)
               IconButton(
                 tooltip: item.starred ? 'Remove star' : 'Star',
                 icon: Icon(item.starred ? Icons.star : Icons.star_border),
                 color: item.starred ? theme.colorScheme.primary : null,
-                onPressed: () => context
-                    .read<AppState>()
-                    .toggleStar(widget.slug, widget.index),
+                onPressed: () => context.read<AppState>().toggleStar(
+                  widget.slug,
+                  widget.index,
+                ),
               ),
             IconButton(
               tooltip: _asConversation ? 'Edit as markdown' : 'Conversation',
@@ -258,14 +267,16 @@ class _NoteEditorState extends State<NoteEditor> {
               IconButton(
                 tooltip: 'Undo',
                 icon: const Icon(Icons.undo),
-                onPressed:
-                    _editor.currentState?.canUndo ?? false ? _undo : null,
+                onPressed: _editor.currentState?.canUndo ?? false
+                    ? _undo
+                    : null,
               ),
               IconButton(
                 tooltip: 'Redo',
                 icon: const Icon(Icons.redo),
-                onPressed:
-                    _editor.currentState?.canRedo ?? false ? _redo : null,
+                onPressed: _editor.currentState?.canRedo ?? false
+                    ? _redo
+                    : null,
               ),
               IconButton(
                 tooltip: 'Link to a project',
@@ -289,6 +300,7 @@ class _NoteEditorState extends State<NoteEditor> {
         ),
         body: Column(
           children: [
+            if (tight) _TitleBand(text: widget.title),
             Expanded(child: _buildBody()),
             _Hint(theme: theme),
           ],
@@ -323,11 +335,8 @@ class _NoteEditorState extends State<NoteEditor> {
           control: true,
           shift: true,
         ): _redo,
-        const SingleActivator(
-          LogicalKeyboardKey.keyZ,
-          meta: true,
-          shift: true,
-        ): _redo,
+        const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
+            _redo,
         const SingleActivator(LogicalKeyboardKey.keyY, control: true): _redo,
       },
       child: NoteBlocksEditor(
@@ -436,16 +445,42 @@ class _MenuRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      children: [
-        Icon(icon, size: 18),
-        const SizedBox(width: 10),
-        Text(label),
-      ],
+      children: [Icon(icon, size: 18), const SizedBox(width: 10), Text(label)],
     );
   }
 }
 
 /// The item's line at the top of the editor, with its tags as pills.
+/// The note's title across the full width of a narrow screen.
+///
+/// A separate band rather than the bar's title, because the bar's title
+/// shares its row with the buttons and there is no arrangement of five
+/// controls that leaves a sentence room to read.
+class _TitleBand extends StatelessWidget {
+  const _TitleBand({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+      decoration: BoxDecoration(
+        color: theme.appBarTheme.backgroundColor ?? theme.colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      // More lines than the bar could give it, and it will rarely need them
+      // now that it has the width.
+      child: _EditorTitle(text: text, maxLines: 6),
+    );
+  }
+}
+
 class _EditorTitle extends StatelessWidget {
   const _EditorTitle({required this.text, this.maxLines = 3});
 

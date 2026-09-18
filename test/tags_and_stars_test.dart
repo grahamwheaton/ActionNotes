@@ -37,13 +37,17 @@ Future<AppState> pumpList(
 }
 
 /// The colour of the box drawn around the row showing [text].
+///
+/// The row draws itself as a Material rather than a decorated box, so that an
+/// ink splash lands on top of its own fill and a row lifted out to be moved
+/// keeps a Material with it.
 Color? rowColour(WidgetTester tester, String text) {
-  final container = find
-      .ancestor(of: find.text(text), matching: find.byType(Container))
+  final material = find
+      .ancestor(of: find.text(text), matching: find.byType(Material))
       .evaluate()
-      .map((element) => element.widget as Container)
-      .firstWhere((widget) => widget.decoration is BoxDecoration);
-  return (container.decoration as BoxDecoration).color;
+      .map((element) => element.widget as Material)
+      .firstWhere((widget) => widget.shape is RoundedRectangleBorder);
+  return material.color;
 }
 
 void main() {
