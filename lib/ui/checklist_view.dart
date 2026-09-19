@@ -4,6 +4,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:pasteboard/pasteboard.dart';
 import 'package:provider/provider.dart';
 
 import '../markdown/canvas_cards.dart';
@@ -294,7 +295,6 @@ class _ChecklistViewState extends State<ChecklistView> {
   /// to hang on something, and an item with the picture in its notes is the
   /// thing that survives being read on GitHub.
   Future<void> _attachPhoto() async {
-    final state = context.read<AppState>();
     final file = await openFile(
       acceptedTypeGroups: const [
         XTypeGroup(
@@ -305,11 +305,36 @@ class _ChecklistViewState extends State<ChecklistView> {
     );
     if (file == null || !mounted) return;
 
+    await _attachBytes(file.name, await file.readAsBytes());
+  }
+
+  /// Ctrl+V in the add box.
+  ///
+  /// A picture on the clipboard becomes the item's notes, so a screenshot can
+  /// be pasted straight into what is being written rather than saved, found
+  /// and attached. Returns false when there is no picture, and the box takes
+  /// the key back and pastes text the way it always did.
+  Future<bool> _pasteIntoComposer() async {
+    final image = await Pasteboard.image;
+    if (image == null || image.isEmpty || !mounted) return false;
+
+    final stamp = DateTime.now().toUtc().toIso8601String().split('.').first;
+    await _attachBytes(
+      'pasted-${stamp.replaceAll(RegExp('[:-]'), '')}.png',
+      image,
+    );
+    return true;
+  }
+
+  /// Adds what is in the add box as an item, with [bytes] as its notes.
+  Future<void> _attachBytes(String fileName, List<int> bytes) async {
+    final state = context.read<AppState>();
+
     final text = _newItemController.text.trim();
     final reference = await state.attachImage(
       widget.slug,
-      fileName: file.name,
-      bytes: await file.readAsBytes(),
+      fileName: fileName,
+      bytes: bytes,
     );
     if (reference == null || !mounted) return;
 
@@ -573,6 +598,7 @@ class _ChecklistViewState extends State<ChecklistView> {
             onSubmit: _addItem,
             onSubmitStarred: () => _addItem(starred: true),
             onAttach: _attachPhoto,
+            onPasteImage: _pasteIntoComposer,
             // A section that has been renamed or is no longer there stops
             // being the target rather than sending items to a name nothing
             // points at.

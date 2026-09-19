@@ -44,6 +44,7 @@ class Composer extends StatelessWidget {
     required this.onSubmit,
     required this.onSubmitStarred,
     this.onAttach,
+    this.onPasteImage,
     this.target,
     this.onClearTarget,
   });
@@ -64,11 +65,37 @@ class Composer extends StatelessWidget {
   /// Null where attaching makes no sense for what is being added.
   final VoidCallback? onAttach;
 
+  /// Ctrl+V: takes a picture off the clipboard, and says whether it did. When
+  /// it did not, this pastes the clipboard's text into the box itself —
+  /// intercepting the key means owning both halves of what it means.
+  final Future<bool> Function()? onPasteImage;
+
   /// The `##` section a new item will go into, or null for the top of the
   /// project. Shown rather than inferred silently: where a thing you add ends
   /// up is not something to have to guess at.
   final String? target;
   final VoidCallback? onClearTarget;
+
+  Future<void> _paste() async {
+    if (await onPasteImage!()) return;
+
+    // No picture: put the clipboard's text in at the caret, which is what the
+    // field would have done had the shortcut not taken the key.
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) return;
+
+    final value = controller.value;
+    final selection = value.selection.isValid
+        ? value.selection
+        : TextSelection.collapsed(offset: value.text.length);
+
+    controller.value = value.copyWith(
+      text: value.text.replaceRange(selection.start, selection.end, text),
+      selection: TextSelection.collapsed(offset: selection.start + text.length),
+      composing: TextRange.empty,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -102,6 +129,14 @@ class Composer extends StatelessWidget {
                     LogicalKeyboardKey.numpadEnter,
                     control: true,
                   ): onSubmitStarred,
+                  if (onPasteImage != null) ...{
+                    const SingleActivator(
+                      LogicalKeyboardKey.keyV,
+                      control: true,
+                    ): _paste,
+                    const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+                        _paste,
+                  },
                 },
                 child: TextField(
                   controller: controller,

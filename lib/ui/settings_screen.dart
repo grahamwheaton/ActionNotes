@@ -29,6 +29,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// rather than signed out.
   String? _login;
 
+  /// Whether the owner and the branch are on show.
+  ///
+  /// Signing in and picking a repository fills both, so for almost everyone
+  /// they are two fields that never need touching and that invite being got
+  /// wrong. They stay reachable, because a repository someone else owns, or a
+  /// branch that is not the default, is a real thing to want — just not the
+  /// first thing anyone should meet.
+  bool _advanced = false;
+
   @override
   void initState() {
     super.initState();
@@ -48,11 +57,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   GitHubConfig get _config => GitHubConfig(
-        owner: _owner.text.trim(),
-        repo: _repo.text.trim(),
-        branch: _branch.text.trim().isEmpty ? 'main' : _branch.text.trim(),
-        token: _token.text.trim(),
-      );
+    owner: _owner.text.trim(),
+    repo: _repo.text.trim(),
+    branch: _branch.text.trim().isEmpty ? 'main' : _branch.text.trim(),
+    token: _token.text.trim(),
+  );
 
   Future<void> _test() async {
     setState(() {
@@ -120,6 +129,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _owner.text = picked.owner;
         _repo.text = picked.name;
         _branch.text = picked.defaultBranch;
+        // Picking a repository is what fills these, so there is no longer
+        // anything to fill in by hand.
+        _advanced = false;
         _result = null;
       });
     } finally {
@@ -134,6 +146,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _result = null;
     });
   }
+
+  /// Whether the owner and the branch are already filled in, one way or
+  /// another — in which case there is nothing for anyone to do to them.
+  bool get _settled =>
+      _owner.text.trim().isNotEmpty &&
+      _repo.text.trim().isNotEmpty &&
+      _branch.text.trim().isNotEmpty;
 
   Future<void> _save() async {
     setState(() => _busy = true);
@@ -155,7 +174,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Text(
             'Where your notes live',
-            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 4),
           Text(
@@ -165,11 +186,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ),
           ),
           const SizedBox(height: 20),
-          _Field(
-            controller: _owner,
-            label: 'Owner',
-            hint: 'your GitHub username or org',
-          ),
           _Field(
             controller: _repo,
             label: 'Repository',
@@ -182,11 +198,44 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: _token.text.trim().isEmpty ? null : _pickRepo,
             ),
           ),
-          _Field(controller: _branch, label: 'Branch', hint: 'main'),
+          // Folded away while they are filled in, and said out loud rather
+          // than hidden: what the app is going to write to should be
+          // readable without opening anything.
+          if (!_advanced && _settled)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${_owner.text.trim()}/${_repo.text.trim()} '
+                      'on ${_branch.text.trim()}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() => _advanced = true),
+                    child: const Text('Change'),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            _Field(
+              controller: _owner,
+              label: 'Owner',
+              hint: 'your GitHub username or org',
+            ),
+            _Field(controller: _branch, label: 'Branch', hint: 'main'),
+          ],
           const SizedBox(height: 4),
           Text(
             'Access',
-            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 12),
           _AccessCard(
@@ -210,14 +259,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 20),
           Text(
             'Appearance',
-            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 12),
           const _ThemePicker(),
           const SizedBox(height: 24),
           Text(
             'Updates',
-            style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
           ),
           const SizedBox(height: 8),
           const _UpdateRow(),
@@ -286,9 +339,9 @@ class _UpdateRow extends StatelessWidget {
             state.checkingUpdate
                 ? 'Checking...'
                 : update == null
-                    ? 'Checked against the latest release on GitHub. '
-                        'An update shows up beside the projects.'
-                    : 'Version ${update.version} is out.',
+                ? 'Checked against the latest release on GitHub. '
+                      'An update shows up beside the projects.'
+                : 'Version ${update.version} is out.',
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
@@ -383,19 +436,22 @@ class _AccessCard extends StatelessWidget {
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Text(
-              switch ((hasToken, login)) {
-                (true, final String login) => 'Signed in as $login',
-                (true, _) => 'Signed in to GitHub',
-                _ => 'Not signed in',
-              },
-              style: theme.textTheme.bodyMedium,
-            ),
+            child: Text(switch ((hasToken, login)) {
+              (true, final String login) => 'Signed in as $login',
+              (true, _) => 'Signed in to GitHub',
+              _ => 'Not signed in',
+            }, style: theme.textTheme.bodyMedium),
           ),
           if (hasToken)
-            TextButton(onPressed: busy ? null : onSignOut, child: const Text('Sign out'))
+            TextButton(
+              onPressed: busy ? null : onSignOut,
+              child: const Text('Sign out'),
+            )
           else
-            FilledButton(onPressed: busy ? null : onSignIn, child: const Text('Sign in')),
+            FilledButton(
+              onPressed: busy ? null : onSignIn,
+              child: const Text('Sign in'),
+            ),
         ],
       ),
     );

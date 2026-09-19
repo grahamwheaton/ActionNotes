@@ -27,7 +27,7 @@ class ShortcutGroup {
 const shortcutGroups = [
   ShortcutGroup('Anywhere', [
     Shortcut('Ctrl+K', 'Search across every project'),
-    Shortcut('Ctrl+/ or ?', 'This list'),
+    Shortcut('Ctrl+/ or F1', 'This list'),
     Shortcut('Click an image', 'Open it full size; right-click for more'),
     Shortcut('Star button', 'Everything starred, from every project'),
   ]),
@@ -59,7 +59,7 @@ const shortcutGroups = [
   ]),
 ];
 
-/// Shows the shortcuts. Opened with `?` or from the sidebar's menu.
+/// Shows the shortcuts. Opened with Ctrl+/, F1, or from the sidebar's menu.
 Future<void> showShortcutsSheet(BuildContext context) {
   return showDialog<void>(
     context: context,
@@ -67,12 +67,20 @@ Future<void> showShortcutsSheet(BuildContext context) {
   );
 }
 
-/// Both ways in. `?` is shift and the slash key, which is how a keyboard
-/// sends it; Ctrl+/ is there because `?` is also an ordinary character, and a
-/// shortcut that cannot be typed by accident is the one to rely on.
+/// Both ways in, and neither of them a character.
+///
+/// This used to open on `?` as well, which is shift and the slash key. That
+/// is how the web opens a shortcut list, but the web is not somewhere you are
+/// usually writing. Here you are: a question mark is an ordinary thing to
+/// type in a task or a note, and a shortcut laid over a character wins the
+/// key whatever is focused, so asking a question in writing opened this list
+/// instead of typing the mark.
+///
+/// F1 is the help key everywhere and is never a character, so it takes `?`'s
+/// place as the one-key way in.
 const shortcutsSheetActivators = [
   SingleActivator(LogicalKeyboardKey.slash, control: true),
-  SingleActivator(LogicalKeyboardKey.slash, shift: true),
+  SingleActivator(LogicalKeyboardKey.f1),
 ];
 
 class _ShortcutsDialog extends StatelessWidget {
