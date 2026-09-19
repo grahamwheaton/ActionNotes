@@ -62,6 +62,11 @@ class _ChecklistViewState extends State<ChecklistView> {
   /// changes. Keeping the text means a row that moves keeps its open note.
   final Set<String> _expandedNotes = {};
 
+  /// Sections folded away, by name. A canvas is four hundred pixels tall
+  /// whatever is on it, so a project with two of them is mostly canvas unless
+  /// they can be put away.
+  final Set<String> _collapsedSections = {};
+
   void _toggleNotes(int index, String itemText) {
     // Alt makes it a decision about the whole project, the way alt-clicking a
     // disclosure in a file tree does.
@@ -526,6 +531,14 @@ class _ChecklistViewState extends State<ChecklistView> {
                               slug: widget.slug,
                               block: block,
                               dragPosition: position,
+                              collapsed: _collapsedSections.contains(
+                                block.title,
+                              ),
+                              onToggleCollapsed: () => setState(() {
+                                if (!_collapsedSections.remove(block.title)) {
+                                  _collapsedSections.add(block.title);
+                                }
+                              }),
                               onTouched: () {
                                 if (_addTarget == block.title) return;
                                 setState(() => _addTarget = block.title);
@@ -1183,6 +1196,8 @@ class _BlockSection extends StatelessWidget {
     required this.onToggleNotes,
     required this.onNotesChanged,
     required this.onTouched,
+    required this.collapsed,
+    required this.onToggleCollapsed,
     this.dragPosition,
   });
 
@@ -1192,6 +1207,10 @@ class _BlockSection extends StatelessWidget {
   /// Fires when this section is touched anywhere, so the composer can add
   /// into it.
   final VoidCallback onTouched;
+
+  /// Folded away to its heading.
+  final bool collapsed;
+  final VoidCallback onToggleCollapsed;
 
   /// Where this section sits among the others, for moving it.
   final int? dragPosition;
@@ -1253,6 +1272,39 @@ class _BlockSection extends StatelessWidget {
           }
         },
       ),
+      ContextMenuAction(
+        label: 'Delete section',
+        icon: Icons.delete_outline,
+        destructive: true,
+        onSelected: () async {
+          final count = items.length;
+          final gone = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text('Delete “${block.title}”?'),
+              // Says what goes, because this is the one action in the app
+              // that takes several things at once.
+              content: Text(
+                count == 0
+                    ? 'Its notes go with it.'
+                    : 'Its notes and $count '
+                          '${count == 1 ? 'item' : 'items'} go with it.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('Delete'),
+                ),
+              ],
+            ),
+          );
+          if (gone ?? false) await state.deleteBlock(slug, block.title);
+        },
+      ),
     ];
 
     final heading = Container(
@@ -1263,9 +1315,19 @@ class _BlockSection extends StatelessWidget {
           bottom: BorderSide(color: theme.colorScheme.outlineVariant),
         ),
       ),
-      padding: const EdgeInsets.fromLTRB(12, 0, 2, 0),
+      padding: const EdgeInsets.fromLTRB(2, 0, 2, 0),
       child: Row(
         children: [
+          IconButton(
+            tooltip: collapsed ? 'Show this section' : 'Fold this section away',
+            visualDensity: VisualDensity.compact,
+            icon: Icon(
+              collapsed ? Icons.chevron_right : Icons.expand_more,
+              size: 20,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+            onPressed: onToggleCollapsed,
+          ),
           Expanded(
             child: _BlockTitleField(
               key: ValueKey('title-$slug-${block.title}'),
@@ -1310,48 +1372,69 @@ class _BlockSection extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               heading,
-              // The prose above the items, which is the order the file is
-              // written in and the order a document is written in: a heading, a
-              // paragraph, then a list. Always present, so a section made a
-              // moment ago has somewhere to type rather than only a name.
-              if (canvas)
-                _SectionCanvas(
-                  key: ValueKey('canvas-$slug-${block.title}'),
-                  slug: slug,
-                  section: block.title,
-                  body: block.body,
-                )
-              else
+              if (collapsed)
                 Padding(
-                  padding: touch
-                      ? const EdgeInsets.fromLTRB(2, 4, 6, 4)
-                      : const EdgeInsets.fromLTRB(10, 4, 8, 4),
-                  child: _BlockBody(
-                    key: ValueKey('body-$slug-${block.title}'),
-                    slug: slug,
-                    title: block.title,
-                    initialMarkdown: block.body,
+                  padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
+                  child: Text(
+                    _summarise(items.length, block.body),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                ),
-              for (var position = 0; position < items.length; position++)
-                _ItemTile(
-                  key: ValueKey('block-${block.title}-${indices[position]}'),
-                  slug: slug,
-                  index: indices[position],
-                  item: items[position],
-                  notesExpanded: expandedNotes.contains(items[position].text),
-                  flashing: flashing == items[position].text,
-                  onToggleNotes: () =>
-                      onToggleNotes(indices[position], items[position].text),
-                  onNotesChanged: (notes) =>
-                      onNotesChanged(items[position].text, notes),
-                ),
-              const SizedBox(height: 4),
+                )
+              else ...[
+                // The prose above the items, which is the order the file is
+                // written in and the order a document is written in: a heading, a
+                // paragraph, then a list. Always present, so a section made a
+                // moment ago has somewhere to type rather than only a name.
+                if (canvas)
+                  _SectionCanvas(
+                    key: ValueKey('canvas-$slug-${block.title}'),
+                    slug: slug,
+                    section: block.title,
+                    body: block.body,
+                  )
+                else
+                  Padding(
+                    padding: touch
+                        ? const EdgeInsets.fromLTRB(2, 4, 6, 4)
+                        : const EdgeInsets.fromLTRB(10, 4, 8, 4),
+                    child: _BlockBody(
+                      key: ValueKey('body-$slug-${block.title}'),
+                      slug: slug,
+                      title: block.title,
+                      initialMarkdown: block.body,
+                    ),
+                  ),
+                for (var position = 0; position < items.length; position++)
+                  _ItemTile(
+                    key: ValueKey('block-${block.title}-${indices[position]}'),
+                    slug: slug,
+                    index: indices[position],
+                    item: items[position],
+                    notesExpanded: expandedNotes.contains(items[position].text),
+                    flashing: flashing == items[position].text,
+                    onToggleNotes: () =>
+                        onToggleNotes(indices[position], items[position].text),
+                    onNotesChanged: (notes) =>
+                        onNotesChanged(items[position].text, notes),
+                  ),
+                const SizedBox(height: 4),
+              ],
             ],
           ),
         ),
       ),
     );
+  }
+
+  /// What a folded section says about itself, so it is not a blank bar.
+  String _summarise(int items, String body) {
+    final parts = <String>[
+      if (items > 0) '$items ${items == 1 ? 'item' : 'items'}',
+      if (body.trim().isNotEmpty) 'notes',
+    ];
+    return parts.isEmpty ? 'Empty' : parts.join(' and ');
   }
 }
 

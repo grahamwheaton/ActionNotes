@@ -4,7 +4,6 @@ on:
   push:
     branches: ['**']
     tags: ['v*']
-  pull_request:
   workflow_dispatch:
     inputs:
       version:
@@ -16,6 +15,18 @@ on:
 # Repeated rather than shared because Actions has no way to name an expression.
 env:
   FLUTTER_SDK_VERSION: '3.47.4'
+
+# Minutes are metered on a private repo, and Windows bills at twice the rate
+# of Linux — so an ordinary push runs the analyzer and the tests and nothing
+# else, and the platform builds wait until a release is actually being cut.
+# A push cost about twenty-two billed minutes before this; it costs about
+# three now.
+#
+# And a run that has been superseded stops, rather than finishing a build of
+# a commit nobody is waiting for any more.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
@@ -59,9 +70,10 @@ jobs:
     name: Android APK (debug)
     runs-on: ubuntu-latest
     needs: check
-    # A release run builds a release APK instead, so this would be eight
-    # minutes of runner time producing something nobody installs.
-    if: "!(startsWith(github.ref, 'refs/tags/') || inputs.version != '')"
+    # Only when asked for by hand without a version. An ordinary push does not
+    # need an APK built for it, and building one every time was most of what
+    # this repo was spending; a release run builds a real one instead.
+    if: github.event_name == 'workflow_dispatch' && inputs.version == ''
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -226,6 +238,8 @@ jobs:
     name: Windows build
     runs-on: windows-latest
     needs: check
+    # Twice the rate of Linux, so only when there is a release to put it in.
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2

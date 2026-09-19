@@ -507,6 +507,33 @@ class AppState extends ChangeNotifier {
         );
       });
 
+  /// Removes a `##` section, its items and its prose.
+  ///
+  /// The one place in the app that deletes several things at once, so the
+  /// caller asks first. Its canvas goes too, since a layout for a heading that
+  /// no longer exists would sit in the file for ever.
+  Future<void> deleteBlock(String slug, String title) async {
+    final layout = layoutFor(slug);
+    if (layout.isCanvas(title)) {
+      _layouts[slug] = layout.withoutSection(title);
+      unawaited(_pushLayout(slug));
+    }
+
+    await _mutate(
+      slug,
+      (project) => project.copyWith(
+        blocks: [
+          for (final block in project.blocks)
+            if (block.title != title) block,
+        ],
+        items: [
+          for (final item in project.items)
+            if (item.block != title) item,
+        ],
+      ),
+    );
+  }
+
   Future<void> setBlockBody(String slug, String title, String body) =>
       _mutate(slug, (project) {
         final blocks = [

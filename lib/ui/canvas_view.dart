@@ -664,7 +664,7 @@ class CanvasViewState extends State<CanvasView> {
               if (_selection.length > 1)
                 Positioned(
                   left: 8,
-                  bottom: 8,
+                  bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
                   child: IgnorePointer(
                     child: Material(
                       color: theme.colorScheme.primaryContainer,
@@ -684,7 +684,9 @@ class CanvasViewState extends State<CanvasView> {
                 ),
               Positioned(
                 right: 8,
-                bottom: 8,
+                // Clear of the system bar at the bottom of a phone, which was
+                // sitting on top of the zoom controls.
+                bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
                 child: _CanvasControls(
                   scale: _scale,
                   onOpenFullScreen: widget.onOpenFullScreen,

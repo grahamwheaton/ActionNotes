@@ -25,6 +25,10 @@ pasting one file — or by pointing the model at the repo.
   project menu opens it as one piece of prose instead of a list; the file is
   the same either way — a notes project is one with no checklist lines — so
   turning it back loses nothing, and the items are still there.
+- **Sections** fold away to their heading, which says what is inside — a
+  canvas is a fixed height whatever is on it, so a project with two of them is
+  mostly canvas otherwise. A section can also be deleted from its menu, which
+  asks first and says what goes with it.
 - **Sections.** A `##` heading in a project file is a section with its own
   items and its own prose, so one project can hold a list, a set of notes, and
   another list. There is nothing to declare: a section holding checklist lines

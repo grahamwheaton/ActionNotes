@@ -140,6 +140,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final theme = Theme.of(context);
     final state = context.watch<AppState>();
     final project = state.projectBySlug(slug);
+    final tight = MediaQuery.sizeOf(context).width < 560;
 
     final block = project?.blocks.firstWhere(
       (block) => block.title == section,
@@ -179,29 +180,57 @@ class _CanvasScreenState extends State<CanvasScreen> {
         child: Scaffold(
           appBar: AppBar(
             title: Text(section),
+            // Five buttons and a name do not share one row on a phone: the
+            // name was down to three letters and an ellipsis. Undo and redo
+            // stay out, since they are reached often and mean nothing in a
+            // menu; the three that add things fold into one.
+            titleSpacing: tight ? 0 : null,
             actions: [
-              IconButton(
-                tooltip: 'Add photos',
-                icon: const Icon(Icons.add_photo_alternate_outlined),
-                onPressed: () => _addPhoto(context),
-              ),
-              IconButton(
-                tooltip: 'Add a note',
-                icon: const Icon(Icons.note_add_outlined),
-                onPressed: () => _addNote(context),
-              ),
-              IconButton(
-                tooltip: 'Paste',
-                icon: const Icon(Icons.content_paste),
-                onPressed: _paste,
-              ),
+              if (!tight) ...[
+                IconButton(
+                  tooltip: 'Add photos',
+                  icon: const Icon(Icons.add_photo_alternate_outlined),
+                  onPressed: () => _addPhoto(context),
+                ),
+                IconButton(
+                  tooltip: 'Add a note',
+                  icon: const Icon(Icons.note_add_outlined),
+                  onPressed: () => _addNote(context),
+                ),
+                IconButton(
+                  tooltip: 'Paste',
+                  icon: const Icon(Icons.content_paste),
+                  onPressed: _paste,
+                ),
+              ] else
+                PopupMenuButton<String>(
+                  tooltip: 'Add to this canvas',
+                  icon: const Icon(Icons.add),
+                  onSelected: (choice) {
+                    switch (choice) {
+                      case 'photo':
+                        _addPhoto(context);
+                      case 'note':
+                        _addNote(context);
+                      case 'paste':
+                        _paste();
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'photo', child: Text('Add photos')),
+                    PopupMenuItem(value: 'note', child: Text('Add a note')),
+                    PopupMenuItem(value: 'paste', child: Text('Paste')),
+                  ],
+                ),
               IconButton(
                 tooltip: 'Undo',
+                visualDensity: tight ? VisualDensity.compact : null,
                 icon: const Icon(Icons.undo),
                 onPressed: state.canUndoCanvas(slug, section) ? _undo : null,
               ),
               IconButton(
                 tooltip: 'Redo',
+                visualDensity: tight ? VisualDensity.compact : null,
                 icon: const Icon(Icons.redo),
                 onPressed: state.canRedoCanvas(slug, section) ? _redo : null,
               ),
