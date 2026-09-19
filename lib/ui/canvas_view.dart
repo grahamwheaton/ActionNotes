@@ -444,6 +444,12 @@ class CanvasViewState extends State<CanvasView> {
         fit();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyZ:
+        // Plain Z zooms to what is selected; with a modifier it is undo, and
+        // that belongs to the screen above rather than here.
+        if (HardwareKeyboard.instance.isControlPressed ||
+            HardwareKeyboard.instance.isMetaPressed) {
+          return KeyEventResult.ignored;
+        }
         zoomToSelection();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:

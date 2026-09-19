@@ -207,3 +207,28 @@ class CanvasLayout {
     }
   }
 }
+
+/// One point in a canvas's history: both of its files, together.
+///
+/// The arrangement alone would not be enough — a card deleted is gone from the
+/// markdown, and putting its position back would put back a position with
+/// nothing under it.
+class CanvasStep {
+  const CanvasStep({required this.body, required this.spots});
+
+  final String body;
+  final List<CanvasSpot> spots;
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! CanvasStep || other.body != body) return false;
+    if (other.spots.length != spots.length) return false;
+    for (var i = 0; i < spots.length; i++) {
+      if (other.spots[i] != spots[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(body, Object.hashAll(spots));
+}

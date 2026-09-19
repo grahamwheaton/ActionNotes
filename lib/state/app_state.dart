@@ -786,6 +786,90 @@ class AppState extends ChangeNotifier {
   // project with no layout has no canvases and shows its sections as notes.
 
   final Map<String, CanvasLayout> _layouts = {};
+
+  /// What a canvas looked like before each of the last few changes, and what
+  /// was undone from it.
+  ///
+  /// A canvas is the one place in this app where a single action can rearrange
+  /// a great deal of careful work — packing a board, or aligning the wrong
+  /// selection — and where the result is a picture rather than a list, so
+  /// putting it back by hand is not really possible. Both files are captured,
+  /// the markdown and the arrangement, so adding and deleting cards can be
+  /// taken back as well as moving them.
+  final Map<String, List<CanvasStep>> _canvasUndo = {};
+  final Map<String, List<CanvasStep>> _canvasRedo = {};
+
+  static const _canvasHistoryDepth = 60;
+
+  String _historyKey(String slug, String section) => '$slug\u0000$section';
+
+  bool canUndoCanvas(String slug, String section) =>
+      _canvasUndo[_historyKey(slug, section)]?.isNotEmpty ?? false;
+
+  bool canRedoCanvas(String slug, String section) =>
+      _canvasRedo[_historyKey(slug, section)]?.isNotEmpty ?? false;
+
+  /// The canvas as it stands, for the history to hold on to.
+  CanvasStep? _canvasStep(String slug, String section) {
+    final project = projectBySlug(slug);
+    if (project == null) return null;
+
+    final block = project.blocks.firstWhere(
+      (block) => block.title == section,
+      orElse: () => const ProjectBlock(title: ''),
+    );
+    if (block.title.isEmpty) return null;
+
+    return CanvasStep(
+      body: block.body,
+      spots: List.unmodifiable(layoutFor(slug).spotsFor(section)),
+    );
+  }
+
+  /// Remembers the canvas before something changes it.
+  void _rememberCanvas(String slug, String section) {
+    final step = _canvasStep(slug, section);
+    if (step == null) return;
+
+    final key = _historyKey(slug, section);
+    final history = _canvasUndo.putIfAbsent(key, () => []);
+    // Nothing changed: a repeated identical step would make undo look broken
+    // by appearing to do nothing.
+    if (history.isNotEmpty && history.last == step) return;
+
+    history.add(step);
+    if (history.length > _canvasHistoryDepth) history.removeAt(0);
+    // A fresh change is a new branch, so what was undone is no longer ahead.
+    _canvasRedo.remove(key);
+  }
+
+  Future<void> undoCanvas(String slug, String section) =>
+      _stepCanvas(slug, section, from: _canvasUndo, to: _canvasRedo);
+
+  Future<void> redoCanvas(String slug, String section) =>
+      _stepCanvas(slug, section, from: _canvasRedo, to: _canvasUndo);
+
+  Future<void> _stepCanvas(
+    String slug,
+    String section, {
+    required Map<String, List<CanvasStep>> from,
+    required Map<String, List<CanvasStep>> to,
+  }) async {
+    final key = _historyKey(slug, section);
+    final history = from[key];
+    if (history == null || history.isEmpty) return;
+
+    final now = _canvasStep(slug, section);
+    final step = history.removeLast();
+    if (now != null) {
+      (to.putIfAbsent(key, () => [])).add(now);
+    }
+
+    _layouts[slug] = layoutFor(slug).withSection(section, step.spots);
+    unawaited(_pushLayout(slug));
+    await setBlockBody(slug, section, step.body);
+  }
+
   final Map<String, Timer> _layoutTimers = {};
 
   CanvasLayout layoutFor(String slug) => _layouts[slug] ?? CanvasLayout.empty;
@@ -837,6 +921,8 @@ class AppState extends ChangeNotifier {
     );
     if (block.title.isEmpty) return;
 
+    _rememberCanvas(slug, section);
+
     final cards = [
       ...CanvasCards.parse(block.body),
       CanvasCards.text(markdown),
@@ -861,6 +947,7 @@ class AppState extends ChangeNotifier {
 
     final cards = CanvasCards.parse(block.body);
     if (index < 0 || index >= cards.length) return;
+    _rememberCanvas(slug, section);
     cards.removeAt(index);
 
     final spots = [...layoutFor(slug).spotsFor(section)];
@@ -893,6 +980,7 @@ class AppState extends ChangeNotifier {
 
     final cards = CanvasCards.parse(block.body);
     if (index < 0 || index >= cards.length) return;
+    _rememberCanvas(slug, section);
     cards.insert(index + 1, cards[index]);
 
     final spots = [...layoutFor(slug).spotsFor(section)];
@@ -914,8 +1002,10 @@ class AppState extends ChangeNotifier {
   Future<void> setCanvasSpots(
     String slug,
     String section,
-    List<CanvasSpot> spots,
-  ) async {
+    List<CanvasSpot> spots, {
+    bool remember = true,
+  }) async {
+    if (remember) _rememberCanvas(slug, section);
     _layouts[slug] = layoutFor(slug).withSection(section, spots);
     notifyListeners();
 

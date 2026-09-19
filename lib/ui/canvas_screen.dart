@@ -81,6 +81,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
     await context.read<AppState>().addCanvasCard(slug, section, value);
   }
 
+  void _undo() => context.read<AppState>().undoCanvas(slug, section);
+
+  void _redo() => context.read<AppState>().redoCanvas(slug, section);
+
   Future<void> _drop(DropDoneDetails details) async {
     setState(() => _dropping = false);
     for (final file in details.files) {
@@ -159,6 +163,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyV, control: true): _paste,
         const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _paste,
+        const SingleActivator(LogicalKeyboardKey.keyZ, control: true): _undo,
+        const SingleActivator(LogicalKeyboardKey.keyZ, meta: true): _undo,
+        const SingleActivator(
+          LogicalKeyboardKey.keyZ,
+          control: true,
+          shift: true,
+        ): _redo,
+        const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
+            _redo,
+        const SingleActivator(LogicalKeyboardKey.keyY, control: true): _redo,
       },
       child: Focus(
         autofocus: false,
@@ -180,6 +194,16 @@ class _CanvasScreenState extends State<CanvasScreen> {
                 tooltip: 'Paste',
                 icon: const Icon(Icons.content_paste),
                 onPressed: _paste,
+              ),
+              IconButton(
+                tooltip: 'Undo',
+                icon: const Icon(Icons.undo),
+                onPressed: state.canUndoCanvas(slug, section) ? _undo : null,
+              ),
+              IconButton(
+                tooltip: 'Redo',
+                icon: const Icon(Icons.redo),
+                onPressed: state.canRedoCanvas(slug, section) ? _redo : null,
               ),
               const SizedBox(width: 4),
             ],
