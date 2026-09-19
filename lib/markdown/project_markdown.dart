@@ -103,7 +103,14 @@ class ProjectMarkdown {
         }
       }
 
-      final item = _itemPattern.firstMatch(line);
+      // Inside a section, an indented checklist line is part of that
+      // section's prose rather than another of its items — the same rule that
+      // keeps a checklist inside an item's notes inside them. At column 0 it
+      // is an item, so a list written under a heading on GitHub still reads
+      // as one.
+      final item = _isIndented(line) && currentBlock != null
+          ? null
+          : _itemPattern.firstMatch(line);
       if (item != null) {
         flushItemNotes();
 
@@ -149,7 +156,7 @@ class ProjectMarkdown {
       if (currentBlock == null) {
         projectNotes.add(line);
       } else {
-        blockBody[currentBlock]!.add(line);
+        blockBody[currentBlock]!.add(_dedent(line));
       }
     }
     flushItemNotes();
@@ -265,8 +272,20 @@ class ProjectMarkdown {
         ..writeln()
         ..writeln('## $title')
         ..writeln();
-      writeItems(title);
-
+      // The prose comes before the items, and indented, for one reason each.
+      //
+      // Indented, the same as an item's notes are: a `- [ ]` written inside a
+      // section's prose is part of that prose, and at column 0 it would be
+      // read back as another item of the section — which is exactly what went
+      // wrong, a checklist typed into a section's notes turning into the
+      // section's items the next time the file was opened. Reading stays
+      // forgiving, so unindented prose typed on GitHub is still the body.
+      //
+      // Before the items, because an indented line that follows an item is
+      // that item's notes, and there is no way to tell where those end and a
+      // section's prose begins. Above them there is no ambiguity at all — and
+      // a heading, a paragraph, then a list is the order a document is
+      // written in anyway.
       final body = project.blocks
           .firstWhere(
             (block) => block.title == title,
@@ -275,9 +294,13 @@ class ProjectMarkdown {
           .body
           .trim();
       if (body.isNotEmpty) {
+        for (final line in body.split('\n')) {
+          buffer.writeln(line.trim().isEmpty ? '' : '$_noteIndent$line');
+        }
         if (project.items.any((item) => item.block == title)) buffer.writeln();
-        buffer.writeln(body);
       }
+
+      writeItems(title);
     }
 
     return buffer.toString();

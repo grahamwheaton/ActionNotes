@@ -13,9 +13,8 @@ enum AddKind {
   IconData get icon =>
       this == AddKind.note ? Icons.subject : Icons.check_box_outlined;
 
-  String get hint => this == AddKind.note
-      ? 'Name a section of notes'
-      : 'Add an item';
+  String get hint =>
+      this == AddKind.note ? 'Name a section of notes' : 'Add an item';
 }
 
 /// The box at the bottom of a project: what to add, and what sort of thing it
@@ -34,6 +33,8 @@ class Composer extends StatelessWidget {
     required this.onSubmit,
     required this.onSubmitStarred,
     this.onAttach,
+    this.target,
+    this.onClearTarget,
   });
 
   final TextEditingController controller;
@@ -51,6 +52,12 @@ class Composer extends StatelessWidget {
 
   /// Null where attaching makes no sense for what is being added.
   final VoidCallback? onAttach;
+
+  /// The `##` section a new item will go into, or null for the top of the
+  /// project. Shown rather than inferred silently: where a thing you add ends
+  /// up is not something to have to guess at.
+  final String? target;
+  final VoidCallback? onClearTarget;
 
   @override
   Widget build(BuildContext context) {
@@ -116,6 +123,15 @@ class Composer extends StatelessWidget {
                   ),
                   const SizedBox(width: 6),
                   _KindPill(kind: kind, onChanged: onKindChanged),
+                  if (target != null && kind == AddKind.task) ...[
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: _TargetChip(
+                        target: target!,
+                        onClear: onClearTarget,
+                      ),
+                    ),
+                  ],
                   const Spacer(),
                   // Holding it stars what is being added, which is what
                   // Ctrl+Enter does for a keyboard. One widget owns both
@@ -220,6 +236,57 @@ class _KindPill extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Says which section a new item is going into, and takes it back to the top
+/// of the project when tapped.
+class _TargetChip extends StatelessWidget {
+  const _TargetChip({required this.target, this.onClear});
+
+  final String target;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Tooltip(
+      message: 'Adding to “$target” — tap to add at the top instead',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onClear,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 7, 6, 7),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primaryContainer.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(18),
+            border: BorderSide(
+              color: theme.colorScheme.primary.withValues(alpha: 0.4),
+            ).toBorder(),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  'in $target',
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              const Icon(Icons.close, size: 15),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+extension on BorderSide {
+  Border toBorder() => Border.fromBorderSide(this);
 }
 
 class _RoundButton extends StatelessWidget {

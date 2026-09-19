@@ -33,6 +33,9 @@ Some trailing prose.
   });
 
   group('headings become blocks', () {
+    // The canonical shape: a section's prose comes before its items and is
+    // indented, so a checklist written in the prose is not read back as more
+    // of the section's items.
     const withBlocks = '''
 ---
 title: List
@@ -53,7 +56,7 @@ Prose before any heading.
 
 ## Thoughts
 
-Some prose in a block.
+  Some prose in a block.
 ''';
 
     test('items carry the heading they sit under', () {

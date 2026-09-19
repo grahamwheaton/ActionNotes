@@ -11,6 +11,7 @@ import 'markdown_text_controller.dart';
 import 'note_history.dart';
 import 'note_view.dart';
 import 'theme.dart';
+import 'touch_input.dart';
 
 /// One editable row, holding the controller and focus that belong to a block
 /// for as long as that block exists.
@@ -1232,7 +1233,9 @@ class _ParagraphButton extends StatelessWidget {
             if (kind != null) onSetType(kind);
           },
           child: SizedBox(
-            width: 24,
+            // Narrower under a finger. It is the gutter down the left of
+            // every note, and on a phone that width is a word a line.
+            width: TouchInput.isPrimary ? 14 : 24,
             height: lineHeight,
             child: Center(
               child: Text(

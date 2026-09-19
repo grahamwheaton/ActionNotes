@@ -65,13 +65,25 @@ belongs to it:
 
 ## Packing
 
+  Start with the things nobody needs before the move.
+
 - [ ] Boxes from the shop
 - [ ] Label the kitchen ones
 
 ## Notes from the survey
 
-Damp in the back bedroom, and the boiler is 2011.
+  Damp in the back bedroom, and the boiler is 2011.
 ```
+
+A section's prose is written **indented, above its items** — the order a
+document is written in, and the only arrangement that cannot be misread:
+
+- Indented, the same as an item's notes: a `- [ ]` written inside a section's
+  prose is part of that prose, and at column 0 it would be read back as another
+  of the section's items.
+- Above the items, because an indented line that *follows* an item is that
+  item's notes, and there would be no way to say where those end and the
+  section's prose begins.
 
 There is nothing to declare. A section holding checklist lines is a list; one
 holding prose is a note; one holding both shows its items and then its prose.
@@ -89,6 +101,9 @@ What the parser does with them:
 - An **indented** `##` belongs to the note above it, the same as an indented
   `- [ ]` does. That is what keeps a heading written inside an item's notes
   inside them.
+- Inside a section, an **indented** `- [ ]` is part of that section's prose
+  rather than another of its items. At column 0 it is an item, so a list
+  written under a heading on GitHub still reads as one.
 - A repeated heading joins the first one rather than becoming a second section
   of the same name, since an item names its section and two of one name could
   not be told apart.

@@ -212,6 +212,28 @@ class _ChecklistViewState extends State<ChecklistView> {
   /// What the composer will add: an item, or a `##` section of notes.
   AddKind _addKind = AddKind.task;
 
+  /// The section a new item goes into, set by touching one and shown in the
+  /// composer. Null adds at the top of the project, as it always did.
+  ///
+  /// Explicit rather than inferred from the focus: the composer's own field
+  /// takes the focus the moment you start typing, so "wherever the cursor is"
+  /// would be the composer every time. Touching a section is the intent, and
+  /// the chip in the composer says where it landed.
+  String? _addTarget;
+
+  /// [_addTarget], but only while that section still exists.
+  ///
+  /// Resolved here rather than at each use: the composer hid the chip for a
+  /// section that had been renamed away, while the add itself still sent the
+  /// item to the old name — so what it said and what it did disagreed.
+  String? get _resolvedTarget {
+    final project = _state.projectBySlug(widget.slug);
+    if (project == null) return null;
+    return project.blocks.any((block) => block.title == _addTarget)
+        ? _addTarget
+        : null;
+  }
+
   /// Adds what has been typed. [starred] comes from Ctrl+Enter or from holding
   /// the send button, for an item that matters as soon as it is written.
   void _addItem({bool starred = false}) {
@@ -221,10 +243,17 @@ class _ChecklistViewState extends State<ChecklistView> {
     final state = context.read<AppState>();
     if (_addKind == AddKind.note) {
       // What was typed is the heading: a note block is named, and its body is
-      // written underneath it once it is there.
+      // written underneath it once it is there. Sections do not nest, so this
+      // is always a section of the project however deep you were.
       state.addBlock(widget.slug, text);
+      setState(() => _addTarget = text);
     } else {
-      state.addItem(widget.slug, text, starred: starred);
+      state.addItem(
+        widget.slug,
+        text,
+        starred: starred,
+        block: _resolvedTarget,
+      );
     }
     _newItemController.clear();
     // Keep focus so a list can be typed out without reaching for the field.
@@ -256,14 +285,19 @@ class _ChecklistViewState extends State<ChecklistView> {
     );
     if (reference == null || !mounted) return;
 
-    await state.addItem(widget.slug, text.isEmpty ? 'Photo' : text);
+    final target = _resolvedTarget;
+    await state.addItem(
+      widget.slug,
+      text.isEmpty ? 'Photo' : text,
+      block: target,
+    );
     if (!mounted) return;
-    // The new item is at the top of the ungrouped items, which is where
-    // addItem puts it.
+    // The new item is above the others of its section, which is where addItem
+    // puts it.
     final index = state
         .projectBySlug(widget.slug)!
         .items
-        .indexWhere((item) => item.block == null);
+        .indexWhere((item) => item.block == target);
     if (index >= 0) await state.setItemNotes(widget.slug, index, reference);
     _newItemController.clear();
   }
@@ -468,6 +502,10 @@ class _ChecklistViewState extends State<ChecklistView> {
                               slug: widget.slug,
                               block: block,
                               dragPosition: position,
+                              onTouched: () {
+                                if (_addTarget == block.title) return;
+                                setState(() => _addTarget = block.title);
+                              },
                               indices: project.indicesIn(block.title),
                               items: project.itemsIn(block.title),
                               expandedNotes: _expandedNotes,
@@ -490,6 +528,11 @@ class _ChecklistViewState extends State<ChecklistView> {
             onSubmit: _addItem,
             onSubmitStarred: () => _addItem(starred: true),
             onAttach: _attachPhoto,
+            // A section that has been renamed or is no longer there stops
+            // being the target rather than sending items to a name nothing
+            // points at.
+            target: _resolvedTarget,
+            onClearTarget: () => setState(() => _addTarget = null),
           ),
         ],
       ),
@@ -1115,11 +1158,16 @@ class _BlockSection extends StatelessWidget {
     required this.flashing,
     required this.onToggleNotes,
     required this.onNotesChanged,
+    required this.onTouched,
     this.dragPosition,
   });
 
   final String slug;
   final ProjectBlock block;
+
+  /// Fires when this section is touched anywhere, so the composer can add
+  /// into it.
+  final VoidCallback onTouched;
 
   /// Where this section sits among the others, for moving it.
   final int? dragPosition;
@@ -1170,7 +1218,7 @@ class _BlockSection extends StatelessWidget {
       ),
     ];
 
-    Widget heading = Container(
+    final heading = Container(
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
         borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
@@ -1189,15 +1237,19 @@ class _BlockSection extends StatelessWidget {
             ),
           ),
           ItemMenuButton(tooltip: 'Section actions', actions: actions),
-          if (!touch && dragPosition != null)
+          // A handle on every platform, unlike a row. A row is moved by
+          // holding it, but a section's heading is a field you type its name
+          // into, and a hold there belongs to selecting that text — so there
+          // is no hold to spare and the handle has to be visible.
+          if (dragPosition != null)
             ReorderableDragStartListener(
               index: dragPosition!,
               child: Padding(
-                padding: const EdgeInsets.only(right: 6, left: 2),
+                padding: const EdgeInsets.fromLTRB(2, 10, 8, 10),
                 child: Icon(
                   Icons.drag_indicator,
-                  size: 18,
-                  color: theme.colorScheme.outlineVariant,
+                  size: 20,
+                  color: theme.colorScheme.outline,
                 ),
               ),
             ),
@@ -1205,53 +1257,53 @@ class _BlockSection extends StatelessWidget {
       ),
     );
 
-    // A phone moves a section by holding its heading, the same as it moves a
-    // row. The heading only — a hold inside the body belongs to the text
-    // there, and the name is a field that a hold is trying to select in.
-    if (touch && dragPosition != null) {
-      heading = ReorderableDelayedDragStartListener(
-        index: dragPosition!,
-        child: heading,
-      );
-    }
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 8, 12, 2),
-      child: Material(
-        color: theme.colorScheme.surfaceContainerLowest,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-          side: BorderSide(color: theme.colorScheme.outlineVariant),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            heading,
-            for (var position = 0; position < items.length; position++)
-              _ItemTile(
-                key: ValueKey('block-${block.title}-${indices[position]}'),
-                slug: slug,
-                index: indices[position],
-                item: items[position],
-                notesExpanded: expandedNotes.contains(items[position].text),
-                flashing: flashing == items[position].text,
-                onToggleNotes: () =>
-                    onToggleNotes(indices[position], items[position].text),
-                onNotesChanged: (notes) =>
-                    onNotesChanged(items[position].text, notes),
+    return Listener(
+      // Anywhere in the section, including its items and its prose, so that
+      // working in a section is enough to say where the next thing goes.
+      onPointerDown: (_) => onTouched(),
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+        child: Material(
+          color: theme.colorScheme.surfaceContainerLowest,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: theme.colorScheme.outlineVariant),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              heading,
+              // The prose above the items, which is the order the file is
+              // written in and the order a document is written in: a heading, a
+              // paragraph, then a list. Always present, so a section made a
+              // moment ago has somewhere to type rather than only a name.
+              Padding(
+                padding: touch
+                    ? const EdgeInsets.fromLTRB(2, 4, 6, 4)
+                    : const EdgeInsets.fromLTRB(10, 4, 8, 4),
+                child: _BlockBody(
+                  key: ValueKey('body-$slug-${block.title}'),
+                  slug: slug,
+                  title: block.title,
+                  initialMarkdown: block.body,
+                ),
               ),
-            // Always present, so a section made a moment ago has somewhere to
-            // type rather than only a name.
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 4, 8, 6),
-              child: _BlockBody(
-                key: ValueKey('body-$slug-${block.title}'),
-                slug: slug,
-                title: block.title,
-                initialMarkdown: block.body,
-              ),
-            ),
-          ],
+              for (var position = 0; position < items.length; position++)
+                _ItemTile(
+                  key: ValueKey('block-${block.title}-${indices[position]}'),
+                  slug: slug,
+                  index: indices[position],
+                  item: items[position],
+                  notesExpanded: expandedNotes.contains(items[position].text),
+                  flashing: flashing == items[position].text,
+                  onToggleNotes: () =>
+                      onToggleNotes(indices[position], items[position].text),
+                  onNotesChanged: (notes) =>
+                      onNotesChanged(items[position].text, notes),
+                ),
+              const SizedBox(height: 4),
+            ],
+          ),
         ),
       ),
     );
