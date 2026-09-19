@@ -39,9 +39,18 @@ pasting one file — or by pointing the model at the repo.
   `canvas/<slug>.json`. Lose that file and the canvas is the list it always
   was; that is the trade it exists to make. **Open full screen** to arrange
   one: photos and notes go on from the bar, a card's menu brings it to the
-  front, sends it back or deletes it, and the arrow keys nudge a selected card
+  front, sends it back or deletes it, and the arrow keys nudge what is selected
   a pixel at a time — ten with shift. Wheel zooms about the pointer, F fits
   everything on screen, 0 is actual size, Escape deselects.
+
+  **Several at once**: ctrl-click (or shift, or cmd) adds a card to the
+  selection, dragging out a box with the mouse picks up everything it touches,
+  and Ctrl+A takes the lot. Dragging any one of a group moves the group, and
+  the menu, the arrow keys and Delete all act on the whole selection. With the
+  mouse drawing a box, panning moves to the middle button, to space and drag,
+  and to the wheel. Under a finger a drag still pans and two fingers zoom —
+  there is no second button to move panning to, and a marquee is a mouse's
+  gesture.
 - **The composer** at the bottom of a project is a card with the text above and
   the controls below: + attaches a photo, a pill picks whether you are adding a
   task or a section of notes, and the round button adds it — held, it adds it

@@ -63,10 +63,25 @@ class CanvasViewState extends State<CanvasView> {
   /// The card being dragged or resized, so it draws in front and the surface
   /// leaves the gesture alone.
   int? _active;
-  int? _selected;
+
+  /// Everything picked out. A set rather than one index, because moving six
+  /// references together is most of what a canvas is for.
+  final Set<int> _selection = {};
+
+  /// The marquee being dragged out, in viewport coordinates, or null.
+  Rect? _marquee;
+  Offset? _marqueeFrom;
+
+  /// Each card's box, for working out what a marquee caught. Read from the
+  /// cards themselves rather than guessed at: a card's height follows its
+  /// picture or its text and is not known here.
+  final Map<int, GlobalKey> _cardKeys = {};
 
   /// Pan and scale as the current gesture started, for a pinch.
   Offset _panAtStart = Offset.zero;
+
+  /// The pointer holding the middle button down, while it is panning.
+  int? _middlePan;
   double _scaleAtStart = 1;
   Offset _focalAtStart = Offset.zero;
 
@@ -98,6 +113,30 @@ class CanvasViewState extends State<CanvasView> {
   }
 
   void _commit() => widget.onChanged([..._spots]);
+
+  /// Whether a click should add to the selection rather than replace it.
+  static bool get _additive =>
+      HardwareKeyboard.instance.isControlPressed ||
+      HardwareKeyboard.instance.isMetaPressed ||
+      HardwareKeyboard.instance.isShiftPressed;
+
+  /// Whether the space bar is down, which turns a drag into a pan the way it
+  /// does in every tool that has both a marquee and a canvas.
+  static bool get _panning => HardwareKeyboard.instance.logicalKeysPressed
+      .contains(LogicalKeyboardKey.space);
+
+  void _select(int index, {required bool additive}) {
+    setState(() {
+      if (!additive) {
+        if (_selection.contains(index)) return;
+        _selection
+          ..clear()
+          ..add(index);
+        return;
+      }
+      if (!_selection.remove(index)) _selection.add(index);
+    });
+  }
 
   /// Scene coordinates for a point in the viewport.
   Offset _toScene(Offset viewportPoint) => (viewportPoint - _pan) / _scale;
@@ -185,48 +224,71 @@ class CanvasViewState extends State<CanvasView> {
     });
   }
 
-  void _bringToFront(int index) {
+  /// Raises everything in [indices], keeping their order among themselves so
+  /// a group that was stacked stays stacked.
+  void _bringToFront(Iterable<int> indices) {
     var top = 0;
     for (final spot in _spots) {
       if (spot.z > top) top = spot.z;
     }
-    if (_spots[index].z == top && top != 0) return;
-    setState(() => _spots[index] = _spots[index].copyWith(z: top + 1));
+    final ordered = indices.toList()
+      ..sort((a, b) => _spots[a].z.compareTo(_spots[b].z));
+    if (ordered.isEmpty) return;
+
+    setState(() {
+      for (final index in ordered) {
+        _spots[index] = _spots[index].copyWith(z: ++top);
+      }
+    });
   }
 
-  void _sendToBack(int index) {
+  void _sendToBack(Iterable<int> indices) {
     var bottom = 0;
     for (final spot in _spots) {
       if (spot.z < bottom) bottom = spot.z;
     }
-    setState(() => _spots[index] = _spots[index].copyWith(z: bottom - 1));
+    final ordered = indices.toList()
+      ..sort((a, b) => _spots[b].z.compareTo(_spots[a].z));
+    if (ordered.isEmpty) return;
+
+    setState(() {
+      for (final index in ordered) {
+        _spots[index] = _spots[index].copyWith(z: --bottom);
+      }
+    });
     _commit();
   }
 
   /// Moves the selected card by a pixel, or ten with shift, which is how a
   /// card is put exactly where the eye wants it.
   bool _nudge(Offset direction) {
-    final index = _selected;
-    if (index == null) return false;
+    if (_selection.isEmpty) return false;
     final step = HardwareKeyboard.instance.isShiftPressed ? 10.0 : 1.0;
     setState(() {
-      final spot = _spots[index];
-      _spots[index] = spot.copyWith(
-        x: spot.x + direction.dx * step,
-        y: spot.y + direction.dy * step,
-      );
+      for (final index in _selection) {
+        final spot = _spots[index];
+        _spots[index] = spot.copyWith(
+          x: spot.x + direction.dx * step,
+          y: spot.y + direction.dy * step,
+        );
+      }
     });
     _commit();
     return true;
   }
 
+  /// Moves [index], and everything selected with it — dragging one of a group
+  /// takes the group, which is the point of picking several.
   void _moveBy(int index, Offset delta) {
+    final moving = _selection.contains(index) ? _selection : {index};
     setState(() {
-      final spot = _spots[index];
-      _spots[index] = spot.copyWith(
-        x: spot.x + delta.dx / _scale,
-        y: spot.y + delta.dy / _scale,
-      );
+      for (final at in moving) {
+        final spot = _spots[at];
+        _spots[at] = spot.copyWith(
+          x: spot.x + delta.dx / _scale,
+          y: spot.y + delta.dy / _scale,
+        );
+      }
     });
   }
 
@@ -262,8 +324,19 @@ class CanvasViewState extends State<CanvasView> {
         fit();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
-        if (_selected == null) return KeyEventResult.ignored;
-        setState(() => _selected = null);
+        if (_selection.isEmpty) return KeyEventResult.ignored;
+        setState(_selection.clear);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.keyA:
+        if (!HardwareKeyboard.instance.isControlPressed &&
+            !HardwareKeyboard.instance.isMetaPressed) {
+          return KeyEventResult.ignored;
+        }
+        setState(() {
+          _selection
+            ..clear()
+            ..addAll([for (var i = 0; i < widget.cards.length; i++) i]);
+        });
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowLeft:
         return _nudge(const Offset(-1, 0))
@@ -283,12 +356,10 @@ class CanvasViewState extends State<CanvasView> {
             : KeyEventResult.ignored;
       case LogicalKeyboardKey.delete:
       case LogicalKeyboardKey.backspace:
-        final index = _selected;
-        if (index == null || widget.onRemoveCard == null) {
+        if (_selection.isEmpty || widget.onRemoveCard == null) {
           return KeyEventResult.ignored;
         }
-        setState(() => _selected = null);
-        widget.onRemoveCard!(index);
+        _removeSelection();
         return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -297,6 +368,10 @@ class CanvasViewState extends State<CanvasView> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final touch = TouchInput.isPrimary;
+
+    _cardKeys.removeWhere((index, _) => index >= widget.cards.length);
+    _selection.removeWhere((index) => index >= widget.cards.length);
 
     // Drawn back to front, so the stacking order is what the z says.
     final order = [for (var i = 0; i < widget.cards.length; i++) i]
@@ -310,6 +385,22 @@ class CanvasViewState extends State<CanvasView> {
         // gesture arena, so it can sit above everything without taking
         // anything away from the cards.
         onPointerSignal: _onPointerSignal,
+        // The middle button pans, and never joins the gesture arena, so it
+        // works while the left button is drawing a marquee.
+        onPointerDown: (event) {
+          if (event.buttons & kMiddleMouseButton == 0) return;
+          _middlePan = event.pointer;
+        },
+        onPointerMove: (event) {
+          if (event.pointer != _middlePan) return;
+          setState(() => _pan += event.delta);
+        },
+        onPointerUp: (event) {
+          if (event.pointer == _middlePan) _middlePan = null;
+        },
+        onPointerCancel: (event) {
+          if (event.pointer == _middlePan) _middlePan = null;
+        },
         child: ClipRect(
           child: Stack(
             key: _viewport,
@@ -325,10 +416,34 @@ class CanvasViewState extends State<CanvasView> {
                   behavior: HitTestBehavior.opaque,
                   onTap: () {
                     _focus.requestFocus();
-                    setState(() => _selected = null);
+                    setState(_selection.clear);
                   },
-                  onScaleStart: _onScaleStart,
-                  onScaleUpdate: _onScaleUpdate,
+                  // Under a finger, a drag pans and two fingers zoom. With a
+                  // mouse, a drag draws a marquee unless space is held, and
+                  // panning is the middle button, space and drag, or the
+                  // wheel.
+                  onScaleStart: touch ? _onScaleStart : null,
+                  onScaleUpdate: touch ? _onScaleUpdate : null,
+                  onPanStart: touch
+                      ? null
+                      : (details) {
+                          _focus.requestFocus();
+                          // Space held: this drag pans instead of selecting,
+                          // and leaving the marquee unstarted is what the
+                          // update below reads as "pan".
+                          if (_panning) return;
+                          _marqueeStart(details.localPosition);
+                        },
+                  onPanUpdate: touch
+                      ? null
+                      : (details) {
+                          if (_marqueeFrom != null) {
+                            _marqueeUpdate(details.localPosition);
+                            return;
+                          }
+                          setState(() => _pan += details.delta);
+                        },
+                  onPanEnd: touch ? null : (_) => _marqueeEnd(),
                   child: CustomPaint(
                     painter: _GridPainter(
                       pan: _pan,
@@ -351,12 +466,17 @@ class CanvasViewState extends State<CanvasView> {
                   pan: _pan,
                   scale: _scale,
                   slug: widget.slug,
-                  selected: _selected == index,
+                  cardKey: _cardKeys.putIfAbsent(index, GlobalKey.new),
+                  selected: _selection.contains(index),
                   onGrab: () {
                     _focus.requestFocus();
                     _active = index;
-                    _bringToFront(index);
-                    setState(() => _selected = index);
+                    _select(index, additive: _additive);
+                    // Raise whatever is now selected, so a group picked up
+                    // comes forward together rather than one of it.
+                    _bringToFront(
+                      _selection.contains(index) ? _selection : {index},
+                    );
                   },
                   onMenu: (at) => _showCardMenu(index, at),
                   onMove: (delta) => _moveBy(index, delta),
@@ -365,6 +485,41 @@ class CanvasViewState extends State<CanvasView> {
                     _active = null;
                     _commit();
                   },
+                ),
+              if (_marquee != null)
+                Positioned.fromRect(
+                  rect: _marquee!,
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withValues(
+                          alpha: 0.12,
+                        ),
+                        border: Border.all(color: theme.colorScheme.primary),
+                      ),
+                    ),
+                  ),
+                ),
+              if (_selection.length > 1)
+                Positioned(
+                  left: 8,
+                  bottom: 8,
+                  child: IgnorePointer(
+                    child: Material(
+                      color: theme.colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(16),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 6,
+                        ),
+                        child: Text(
+                          '${_selection.length} selected',
+                          style: theme.textTheme.labelMedium,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               Positioned(
                 right: 8,
@@ -385,29 +540,93 @@ class CanvasViewState extends State<CanvasView> {
     );
   }
 
+  /// Takes the selection off the canvas.
+  ///
+  /// Highest index first, because removing a card shifts everything after it
+  /// along and a list of indices taken in the other order would delete the
+  /// wrong cards.
+  void _removeSelection() {
+    final going = _selection.toList()..sort((a, b) => b.compareTo(a));
+    setState(_selection.clear);
+    for (final index in going) {
+      widget.onRemoveCard?.call(index);
+    }
+  }
+
+  // --- The marquee -------------------------------------------------------
+  //
+  // Dragging empty space with a mouse draws a box and picks up everything it
+  // touches. Panning moves to the middle button, to space and drag, and to
+  // the wheel, which is how a tool with both a marquee and a canvas is
+  // usually driven. Under a finger a drag still pans: there is no second
+  // button to move panning to, and a marquee is a mouse's gesture.
+
+  void _marqueeStart(Offset at) {
+    _marqueeFrom = at;
+    setState(() => _marquee = Rect.fromPoints(at, at));
+  }
+
+  void _marqueeUpdate(Offset at) {
+    final from = _marqueeFrom;
+    if (from == null) return;
+    setState(() => _marquee = Rect.fromPoints(from, at));
+  }
+
+  void _marqueeEnd() {
+    final box = _marquee;
+    _marqueeFrom = null;
+    setState(() => _marquee = null);
+    if (box == null || box.shortestSide < 4) return;
+
+    final caught = <int>{};
+    for (final entry in _cardKeys.entries) {
+      final render = entry.value.currentContext?.findRenderObject();
+      if (render is! RenderBox || !render.hasSize) continue;
+      final at = render.localToGlobal(Offset.zero, ancestor: _viewportBox);
+      if (box.overlaps(at & render.size)) caught.add(entry.key);
+    }
+
+    setState(() {
+      if (!_additive) _selection.clear();
+      _selection.addAll(caught);
+    });
+  }
+
+  RenderBox? get _viewportBox =>
+      _viewport.currentContext?.findRenderObject() as RenderBox?;
+
   void _showCardMenu(int index, Offset at) {
+    // Whatever is selected, or the card that was clicked if it is not part of
+    // the selection.
+    final targets = _selection.contains(index) ? {..._selection} : {index};
+    final many = targets.length > 1;
+
     showItemMenu(context, [
       ContextMenuAction(
-        label: 'Bring to front',
+        label: many ? 'Bring ${targets.length} to front' : 'Bring to front',
         icon: Icons.flip_to_front,
         onSelected: () {
-          _bringToFront(index);
+          _bringToFront(targets);
           _commit();
         },
       ),
       ContextMenuAction(
-        label: 'Send to back',
+        label: many ? 'Send ${targets.length} to back' : 'Send to back',
         icon: Icons.flip_to_back,
-        onSelected: () => _sendToBack(index),
+        onSelected: () => _sendToBack(targets),
       ),
       if (widget.onRemoveCard != null)
         ContextMenuAction(
-          label: 'Delete card',
+          label: many ? 'Delete ${targets.length} cards' : 'Delete card',
           icon: Icons.delete_outline,
           destructive: true,
           onSelected: () {
-            setState(() => _selected = null);
-            widget.onRemoveCard!(index);
+            setState(() {
+              _selection
+                ..clear()
+                ..addAll(targets);
+            });
+            _removeSelection();
           },
         ),
     ], at);
@@ -433,6 +652,7 @@ class _CardOnCanvas extends StatelessWidget {
     required this.scale,
     required this.slug,
     required this.selected,
+    required this.cardKey,
     required this.onGrab,
     required this.onMenu,
     required this.onMove,
@@ -446,6 +666,11 @@ class _CardOnCanvas extends StatelessWidget {
   final double scale;
   final String slug;
   final bool selected;
+
+  /// On the card's own box, so a marquee can ask where it actually is — a
+  /// card's height follows its picture or its text and is not known anywhere
+  /// else.
+  final GlobalKey cardKey;
   final VoidCallback onGrab;
 
   /// Right-clicked, or held on a phone: the card's own menu, at the pointer.
@@ -460,6 +685,7 @@ class _CardOnCanvas extends StatelessWidget {
     final at = Offset(spot.x, spot.y) * scale + pan;
 
     return Positioned(
+      key: cardKey,
       left: at.dx,
       top: at.dy,
       width: spot.width * scale,
