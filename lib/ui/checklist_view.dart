@@ -13,6 +13,7 @@ import '../markdown/project_links.dart';
 import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
+import 'canvas_screen.dart';
 import 'canvas_view.dart';
 import 'composer.dart';
 import 'context_menu.dart';
@@ -1213,6 +1214,13 @@ class _BlockSection extends StatelessWidget {
     final canvas = context.watch<AppState>().isCanvas(slug, block.title);
 
     final actions = <ContextMenuAction>[
+      if (canvas)
+        ContextMenuAction(
+          label: 'Open full screen',
+          icon: Icons.open_in_full,
+          onSelected: () =>
+              CanvasScreen.open(context, slug: slug, section: block.title),
+        ),
       ContextMenuAction(
         label: canvas ? 'Show as notes' : 'Turn into a canvas',
         icon: canvas ? Icons.subject : Icons.dashboard_customize_outlined,
@@ -1376,12 +1384,23 @@ class _SectionCanvas extends StatelessWidget {
       return Padding(
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
         child: Center(
-          child: Text(
-            'Nothing on this canvas yet — add a photo with + below.',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Nothing on this canvas yet.',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              TextButton.icon(
+                icon: const Icon(Icons.open_in_full, size: 16),
+                label: const Text('Open full screen to add photos'),
+                onPressed: () =>
+                    CanvasScreen.open(context, slug: slug, section: section),
+              ),
+            ],
           ),
         ),
       );
@@ -1401,6 +1420,10 @@ class _SectionCanvas extends StatelessWidget {
         ),
         onChanged: (moved) =>
             context.read<AppState>().setCanvasSpots(slug, section, moved),
+        onRemoveCard: (index) =>
+            context.read<AppState>().removeCanvasCard(slug, section, index),
+        onOpenFullScreen: () =>
+            CanvasScreen.open(context, slug: slug, section: section),
       ),
     );
   }

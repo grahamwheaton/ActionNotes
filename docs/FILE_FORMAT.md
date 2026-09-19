@@ -337,6 +337,9 @@ What follows from that:
   the list keeps its place; a card with no position is put down in free space
   rather than on the pile; a position whose card has gone is dropped. The
   markdown always wins.
+- **Deleting a card takes its position with it.** A position whose card has
+  gone would be dropped the next time the two were paired anyway, and leaving
+  it would shift every later card along by one until it was.
 - **The layout is last-write-wins.** It is an arrangement, not content, so a
   rejected write is answered by reading the current file and writing over it
   rather than by asking anyone to resolve anything. The worst case is a card

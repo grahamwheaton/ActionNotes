@@ -844,6 +844,35 @@ class AppState extends ChangeNotifier {
     await setBlockBody(slug, section, CanvasCards.serialize(cards));
   }
 
+  /// Takes a card off a canvas, which is to say out of the section's markdown.
+  ///
+  /// The position goes with it: a spot whose card has gone would be dropped
+  /// the next time the two were paired anyway, and leaving it would shift
+  /// every later card along by one until it was.
+  Future<void> removeCanvasCard(String slug, String section, int index) async {
+    final project = projectBySlug(slug);
+    if (project == null) return;
+
+    final block = project.blocks.firstWhere(
+      (block) => block.title == section,
+      orElse: () => const ProjectBlock(title: ''),
+    );
+    if (block.title.isEmpty) return;
+
+    final cards = CanvasCards.parse(block.body);
+    if (index < 0 || index >= cards.length) return;
+    cards.removeAt(index);
+
+    final spots = [...layoutFor(slug).spotsFor(section)];
+    if (index < spots.length) {
+      spots.removeAt(index);
+      _layouts[slug] = layoutFor(slug).withSection(section, spots);
+      unawaited(_pushLayout(slug));
+    }
+
+    await setBlockBody(slug, section, CanvasCards.serialize(cards));
+  }
+
   Future<void> setCanvasSpots(
     String slug,
     String section,
@@ -1016,6 +1045,12 @@ class AppState extends ChangeNotifier {
       timer.cancel();
     }
     _pendingPushes.clear();
+    // The canvas layouts settle on their own timers too, and a canvas left
+    // mid-drag when the app closes would otherwise keep one alive.
+    for (final timer in _layoutTimers.values) {
+      timer.cancel();
+    }
+    _layoutTimers.clear();
     super.dispose();
   }
 }

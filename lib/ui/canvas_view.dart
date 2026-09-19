@@ -10,6 +10,7 @@ import '../markdown/canvas_cards.dart';
 import '../models/canvas_layout.dart';
 import '../state/app_state.dart';
 import '../storage/attachment_store.dart';
+import 'context_menu.dart';
 import 'note_view.dart';
 import 'touch_input.dart';
 
@@ -26,6 +27,8 @@ class CanvasView extends StatefulWidget {
     required this.cards,
     required this.spots,
     required this.onChanged,
+    this.onRemoveCard,
+    this.onOpenFullScreen,
   });
 
   final String slug;
@@ -37,6 +40,13 @@ class CanvasView extends StatefulWidget {
 
   /// Fires with the new positions when something is moved or resized.
   final ValueChanged<List<CanvasSpot>> onChanged;
+
+  /// Takes a card off the canvas, which means off the section's markdown —
+  /// null where that is not on offer.
+  final void Function(int index)? onRemoveCard;
+
+  /// Opens the canvas on a screen of its own. Null when it already is one.
+  final VoidCallback? onOpenFullScreen;
 
   @override
   State<CanvasView> createState() => CanvasViewState();
@@ -184,6 +194,32 @@ class CanvasViewState extends State<CanvasView> {
     setState(() => _spots[index] = _spots[index].copyWith(z: top + 1));
   }
 
+  void _sendToBack(int index) {
+    var bottom = 0;
+    for (final spot in _spots) {
+      if (spot.z < bottom) bottom = spot.z;
+    }
+    setState(() => _spots[index] = _spots[index].copyWith(z: bottom - 1));
+    _commit();
+  }
+
+  /// Moves the selected card by a pixel, or ten with shift, which is how a
+  /// card is put exactly where the eye wants it.
+  bool _nudge(Offset direction) {
+    final index = _selected;
+    if (index == null) return false;
+    final step = HardwareKeyboard.instance.isShiftPressed ? 10.0 : 1.0;
+    setState(() {
+      final spot = _spots[index];
+      _spots[index] = spot.copyWith(
+        x: spot.x + direction.dx * step,
+        y: spot.y + direction.dy * step,
+      );
+    });
+    _commit();
+    return true;
+  }
+
   void _moveBy(int index, Offset delta) {
     setState(() {
       final spot = _spots[index];
@@ -224,6 +260,35 @@ class CanvasViewState extends State<CanvasView> {
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyF:
         fit();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+        if (_selected == null) return KeyEventResult.ignored;
+        setState(() => _selected = null);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowLeft:
+        return _nudge(const Offset(-1, 0))
+            ? KeyEventResult.handled
+            : KeyEventResult.ignored;
+      case LogicalKeyboardKey.arrowRight:
+        return _nudge(const Offset(1, 0))
+            ? KeyEventResult.handled
+            : KeyEventResult.ignored;
+      case LogicalKeyboardKey.arrowUp:
+        return _nudge(const Offset(0, -1))
+            ? KeyEventResult.handled
+            : KeyEventResult.ignored;
+      case LogicalKeyboardKey.arrowDown:
+        return _nudge(const Offset(0, 1))
+            ? KeyEventResult.handled
+            : KeyEventResult.ignored;
+      case LogicalKeyboardKey.delete:
+      case LogicalKeyboardKey.backspace:
+        final index = _selected;
+        if (index == null || widget.onRemoveCard == null) {
+          return KeyEventResult.ignored;
+        }
+        setState(() => _selected = null);
+        widget.onRemoveCard!(index);
         return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
@@ -293,6 +358,7 @@ class CanvasViewState extends State<CanvasView> {
                     _bringToFront(index);
                     setState(() => _selected = index);
                   },
+                  onMenu: (at) => _showCardMenu(index, at),
                   onMove: (delta) => _moveBy(index, delta),
                   onResize: (delta) => _resizeBy(index, delta),
                   onRelease: () {
@@ -305,6 +371,7 @@ class CanvasViewState extends State<CanvasView> {
                 bottom: 8,
                 child: _CanvasControls(
                   scale: _scale,
+                  onOpenFullScreen: widget.onOpenFullScreen,
                   onZoomIn: () => _zoomAround(_centre(), 1.2),
                   onZoomOut: () => _zoomAround(_centre(), 1 / 1.2),
                   onFit: fit,
@@ -316,6 +383,34 @@ class CanvasViewState extends State<CanvasView> {
         ),
       ),
     );
+  }
+
+  void _showCardMenu(int index, Offset at) {
+    showItemMenu(context, [
+      ContextMenuAction(
+        label: 'Bring to front',
+        icon: Icons.flip_to_front,
+        onSelected: () {
+          _bringToFront(index);
+          _commit();
+        },
+      ),
+      ContextMenuAction(
+        label: 'Send to back',
+        icon: Icons.flip_to_back,
+        onSelected: () => _sendToBack(index),
+      ),
+      if (widget.onRemoveCard != null)
+        ContextMenuAction(
+          label: 'Delete card',
+          icon: Icons.delete_outline,
+          destructive: true,
+          onSelected: () {
+            setState(() => _selected = null);
+            widget.onRemoveCard!(index);
+          },
+        ),
+    ], at);
   }
 
   Offset _centre() {
@@ -339,6 +434,7 @@ class _CardOnCanvas extends StatelessWidget {
     required this.slug,
     required this.selected,
     required this.onGrab,
+    required this.onMenu,
     required this.onMove,
     required this.onResize,
     required this.onRelease,
@@ -351,6 +447,9 @@ class _CardOnCanvas extends StatelessWidget {
   final String slug;
   final bool selected;
   final VoidCallback onGrab;
+
+  /// Right-clicked, or held on a phone: the card's own menu, at the pointer.
+  final ValueChanged<Offset> onMenu;
   final ValueChanged<Offset> onMove;
   final ValueChanged<Offset> onResize;
   final VoidCallback onRelease;
@@ -375,6 +474,16 @@ class _CardOnCanvas extends StatelessWidget {
         onPanUpdate: (details) => onMove(details.delta),
         onPanEnd: (_) => onRelease(),
         onTap: onGrab,
+        // A hold is free on a card — moving one is a drag — so it opens the
+        // menu, which is how a phone reaches what a right-click reaches.
+        onSecondaryTapUp: (details) {
+          onGrab();
+          onMenu(details.globalPosition);
+        },
+        onLongPressStart: (details) {
+          onGrab();
+          onMenu(details.globalPosition);
+        },
         child: Stack(
           clipBehavior: Clip.none,
           children: [
@@ -511,9 +620,11 @@ class _CanvasControls extends StatelessWidget {
     required this.onZoomOut,
     required this.onFit,
     required this.onReset,
+    this.onOpenFullScreen,
   });
 
   final double scale;
+  final VoidCallback? onOpenFullScreen;
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
   final VoidCallback onFit;
@@ -557,6 +668,13 @@ class _CanvasControls extends StatelessWidget {
               icon: const Icon(Icons.fit_screen_outlined, size: 18),
               onPressed: onFit,
             ),
+            if (onOpenFullScreen != null)
+              IconButton(
+                tooltip: 'Open full screen',
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.open_in_full, size: 18),
+                onPressed: onOpenFullScreen,
+              ),
           ],
         ),
       ),

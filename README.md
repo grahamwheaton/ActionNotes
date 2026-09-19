@@ -37,7 +37,11 @@ pasting one file — or by pointing the model at the repo.
   corner. The pictures and notes are the section's own markdown, a bullet per
   card, and only the arrangement lives beside the project in
   `canvas/<slug>.json`. Lose that file and the canvas is the list it always
-  was; that is the trade it exists to make.
+  was; that is the trade it exists to make. **Open full screen** to arrange
+  one: photos and notes go on from the bar, a card's menu brings it to the
+  front, sends it back or deletes it, and the arrow keys nudge a selected card
+  a pixel at a time — ten with shift. Wheel zooms about the pointer, F fits
+  everything on screen, 0 is actual size, Escape deselects.
 - **The composer** at the bottom of a project is a card with the text above and
   the controls below: + attaches a photo, a pill picks whether you are adding a
   task or a section of notes, and the round button adds it — held, it adds it
