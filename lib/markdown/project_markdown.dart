@@ -112,6 +112,16 @@ class ProjectMarkdown {
           ? null
           : _itemPattern.firstMatch(line);
       if (item != null) {
+        // A blank line just before the next item is a gap someone typed, not
+        // the start of an empty note — whether or not the item above had
+        // notes of its own. Remember it on that item so that saving the file
+        // does not quietly close the gap up.
+        if (itemNotes != null &&
+            itemNotes!.isNotEmpty &&
+            itemNotes!.last.trim().isEmpty &&
+            items.isNotEmpty) {
+          items[items.length - 1] = items.last.copyWith(blankAfter: true);
+        }
         flushItemNotes();
 
         var text = item.group(2)!.trim();
@@ -230,8 +240,13 @@ class ProjectMarkdown {
       ..writeln();
 
     void writeItems(String? block) {
-      for (final item in project.items) {
-        if (item.block != block) continue;
+      final within = [
+        for (final item in project.items)
+          if (item.block == block) item,
+      ];
+
+      for (var i = 0; i < within.length; i++) {
+        final item = within[i];
         final star = item.starred ? '$starMarker ' : '';
         buffer.writeln('- [${item.done ? 'x' : ' '}] $star${item.text}');
 
@@ -242,6 +257,11 @@ class ProjectMarkdown {
             buffer.writeln(line.trim().isEmpty ? '' : '$_noteIndent$line');
           }
         }
+
+        // Only between two items: after the last one the blank line would be
+        // the one that separates the list from whatever comes next, and two
+        // of those read as a gap that nobody typed.
+        if (item.blankAfter && i < within.length - 1) buffer.writeln();
       }
     }
 

@@ -261,11 +261,18 @@ class _ChecklistViewState extends State<ChecklistView> {
       return;
     }
 
-    if (_addKind == AddKind.note) {
-      // What was typed is the heading: a note block is named, and its body is
-      // written underneath it once it is there. Sections do not nest, so this
+    if (_addKind != AddKind.task) {
+      // What was typed is the heading: a section is named, and what goes in it
+      // is written underneath once it is there. Sections do not nest, so this
       // is always a section of the project however deep you were.
+      //
+      // A canvas is the same section with an arrangement beside it, which is
+      // the only difference between the two — so adding one is adding a
+      // section and saying it is a canvas.
       state.addBlock(widget.slug, text);
+      if (_addKind == AddKind.canvas) {
+        state.setCanvas(widget.slug, text, true);
+      }
       setState(() => _addTarget = text);
     } else {
       state.addItem(

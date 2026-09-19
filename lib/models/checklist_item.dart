@@ -9,6 +9,7 @@ class ChecklistItem {
     this.starred = false,
     this.notes = '',
     this.block,
+    this.blankAfter = false,
   });
 
   final String text;
@@ -29,6 +30,14 @@ class ChecklistItem {
   /// index there is — search, reveal, move, reorder, the merge — goes on
   /// meaning what it meant before blocks existed.
   final String? block;
+
+  /// Whether a blank line sat between this item and the next one in the file.
+  ///
+  /// Kept because the app should not tidy a file it was not asked to tidy: a
+  /// gap someone typed to group a long list is theirs, and it also means
+  /// something to markdown itself, where a blank line between list items makes
+  /// a loose list that renders with more air.
+  final bool blankAfter;
 
   bool get hasNotes => notes.trim().isNotEmpty;
 
@@ -62,6 +71,7 @@ class ChecklistItem {
     String? notes,
     String? block,
     bool clearBlock = false,
+    bool? blankAfter,
   }) {
     return ChecklistItem(
       text: text ?? this.text,
@@ -69,6 +79,7 @@ class ChecklistItem {
       starred: starred ?? this.starred,
       notes: notes ?? this.notes,
       block: clearBlock ? null : (block ?? this.block),
+      blankAfter: blankAfter ?? this.blankAfter,
     );
   }
 
@@ -79,10 +90,12 @@ class ChecklistItem {
       other.done == done &&
       other.starred == starred &&
       other.notes == notes &&
-      other.block == block;
+      other.block == block &&
+      other.blankAfter == blankAfter;
 
   @override
-  int get hashCode => Object.hash(text, done, starred, notes, block);
+  int get hashCode =>
+      Object.hash(text, done, starred, notes, block, blankAfter);
 
   @override
   String toString() =>

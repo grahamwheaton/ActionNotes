@@ -6,15 +6,26 @@ import 'touch_input.dart';
 /// What the composer will add when it is sent.
 enum AddKind {
   task,
-  note;
+  note,
+  canvas;
 
-  String get label => this == AddKind.note ? 'Note' : 'Task';
+  String get label => switch (this) {
+    AddKind.note => 'Note',
+    AddKind.canvas => 'Canvas',
+    AddKind.task => 'Task',
+  };
 
-  IconData get icon =>
-      this == AddKind.note ? Icons.subject : Icons.check_box_outlined;
+  IconData get icon => switch (this) {
+    AddKind.note => Icons.subject,
+    AddKind.canvas => Icons.dashboard_customize_outlined,
+    AddKind.task => Icons.check_box_outlined,
+  };
 
-  String get hint =>
-      this == AddKind.note ? 'Name a section of notes' : 'Add an item';
+  String get hint => switch (this) {
+    AddKind.note => 'Name a section of notes',
+    AddKind.canvas => 'Name a canvas',
+    AddKind.task => 'Add an item',
+  };
 }
 
 /// The box at the bottom of a project: what to add, and what sort of thing it

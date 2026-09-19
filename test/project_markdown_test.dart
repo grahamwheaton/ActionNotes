@@ -32,7 +32,8 @@ Landlord's number is in the drawer.
         ChecklistItem(
           text: 'Book the van',
           starred: true,
-          notes: 'Ring Omar, waiting on sizes.\n\n'
+          notes:
+              'Ring Omar, waiting on sizes.\n\n'
               '![door](../attachments/house-move/door.png)',
         ),
         ChecklistItem(text: 'Cancel broadband', done: true),
@@ -41,8 +42,10 @@ Landlord's number is in the drawer.
     });
 
     test('falls back to the heading when front matter has no title', () {
-      final project = ProjectMarkdown.parse('# Groceries\n\n- [ ] Milk\n',
-          slug: 'groceries');
+      final project = ProjectMarkdown.parse(
+        '# Groceries\n\n- [ ] Milk\n',
+        slug: 'groceries',
+      );
 
       expect(project.title, 'Groceries');
       expect(project.items.single.text, 'Milk');
@@ -94,7 +97,10 @@ Landlord's number is in the drawer.
 
   group('stars', () {
     test('reads the star marker and strips it from the text', () {
-      final project = ProjectMarkdown.parse('- [ ] ⭐ Urgent thing\n', slug: 's');
+      final project = ProjectMarkdown.parse(
+        '- [ ] ⭐ Urgent thing\n',
+        slug: 's',
+      );
 
       expect(project.items.single.starred, isTrue);
       expect(project.items.single.text, 'Urgent thing');
@@ -157,8 +163,10 @@ Project note.
     });
 
     test('a note on the last item does not leak into the project note', () {
-      final project =
-          ProjectMarkdown.parse('- [ ] Item\n  Trailing note.\n', slug: 'n');
+      final project = ProjectMarkdown.parse(
+        '- [ ] Item\n  Trailing note.\n',
+        slug: 'n',
+      );
 
       expect(project.items.single.notes, 'Trailing note.');
       expect(project.notes, isEmpty);
@@ -248,6 +256,92 @@ Shop shuts at 6.
       expect(reparsed.created, original.created);
       expect(reparsed.updated, original.updated);
       expect(reparsed.extraFrontMatter, original.extraFrontMatter);
+    });
+  });
+
+  group('a blank line between items', () {
+    const source = '''
+---
+title: Beaverland
+---
+
+# Beaverland
+
+- [ ] Dig the channel
+
+- [ ] Fell the willow
+  It leans over the dam.
+
+- [x] Patch the lodge
+- [ ] Count the kits
+
+Keep the water high.
+''';
+
+    test('is remembered rather than read as an empty note', () {
+      final project = ProjectMarkdown.parse(source, slug: 'beaverland');
+
+      expect(project.items.map((item) => item.text), [
+        'Dig the channel',
+        'Fell the willow',
+        'Patch the lodge',
+        'Count the kits',
+      ]);
+      expect(project.items.map((item) => item.blankAfter), [
+        true,
+        true,
+        false,
+        false,
+      ]);
+      // The gap is a gap, not a note made of whitespace.
+      expect(project.items.first.notes, '');
+      expect(project.items[1].notes, 'It leans over the dam.');
+    });
+
+    test('survives a round trip, gaps and closed-up items alike', () {
+      final project = ProjectMarkdown.parse(source, slug: 'beaverland');
+
+      expect(
+        ProjectMarkdown.serialize(project),
+        contains('''
+- [ ] Dig the channel
+
+- [ ] Fell the willow
+  It leans over the dam.
+
+- [x] Patch the lodge
+- [ ] Count the kits
+'''),
+      );
+    });
+
+    test('does not add one before the project notes or at the end', () {
+      final project = Project(
+        slug: 'beaverland',
+        title: 'Beaverland',
+        items: const [ChecklistItem(text: 'Count the kits')],
+        notes: 'Keep the water high.',
+      );
+
+      final markdown = ProjectMarkdown.serialize(project);
+
+      expect(
+        markdown,
+        contains('- [ ] Count the kits\n\nKeep the water high.'),
+      );
+      expect(markdown.endsWith('Keep the water high.\n'), isTrue);
+    });
+
+    test('a last item asking for a gap does not leave one dangling', () {
+      final project = Project(
+        slug: 'beaverland',
+        title: 'Beaverland',
+        items: const [ChecklistItem(text: 'Count the kits', blankAfter: true)],
+      );
+
+      final markdown = ProjectMarkdown.serialize(project);
+
+      expect(markdown.endsWith('- [ ] Count the kits\n'), isTrue);
     });
   });
 

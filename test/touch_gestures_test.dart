@@ -281,6 +281,28 @@ void main() {
       expect(state.projects.single.blocks.single.title, 'Thoughts');
       expect(state.projects.single.items, isEmpty);
     });
+
+    testWidgets('picking Canvas makes the section a canvas in one go', (
+      tester,
+    ) async {
+      final state = await pumpPhoneList(tester, [], touch: true);
+
+      await tester.tap(find.text('Task'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Canvas').last);
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).last, 'Moodboard');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(Icons.arrow_upward));
+      await tester.pumpAndSettle();
+
+      // One thing typed, one thing added: the section exists and it is
+      // already a canvas, rather than a note section to convert afterwards.
+      expect(state.projects.single.blocks.single.title, 'Moodboard');
+      expect(state.isCanvas('list', 'Moodboard'), isTrue);
+      expect(state.projects.single.items, isEmpty);
+    });
   });
 }
 
