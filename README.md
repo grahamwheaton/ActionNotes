@@ -46,7 +46,13 @@ pasting one file — or by pointing the model at the repo.
   **Several at once**: ctrl-click (or shift, or cmd) adds a card to the
   selection, dragging out a box with the mouse picks up everything it touches,
   and Ctrl+A takes the lot. Dragging any one of a group moves the group, and
-  the menu, the arrow keys and Delete all act on the whole selection. With the
+  the menu, the arrow keys and Delete all act on the whole selection.
+
+  **Lining things up**: dragging a card near another settles it onto that
+  card's edge or centre line, with a guide drawn between the two saying what it
+  found — hold alt to drag past. With several selected, the card menu offers
+  align left, centres, right, tops, middles and bottoms, and with three or
+  more, spreading them evenly across or down. With the
   mouse drawing a box, panning moves to the middle button, to space and drag,
   and to the wheel. Under a finger a drag still pans and two fingers zoom —
   there is no second button to move panning to, and a marquee is a mouse's

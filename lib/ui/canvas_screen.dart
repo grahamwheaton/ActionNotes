@@ -130,6 +130,7 @@ class CanvasScreen extends StatelessWidget {
               ),
             )
           : CanvasView(
+              autofocus: true,
               slug: slug,
               section: section,
               cards: cards,

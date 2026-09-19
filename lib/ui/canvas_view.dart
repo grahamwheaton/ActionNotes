@@ -10,6 +10,7 @@ import '../markdown/canvas_cards.dart';
 import '../models/canvas_layout.dart';
 import '../state/app_state.dart';
 import '../storage/attachment_store.dart';
+import 'canvas_snap.dart';
 import 'context_menu.dart';
 import 'note_view.dart';
 import 'touch_input.dart';
@@ -29,6 +30,7 @@ class CanvasView extends StatefulWidget {
     required this.onChanged,
     this.onRemoveCard,
     this.onOpenFullScreen,
+    this.autofocus = false,
   });
 
   final String slug;
@@ -47,6 +49,11 @@ class CanvasView extends StatefulWidget {
 
   /// Opens the canvas on a screen of its own. Null when it already is one.
   final VoidCallback? onOpenFullScreen;
+
+  /// Takes the keyboard on its own, so the shortcuts work without clicking
+  /// first. True on a screen of its own and false in the panel inside a
+  /// project, where the composer is what typing belongs to.
+  final bool autofocus;
 
   @override
   State<CanvasView> createState() => CanvasViewState();
@@ -76,6 +83,22 @@ class CanvasViewState extends State<CanvasView> {
   /// cards themselves rather than guessed at: a card's height follows its
   /// picture or its text and is not known here.
   final Map<int, GlobalKey> _cardKeys = {};
+
+  /// Where each dragged card started, and how far the pointer has gone since.
+  ///
+  /// Kept apart from the cards' own positions so that snapping is not sticky:
+  /// the drag accumulates untouched and the snap is worked out from it afresh
+  /// each frame, so a card pulled onto a line lets go again when the pointer
+  /// keeps moving rather than clinging to it.
+  final Map<int, Offset> _dragFrom = {};
+  Offset _dragRaw = Offset.zero;
+
+  /// The lines to draw for whatever the drag is currently lined up with.
+  List<SnapGuide> _guides = const [];
+
+  /// How near counts as lined up, on screen. Divided by the zoom before it is
+  /// used, so it feels the same however far in or out you are.
+  static const _snapPixels = 8.0;
 
   /// Pan and scale as the current gesture started, for a pinch.
   Offset _panAtStart = Offset.zero;
@@ -277,18 +300,73 @@ class CanvasViewState extends State<CanvasView> {
     return true;
   }
 
+  /// A card's size in canvas units.
+  ///
+  /// Read from the card itself, because a card's height follows its picture or
+  /// its text and is not known here. A card that has not been laid out yet is
+  /// treated as square, which only decides where a guide is drawn for one
+  /// frame.
+  Size _sceneSize(int index) {
+    final render = _cardKeys[index]?.currentContext?.findRenderObject();
+    final width = _spots[index].width;
+    if (render is! RenderBox || !render.hasSize) return Size(width, width);
+    return Size(width, render.size.height / _scale);
+  }
+
+  Rect _sceneRect(int index) {
+    final spot = _spots[index];
+    return Offset(spot.x, spot.y) & _sceneSize(index);
+  }
+
+  void _beginDrag(int index) {
+    final moving = _selection.contains(index) ? _selection : {index};
+    _dragFrom
+      ..clear()
+      ..addEntries(
+        moving.map((at) => MapEntry(at, Offset(_spots[at].x, _spots[at].y))),
+      );
+    _dragRaw = Offset.zero;
+  }
+
+  void _endDrag() {
+    _dragFrom.clear();
+    _dragRaw = Offset.zero;
+    if (_guides.isNotEmpty) setState(() => _guides = const []);
+  }
+
   /// Moves [index], and everything selected with it — dragging one of a group
   /// takes the group, which is the point of picking several.
   void _moveBy(int index, Offset delta) {
-    final moving = _selection.contains(index) ? _selection : {index};
+    if (_dragFrom.isEmpty) _beginDrag(index);
+    final moving = _dragFrom.keys.toList();
+
+    _dragRaw += Offset(delta.dx / _scale, delta.dy / _scale);
+
+    // Where the drag would put things with nothing lining up.
+    Rect? proposed;
+    for (final at in moving) {
+      final rect = (_dragFrom[at]! + _dragRaw) & _sceneSize(at);
+      proposed = proposed == null ? rect : proposed.expandToInclude(rect);
+    }
+
+    // Alt turns it off, for the times a card belongs just off the line.
+    final snap = proposed == null || HardwareKeyboard.instance.isAltPressed
+        ? const SnapResult()
+        : CanvasSnap.snap(
+            moving: proposed,
+            others: [
+              for (var i = 0; i < _spots.length; i++)
+                if (!_dragFrom.containsKey(i)) _sceneRect(i),
+            ],
+            tolerance: _snapPixels / _scale,
+          );
+
     setState(() {
       for (final at in moving) {
-        final spot = _spots[at];
-        _spots[at] = spot.copyWith(
-          x: spot.x + delta.dx / _scale,
-          y: spot.y + delta.dy / _scale,
-        );
+        final from = _dragFrom[at]! + _dragRaw + snap.correction;
+        _spots[at] = _spots[at].copyWith(x: from.dx, y: from.dy);
       }
+      _guides = snap.guides;
     });
   }
 
@@ -379,6 +457,7 @@ class CanvasViewState extends State<CanvasView> {
 
     return Focus(
       focusNode: _focus,
+      autofocus: widget.autofocus,
       onKeyEvent: _onKey,
       child: Listener(
         // A pointer signal is a wheel or a trackpad, and never joins the
@@ -472,6 +551,7 @@ class CanvasViewState extends State<CanvasView> {
                     _focus.requestFocus();
                     _active = index;
                     _select(index, additive: _additive);
+                    _beginDrag(index);
                     // Raise whatever is now selected, so a group picked up
                     // comes forward together rather than one of it.
                     _bringToFront(
@@ -483,8 +563,16 @@ class CanvasViewState extends State<CanvasView> {
                   onResize: (delta) => _resizeBy(index, delta),
                   onRelease: () {
                     _active = null;
+                    _endDrag();
                     _commit();
                   },
+                ),
+              for (final guide in _guides)
+                Positioned.fromRect(
+                  rect: _guideRect(guide),
+                  child: IgnorePointer(
+                    child: ColoredBox(color: theme.colorScheme.tertiary),
+                  ),
                 ),
               if (_marquee != null)
                 Positioned.fromRect(
@@ -595,6 +683,142 @@ class CanvasViewState extends State<CanvasView> {
   RenderBox? get _viewportBox =>
       _viewport.currentContext?.findRenderObject() as RenderBox?;
 
+  /// Lines up everything in [targets] on one edge, or spreads them evenly.
+  ///
+  /// Unlike dragging, this asks for no tolerance: you have said which cards
+  /// and which edge, so they go exactly there.
+  void _align(Set<int> targets, _Align how) {
+    if (targets.length < 2) return;
+    final rects = {for (final at in targets) at: _sceneRect(at)};
+
+    var bounds = rects.values.first;
+    for (final rect in rects.values) {
+      bounds = bounds.expandToInclude(rect);
+    }
+
+    setState(() {
+      switch (how) {
+        case _Align.left:
+          for (final at in targets) {
+            _spots[at] = _spots[at].copyWith(x: bounds.left);
+          }
+        case _Align.centreX:
+          for (final at in targets) {
+            _spots[at] = _spots[at].copyWith(
+              x: bounds.center.dx - rects[at]!.width / 2,
+            );
+          }
+        case _Align.right:
+          for (final at in targets) {
+            _spots[at] = _spots[at].copyWith(
+              x: bounds.right - rects[at]!.width,
+            );
+          }
+        case _Align.top:
+          for (final at in targets) {
+            _spots[at] = _spots[at].copyWith(y: bounds.top);
+          }
+        case _Align.middleY:
+          for (final at in targets) {
+            _spots[at] = _spots[at].copyWith(
+              y: bounds.center.dy - rects[at]!.height / 2,
+            );
+          }
+        case _Align.bottom:
+          for (final at in targets) {
+            _spots[at] = _spots[at].copyWith(
+              y: bounds.bottom - rects[at]!.height,
+            );
+          }
+        case _Align.spreadX:
+          _spread(targets, rects, bounds, horizontally: true);
+        case _Align.spreadY:
+          _spread(targets, rects, bounds, horizontally: false);
+      }
+    });
+    _commit();
+  }
+
+  /// Even gaps between the cards, leaving the outermost two where they are —
+  /// which is what makes spreading a row predictable rather than a surprise.
+  void _spread(
+    Set<int> targets,
+    Map<int, Rect> rects,
+    Rect bounds, {
+    required bool horizontally,
+  }) {
+    final order = targets.toList()
+      ..sort((a, b) {
+        final first = horizontally ? rects[a]!.left : rects[a]!.top;
+        final second = horizontally ? rects[b]!.left : rects[b]!.top;
+        return first.compareTo(second);
+      });
+    if (order.length < 3) return;
+
+    var occupied = 0.0;
+    for (final at in order) {
+      occupied += horizontally ? rects[at]!.width : rects[at]!.height;
+    }
+    final gap =
+        ((horizontally ? bounds.width : bounds.height) - occupied) /
+        (order.length - 1);
+
+    var next = horizontally ? bounds.left : bounds.top;
+    for (final at in order) {
+      _spots[at] = horizontally
+          ? _spots[at].copyWith(x: next)
+          : _spots[at].copyWith(y: next);
+      next += (horizontally ? rects[at]!.width : rects[at]!.height) + gap;
+    }
+  }
+
+  void _showAlignMenu(Set<int> targets, Offset at) {
+    showItemMenu(context, [
+      ContextMenuAction(
+        label: 'Align left',
+        icon: Icons.align_horizontal_left,
+        onSelected: () => _align(targets, _Align.left),
+      ),
+      ContextMenuAction(
+        label: 'Align centres',
+        icon: Icons.align_horizontal_center,
+        onSelected: () => _align(targets, _Align.centreX),
+      ),
+      ContextMenuAction(
+        label: 'Align right',
+        icon: Icons.align_horizontal_right,
+        onSelected: () => _align(targets, _Align.right),
+      ),
+      ContextMenuAction(
+        label: 'Align tops',
+        icon: Icons.align_vertical_top,
+        onSelected: () => _align(targets, _Align.top),
+      ),
+      ContextMenuAction(
+        label: 'Align middles',
+        icon: Icons.align_vertical_center,
+        onSelected: () => _align(targets, _Align.middleY),
+      ),
+      ContextMenuAction(
+        label: 'Align bottoms',
+        icon: Icons.align_vertical_bottom,
+        onSelected: () => _align(targets, _Align.bottom),
+      ),
+      if (targets.length > 2) ...[
+        ContextMenuAction(
+          label: 'Spread across',
+          icon: Icons.horizontal_distribute,
+          onSelected: () => _align(targets, _Align.spreadX),
+        ),
+        ContextMenuAction(
+          label: 'Spread down',
+          icon: Icons.vertical_distribute,
+          onSelected: () => _align(targets, _Align.spreadY),
+        ),
+      ],
+    ], at);
+  }
+
   void _showCardMenu(int index, Offset at) {
     // Whatever is selected, or the card that was clicked if it is not part of
     // the selection.
@@ -602,6 +826,12 @@ class CanvasViewState extends State<CanvasView> {
     final many = targets.length > 1;
 
     showItemMenu(context, [
+      if (many)
+        ContextMenuAction(
+          label: 'Line ${targets.length} up…',
+          icon: Icons.align_horizontal_left,
+          onSelected: () => _showAlignMenu(targets, at),
+        ),
       ContextMenuAction(
         label: many ? 'Bring ${targets.length} to front' : 'Bring to front',
         icon: Icons.flip_to_front,
@@ -632,6 +862,21 @@ class CanvasViewState extends State<CanvasView> {
     ], at);
   }
 
+  /// A guide as a hairline in the viewport.
+  ///
+  /// A rectangle a pixel wide rather than a painter, so it sits in the same
+  /// stack as the cards and needs no second coordinate system to reason
+  /// about.
+  Rect _guideRect(SnapGuide guide) {
+    final at = guide.position * _scale;
+    final from = guide.from * _scale;
+    final to = guide.to * _scale;
+
+    return guide.vertical
+        ? Rect.fromLTWH(at + _pan.dx, from + _pan.dy, 1, to - from)
+        : Rect.fromLTWH(from + _pan.dx, at + _pan.dy, to - from, 1);
+  }
+
   Offset _centre() {
     final box = _viewport.currentContext?.findRenderObject() as RenderBox?;
     if (box == null) return Offset.zero;
@@ -643,6 +888,9 @@ class CanvasViewState extends State<CanvasView> {
 ///
 /// Positioned in viewport coordinates rather than inside a scaled Stack, so a
 /// card's text stays crisp at any zoom and its own gestures arrive unscaled.
+/// The ways a group of cards can be lined up.
+enum _Align { left, centreX, right, top, middleY, bottom, spreadX, spreadY }
+
 class _CardOnCanvas extends StatelessWidget {
   const _CardOnCanvas({
     super.key,
