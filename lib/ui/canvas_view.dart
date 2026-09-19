@@ -10,6 +10,7 @@ import '../markdown/canvas_cards.dart';
 import '../models/canvas_layout.dart';
 import '../state/app_state.dart';
 import '../storage/attachment_store.dart';
+import 'image_viewer.dart';
 import 'canvas_snap.dart';
 import 'context_menu.dart';
 import 'note_view.dart';
@@ -455,6 +456,21 @@ class CanvasViewState extends State<CanvasView> {
       case LogicalKeyboardKey.escape:
         if (_selection.isEmpty) return KeyEventResult.ignored;
         setState(_selection.clear);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.keyI:
+        if (!HardwareKeyboard.instance.isControlPressed &&
+            !HardwareKeyboard.instance.isMetaPressed) {
+          return KeyEventResult.ignored;
+        }
+        setState(() {
+          final inverted = <int>{
+            for (var i = 0; i < widget.cards.length; i++)
+              if (!_selection.contains(i)) i,
+          };
+          _selection
+            ..clear()
+            ..addAll(inverted);
+        });
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyA:
         if (!HardwareKeyboard.instance.isControlPressed &&
@@ -1024,6 +1040,35 @@ class CanvasViewState extends State<CanvasView> {
     _commit();
   }
 
+  /// The file behind an image card, once it has been fetched.
+  Future<File?> _fileFor(int index) async {
+    final path = widget.cards[index].imagePath;
+    if (path == null) return null;
+    final repoPath = AttachmentStore.resolveRepoPath(path);
+    if (repoPath == null) return null;
+    if (!mounted) return null;
+    return AttachmentStore().resolve(repoPath, context.read<AppState>().config);
+  }
+
+  /// Runs one of the picture actions and says what happened.
+  Future<void> _withFile(
+    int index,
+    Future<String?> Function(File) action,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final file = await _fileFor(index);
+    if (file == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('That picture is not here yet.')),
+      );
+      return;
+    }
+    final message = await action(file);
+    if (message != null) {
+      messenger.showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
   void _showCardMenu(int index, Offset at) {
     // Whatever is selected, or the card that was clicked if it is not part of
     // the selection.
@@ -1092,6 +1137,29 @@ class CanvasViewState extends State<CanvasView> {
           _commit();
         },
       ),
+      // A reference on a board is often wanted somewhere else, so the things
+      // the rest of the app already does with a picture are here too.
+      if (!many && widget.cards[index].isImage) ...[
+        ContextMenuAction(
+          label: 'Copy image',
+          icon: Icons.copy,
+          onSelected: () => _withFile(index, ImageActions.copy),
+        ),
+        ContextMenuAction(
+          label: 'Save a copy',
+          icon: Icons.save_alt,
+          onSelected: () => _withFile(
+            index,
+            (file) => ImageActions.saveCopy(file, file.uri.pathSegments.last),
+          ),
+        ),
+        if (ImageActions.canReveal)
+          ContextMenuAction(
+            label: 'Show in folder',
+            icon: Icons.folder_open,
+            onSelected: () => _withFile(index, ImageActions.reveal),
+          ),
+      ],
       if (widget.onDuplicateCard != null)
         ContextMenuAction(
           label: many ? 'Duplicate ${targets.length}' : 'Duplicate',

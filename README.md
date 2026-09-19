@@ -55,6 +55,10 @@ pasting one file — or by pointing the model at the repo.
   and cards can be matched to the widest or the narrowest of them. Z zooms to
   what is selected.
 
+  **A picture on a canvas** can be copied, saved elsewhere or shown in its
+  folder from its own menu, the same as one in a note. Ctrl+I turns the
+  selection inside out.
+
   **Undo** (Ctrl+Z, or the bar) takes back a move, an align, a pack, a delete
   — anything the canvas does — and Ctrl+Shift+Z puts it back. Both files are
   remembered together, so a deleted card returns with its position rather than
