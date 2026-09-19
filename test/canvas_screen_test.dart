@@ -1,7 +1,5 @@
-import 'package:actionnotes/models/canvas_layout.dart';
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/ui/canvas_screen.dart';
-import 'package:actionnotes/ui/canvas_view.dart';
 import 'package:actionnotes/ui/checklist_view.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:actionnotes/ui/touch_input.dart';
