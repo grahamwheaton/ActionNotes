@@ -8,6 +8,10 @@ class CanvasSpot {
     this.width = 260,
     this.z = 0,
     this.ref = '',
+    this.rotation = 0,
+    this.flipX = false,
+    this.flipY = false,
+    this.locked = false,
   });
 
   final double x;
@@ -23,26 +27,51 @@ class CanvasSpot {
   /// its card again when the list has shifted under it.
   final String ref;
 
+  /// Degrees clockwise about the card's own centre.
+  final double rotation;
+
+  /// Mirrored left to right, or top to bottom.
+  final bool flipX;
+  final bool flipY;
+
+  /// Held in place: it can be seen and selected but not moved, resized or
+  /// turned, so a background sheet stays put while things are arranged on it.
+  final bool locked;
+
   CanvasSpot copyWith({
     double? x,
     double? y,
     double? width,
     int? z,
     String? ref,
+    double? rotation,
+    bool? flipX,
+    bool? flipY,
+    bool? locked,
   }) => CanvasSpot(
     x: x ?? this.x,
     y: y ?? this.y,
     width: width ?? this.width,
     z: z ?? this.z,
     ref: ref ?? this.ref,
+    rotation: rotation ?? this.rotation,
+    flipX: flipX ?? this.flipX,
+    flipY: flipY ?? this.flipY,
+    locked: locked ?? this.locked,
   );
 
+  // Written only when it is not the default, so a card nobody has turned or
+  // mirrored keeps the small entry it always had.
   Map<String, dynamic> toJson() => {
     'x': x,
     'y': y,
     'w': width,
     'z': z,
     if (ref.isNotEmpty) 'ref': ref,
+    if (rotation != 0) 'r': rotation,
+    if (flipX) 'fx': true,
+    if (flipY) 'fy': true,
+    if (locked) 'lock': true,
   };
 
   static CanvasSpot fromJson(Map<String, dynamic> json) => CanvasSpot(
@@ -51,6 +80,10 @@ class CanvasSpot {
     width: json.containsKey('w') ? _number(json['w']) : 260,
     z: _number(json['z']).round(),
     ref: json['ref'] as String? ?? '',
+    rotation: json.containsKey('r') ? _number(json['r']) : 0,
+    flipX: json['fx'] == true,
+    flipY: json['fy'] == true,
+    locked: json['lock'] == true,
   );
 
   static double _number(Object? value) => switch (value) {
@@ -66,10 +99,15 @@ class CanvasSpot {
       other.y == y &&
       other.width == width &&
       other.z == z &&
-      other.ref == ref;
+      other.ref == ref &&
+      other.rotation == rotation &&
+      other.flipX == flipX &&
+      other.flipY == flipY &&
+      other.locked == locked;
 
   @override
-  int get hashCode => Object.hash(x, y, width, z, ref);
+  int get hashCode =>
+      Object.hash(x, y, width, z, ref, rotation, flipX, flipY, locked);
 }
 
 /// Where everything on one project's canvases sits.

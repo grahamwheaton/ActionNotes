@@ -313,7 +313,8 @@ Its **arrangement** lives beside the project, in `canvas/<slug>.json`:
   "version": 1,
   "sections": {
     "Moodboard": [
-      { "x": 120, "y": 40, "w": 320, "z": 1, "ref": "door.png" }
+      { "x": 120, "y": 40, "w": 320, "z": 1, "ref": "door.png",
+        "r": 15, "fx": true, "lock": true }
     ]
   }
 }
@@ -337,6 +338,10 @@ What follows from that:
   the list keeps its place; a card with no position is put down in free space
   rather than on the pile; a position whose card has gone is dropped. The
   markdown always wins.
+- **A card may also carry `r` (degrees clockwise), `fx` and `fy` (mirrored),
+  and `lock` (held in place).** Each is written only when it is not the
+  default, so a card nobody has turned keeps the short entry it always had,
+  and a layout written before they existed reads as untouched.
 - **Deleting a card takes its position with it.** A position whose card has
   gone would be dropped the next time the two were paired anyway, and leaving
   it would shift every later card along by one until it was.

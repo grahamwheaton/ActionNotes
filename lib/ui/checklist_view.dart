@@ -1422,6 +1422,8 @@ class _SectionCanvas extends StatelessWidget {
             context.read<AppState>().setCanvasSpots(slug, section, moved),
         onRemoveCard: (index) =>
             context.read<AppState>().removeCanvasCard(slug, section, index),
+        onDuplicateCard: (index) =>
+            context.read<AppState>().duplicateCanvasCard(slug, section, index),
         onOpenFullScreen: () =>
             CanvasScreen.open(context, slug: slug, section: section),
       ),

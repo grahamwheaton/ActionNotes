@@ -29,6 +29,7 @@ class CanvasView extends StatefulWidget {
     required this.spots,
     required this.onChanged,
     this.onRemoveCard,
+    this.onDuplicateCard,
     this.onOpenFullScreen,
     this.autofocus = false,
   });
@@ -46,6 +47,9 @@ class CanvasView extends StatefulWidget {
   /// Takes a card off the canvas, which means off the section's markdown —
   /// null where that is not on offer.
   final void Function(int index)? onRemoveCard;
+
+  /// Puts a copy of a card on the canvas, next to the original.
+  final void Function(int index)? onDuplicateCard;
 
   /// Opens the canvas on a screen of its own. Null when it already is one.
   final VoidCallback? onOpenFullScreen;
@@ -124,7 +128,13 @@ class CanvasViewState extends State<CanvasView> {
     super.didUpdateWidget(oldWidget);
     // The project is the truth; adopt it unless this view is mid-drag, when
     // adopting would fight the finger.
-    if (_active == null && widget.spots != oldWidget.spots) {
+    //
+    // A different number of cards is adopted whatever is happening: the
+    // markdown and the layout are two files written a moment apart, so a card
+    // added or removed arrives here before its position does, and carrying on
+    // with the old list would index past the end of it.
+    if (widget.spots.length != _spots.length ||
+        (_active == null && widget.spots != oldWidget.spots)) {
       _spots = [...widget.spots];
     }
   }
@@ -322,8 +332,13 @@ class CanvasViewState extends State<CanvasView> {
     final moving = _selection.contains(index) ? _selection : {index};
     _dragFrom
       ..clear()
+      // A locked card stays where it is even when it is part of what was
+      // picked up, so a background held in place is not dragged off by a
+      // group selection that happened to include it.
       ..addEntries(
-        moving.map((at) => MapEntry(at, Offset(_spots[at].x, _spots[at].y))),
+        moving
+            .where((at) => !_spots[at].locked)
+            .map((at) => MapEntry(at, Offset(_spots[at].x, _spots[at].y))),
       );
     _dragRaw = Offset.zero;
   }
@@ -339,6 +354,7 @@ class CanvasViewState extends State<CanvasView> {
   void _moveBy(int index, Offset delta) {
     if (_dragFrom.isEmpty) _beginDrag(index);
     final moving = _dragFrom.keys.toList();
+    if (moving.isEmpty) return;
 
     _dragRaw += Offset(delta.dx / _scale, delta.dy / _scale);
 
@@ -370,7 +386,33 @@ class CanvasViewState extends State<CanvasView> {
     });
   }
 
+  /// Turns a card so its rotation handle follows the pointer.
+  ///
+  /// The angle is measured from the card's centre on screen to where the
+  /// pointer is, and the handle sits above the card, so straight up is nought
+  /// degrees. Shift steps it in fifteens, which is how a row of references
+  /// ends up at the same tilt rather than nearly.
+  void _rotateTo(int index, Offset globalPoint) {
+    if (_spots[index].locked) return;
+
+    final render = _cardKeys[index]?.currentContext?.findRenderObject();
+    if (render is! RenderBox || !render.hasSize) return;
+
+    final centre = render.localToGlobal(render.size.center(Offset.zero));
+    final away = globalPoint - centre;
+    if (away.distance < 4) return;
+
+    var degrees = math.atan2(away.dy, away.dx) * 180 / math.pi + 90;
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      degrees = (degrees / 15).round() * 15;
+    }
+    degrees = (degrees % 360 + 360) % 360;
+
+    setState(() => _spots[index] = _spots[index].copyWith(rotation: degrees));
+  }
+
   void _resizeBy(int index, Offset delta) {
+    if (_spots[index].locked) return;
     setState(() {
       final spot = _spots[index];
       _spots[index] = spot.copyWith(
@@ -400,6 +442,9 @@ class CanvasViewState extends State<CanvasView> {
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyF:
         fit();
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.keyZ:
+        zoomToSelection();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
         if (_selection.isEmpty) return KeyEventResult.ignored;
@@ -449,10 +494,15 @@ class CanvasViewState extends State<CanvasView> {
     final touch = TouchInput.isPrimary;
 
     _cardKeys.removeWhere((index, _) => index >= widget.cards.length);
-    _selection.removeWhere((index) => index >= widget.cards.length);
+    _selection.removeWhere(
+      (index) => index >= widget.cards.length || index >= _spots.length,
+    );
 
-    // Drawn back to front, so the stacking order is what the z says.
-    final order = [for (var i = 0; i < widget.cards.length; i++) i]
+    // Drawn back to front, so the stacking order is what the z says. Clamped
+    // to whichever list is shorter, because the cards and their positions are
+    // two files and can be a frame apart.
+    final drawable = math.min(widget.cards.length, _spots.length);
+    final order = [for (var i = 0; i < drawable; i++) i]
       ..sort((a, b) => _spots[a].z.compareTo(_spots[b].z));
 
     return Focus(
@@ -560,6 +610,7 @@ class CanvasViewState extends State<CanvasView> {
                   },
                   onMenu: (at) => _showCardMenu(index, at),
                   onMove: (delta) => _moveBy(index, delta),
+                  onRotate: (at) => _rotateTo(index, at),
                   onResize: (delta) => _resizeBy(index, delta),
                   onRelease: () {
                     _active = null;
@@ -772,6 +823,104 @@ class CanvasViewState extends State<CanvasView> {
     }
   }
 
+  /// Lays cards out in tidy rows, in the order they are on the canvas.
+  ///
+  /// The tool this is borrowed from calls it optimising; it is the one action
+  /// that turns a heap of references into something you can look at. Rows are
+  /// filled left to right up to a width that keeps the whole thing roughly
+  /// square, and each row is only as tall as its tallest card.
+  void _pack(Set<int> targets) {
+    if (targets.length < 2) return;
+
+    final order = targets.toList()
+      ..sort((a, b) {
+        final first = _sceneRect(a);
+        final second = _sceneRect(b);
+        // Reading order, so packing keeps roughly the arrangement that was
+        // there rather than shuffling everything.
+        final rows = (first.top / 200).floor().compareTo(
+          (second.top / 200).floor(),
+        );
+        return rows != 0 ? rows : first.left.compareTo(second.left);
+      });
+
+    const gap = 16.0;
+    var area = 0.0;
+    for (final at in order) {
+      final rect = _sceneRect(at);
+      area += (rect.width + gap) * (rect.height + gap);
+    }
+    final target = math.sqrt(area) * 1.1;
+
+    var bounds = _sceneRect(order.first);
+    for (final at in order) {
+      bounds = bounds.expandToInclude(_sceneRect(at));
+    }
+
+    var x = bounds.left;
+    var y = bounds.top;
+    var rowHeight = 0.0;
+
+    setState(() {
+      for (final at in order) {
+        final size = _sceneSize(at);
+        if (x > bounds.left && x + size.width > bounds.left + target) {
+          x = bounds.left;
+          y += rowHeight + gap;
+          rowHeight = 0;
+        }
+        _spots[at] = _spots[at].copyWith(x: x, y: y);
+        x += size.width + gap;
+        rowHeight = math.max(rowHeight, size.height);
+      }
+    });
+    _commit();
+  }
+
+  /// Makes everything the width of the widest, or the narrowest.
+  void _matchWidth(Set<int> targets, {required bool widest}) {
+    if (targets.length < 2) return;
+    var width = _spots[targets.first].width;
+    for (final at in targets) {
+      final theirs = _spots[at].width;
+      width = widest ? math.max(width, theirs) : math.min(width, theirs);
+    }
+    _transform(targets, (spot) => spot.copyWith(width: width));
+  }
+
+  /// Fills the view with whatever is selected, or everything if nothing is.
+  void zoomToSelection() {
+    if (_selection.isEmpty) {
+      fit();
+      return;
+    }
+    final box = _viewportBox;
+    if (box == null) return;
+
+    var bounds = _sceneRect(_selection.first);
+    for (final at in _selection) {
+      bounds = bounds.expandToInclude(_sceneRect(at));
+    }
+
+    const margin = 48.0;
+    final scale = math
+        .min(
+          box.size.width / (bounds.width + margin * 2),
+          box.size.height / (bounds.height + margin * 2),
+        )
+        .clamp(_minScale, _maxScale);
+
+    setState(() {
+      _scale = scale;
+      _pan =
+          Offset(
+            (box.size.width - bounds.width * scale) / 2,
+            (box.size.height - bounds.height * scale) / 2,
+          ) -
+          bounds.topLeft * scale;
+    });
+  }
+
   void _showAlignMenu(Set<int> targets, Offset at) {
     showItemMenu(context, [
       ContextMenuAction(
@@ -816,7 +965,57 @@ class CanvasViewState extends State<CanvasView> {
           onSelected: () => _align(targets, _Align.spreadY),
         ),
       ],
+      ContextMenuAction(
+        label: 'Pack into rows',
+        icon: Icons.grid_view,
+        onSelected: () => _pack(targets),
+      ),
+      ContextMenuAction(
+        label: 'Match the widest',
+        icon: Icons.width_wide,
+        onSelected: () => _matchWidth(targets, widest: true),
+      ),
+      ContextMenuAction(
+        label: 'Match the narrowest',
+        icon: Icons.width_normal,
+        onSelected: () => _matchWidth(targets, widest: false),
+      ),
     ], at);
+  }
+
+  void _transform(Set<int> targets, CanvasSpot Function(CanvasSpot) change) {
+    setState(() {
+      for (final at in targets) {
+        if (_spots[at].locked && change(_spots[at]).locked) continue;
+        _spots[at] = change(_spots[at]);
+      }
+    });
+    _commit();
+  }
+
+  /// Moves cards one step through the stack rather than all the way.
+  void _shuffle(Set<int> targets, {required bool forwards}) {
+    final order = [for (var i = 0; i < _spots.length; i++) i]
+      ..sort((a, b) => _spots[a].z.compareTo(_spots[b].z));
+
+    final moving = forwards ? order.reversed.toList() : order;
+    setState(() {
+      for (final index in moving) {
+        if (!targets.contains(index)) continue;
+        final position = order.indexOf(index);
+        final swapWith = forwards ? position + 1 : position - 1;
+        if (swapWith < 0 || swapWith >= order.length) continue;
+        final other = order[swapWith];
+        if (targets.contains(other)) continue;
+
+        final mine = _spots[index].z;
+        _spots[index] = _spots[index].copyWith(z: _spots[other].z);
+        _spots[other] = _spots[other].copyWith(z: mine);
+        order[position] = other;
+        order[swapWith] = index;
+      }
+    });
+    _commit();
   }
 
   void _showCardMenu(int index, Offset at) {
@@ -845,6 +1044,61 @@ class CanvasViewState extends State<CanvasView> {
         icon: Icons.flip_to_back,
         onSelected: () => _sendToBack(targets),
       ),
+      ContextMenuAction(
+        label: 'Forward one',
+        icon: Icons.arrow_upward,
+        onSelected: () => _shuffle(targets, forwards: true),
+      ),
+      ContextMenuAction(
+        label: 'Back one',
+        icon: Icons.arrow_downward,
+        onSelected: () => _shuffle(targets, forwards: false),
+      ),
+      ContextMenuAction(
+        label: 'Flip across',
+        icon: Icons.swap_horiz,
+        onSelected: () =>
+            _transform(targets, (spot) => spot.copyWith(flipX: !spot.flipX)),
+      ),
+      ContextMenuAction(
+        label: 'Flip down',
+        icon: Icons.swap_vert,
+        onSelected: () =>
+            _transform(targets, (spot) => spot.copyWith(flipY: !spot.flipY)),
+      ),
+      if (targets.any((at) => _spots[at].rotation != 0))
+        ContextMenuAction(
+          label: 'Straighten',
+          icon: Icons.rotate_left,
+          onSelected: () =>
+              _transform(targets, (spot) => spot.copyWith(rotation: 0)),
+        ),
+      ContextMenuAction(
+        label: _spots[index].locked ? 'Unlock' : 'Lock in place',
+        icon: _spots[index].locked ? Icons.lock_open : Icons.lock_outline,
+        onSelected: () {
+          final lock = !_spots[index].locked;
+          setState(() {
+            for (final at in targets) {
+              _spots[at] = _spots[at].copyWith(locked: lock);
+            }
+          });
+          _commit();
+        },
+      ),
+      if (widget.onDuplicateCard != null)
+        ContextMenuAction(
+          label: many ? 'Duplicate ${targets.length}' : 'Duplicate',
+          icon: Icons.copy_all_outlined,
+          onSelected: () {
+            // Highest first, so each insertion does not shift the ones still
+            // to be copied.
+            final order = targets.toList()..sort((a, b) => b.compareTo(a));
+            for (final at in order) {
+              widget.onDuplicateCard!(at);
+            }
+          },
+        ),
       if (widget.onRemoveCard != null)
         ContextMenuAction(
           label: many ? 'Delete ${targets.length} cards' : 'Delete card',
@@ -904,6 +1158,7 @@ class _CardOnCanvas extends StatelessWidget {
     required this.onGrab,
     required this.onMenu,
     required this.onMove,
+    required this.onRotate,
     required this.onResize,
     required this.onRelease,
   });
@@ -924,6 +1179,11 @@ class _CardOnCanvas extends StatelessWidget {
   /// Right-clicked, or held on a phone: the card's own menu, at the pointer.
   final ValueChanged<Offset> onMenu;
   final ValueChanged<Offset> onMove;
+
+  /// Where the rotation handle has been dragged to, in global coordinates —
+  /// the angle is worked out against the card's centre by the canvas, which
+  /// is the only place that knows where that is on screen.
+  final ValueChanged<Offset> onRotate;
   final ValueChanged<Offset> onResize;
   final VoidCallback onRelease;
 
@@ -937,95 +1197,144 @@ class _CardOnCanvas extends StatelessWidget {
       left: at.dx,
       top: at.dy,
       width: spot.width * scale,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        // From the moment it is touched, not from where the drag was
-        // recognised: the default loses the first eighteen pixels of every
-        // drag to the slop, which on a canvas reads as the card lagging
-        // behind the finger before it catches up.
-        dragStartBehavior: DragStartBehavior.down,
-        onPanStart: (_) => onGrab(),
-        onPanUpdate: (details) => onMove(details.delta),
-        onPanEnd: (_) => onRelease(),
-        onTap: onGrab,
-        // A hold is free on a card — moving one is a drag — so it opens the
-        // menu, which is how a phone reaches what a right-click reaches.
-        onSecondaryTapUp: (details) {
-          onGrab();
-          onMenu(details.globalPosition);
-        },
-        onLongPressStart: (details) {
-          onGrab();
-          onMenu(details.globalPosition);
-        },
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                color: card.isImage
-                    ? Colors.transparent
-                    : theme.colorScheme.surfaceContainerLowest,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color: selected
-                      ? theme.colorScheme.primary
-                      : card.isImage
-                      ? Colors.transparent
-                      : theme.colorScheme.outlineVariant,
-                  width: selected ? 2 : 1,
-                ),
-                boxShadow: selected
-                    ? [
-                        BoxShadow(
-                          color: theme.colorScheme.primary.withValues(
-                            alpha: 0.25,
+      // Turned and mirrored about its own centre. The box it is positioned in
+      // stays square to the canvas, which is what everything else — snapping,
+      // the marquee, resizing — goes on reasoning about.
+      child: Transform.rotate(
+        angle: spot.rotation * math.pi / 180,
+        child: Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.diagonal3Values(
+            spot.flipX ? -1 : 1,
+            spot.flipY ? -1 : 1,
+            1,
+          ),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            // From the moment it is touched, not from where the drag was
+            // recognised: the default loses the first eighteen pixels of every
+            // drag to the slop, which on a canvas reads as the card lagging
+            // behind the finger before it catches up.
+            dragStartBehavior: DragStartBehavior.down,
+            onPanStart: (_) => onGrab(),
+            onPanUpdate: (details) => onMove(details.delta),
+            onPanEnd: (_) => onRelease(),
+            onTap: onGrab,
+            // A hold is free on a card — moving one is a drag — so it opens the
+            // menu, which is how a phone reaches what a right-click reaches.
+            onSecondaryTapUp: (details) {
+              onGrab();
+              onMenu(details.globalPosition);
+            },
+            onLongPressStart: (details) {
+              onGrab();
+              onMenu(details.globalPosition);
+            },
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    color: card.isImage
+                        ? Colors.transparent
+                        : theme.colorScheme.surfaceContainerLowest,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: selected
+                          ? theme.colorScheme.primary
+                          : card.isImage
+                          ? Colors.transparent
+                          : theme.colorScheme.outlineVariant,
+                      width: selected ? 2 : 1,
+                    ),
+                    boxShadow: selected
+                        ? [
+                            BoxShadow(
+                              color: theme.colorScheme.primary.withValues(
+                                alpha: 0.25,
+                              ),
+                              blurRadius: 12,
+                            ),
+                          ]
+                        : null,
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  // The content takes no pointers of its own. Rendered markdown
+                  // carries gesture recognizers for its links and its text, and
+                  // those were winning the arena against the card — so a card
+                  // could be looked at and never moved. On a canvas a card is an
+                  // object you pick up, not a page you interact with.
+                  child: IgnorePointer(
+                    child: card.isImage
+                        ? _CanvasImage(reference: card.imagePath!)
+                        : Padding(
+                            padding: EdgeInsets.all(8 * scale.clamp(0.5, 1.5)),
+                            child: NoteView(markdown: card.markdown),
                           ),
-                          blurRadius: 12,
+                  ),
+                ),
+                if (selected)
+                  Positioned(
+                    right: -6,
+                    bottom: -6,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      dragStartBehavior: DragStartBehavior.down,
+                      onPanStart: (_) => onGrab(),
+                      onPanUpdate: (details) => onResize(details.delta),
+                      onPanEnd: (_) => onRelease(),
+                      child: Container(
+                        width: 18,
+                        height: 18,
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: theme.colorScheme.onPrimary,
+                            width: 2,
+                          ),
                         ),
-                      ]
-                    : null,
-              ),
-              clipBehavior: Clip.antiAlias,
-              // The content takes no pointers of its own. Rendered markdown
-              // carries gesture recognizers for its links and its text, and
-              // those were winning the arena against the card — so a card
-              // could be looked at and never moved. On a canvas a card is an
-              // object you pick up, not a page you interact with.
-              child: IgnorePointer(
-                child: card.isImage
-                    ? _CanvasImage(reference: card.imagePath!)
-                    : Padding(
-                        padding: EdgeInsets.all(8 * scale.clamp(0.5, 1.5)),
-                        child: NoteView(markdown: card.markdown),
-                      ),
-              ),
-            ),
-            if (selected)
-              Positioned(
-                right: -6,
-                bottom: -6,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  dragStartBehavior: DragStartBehavior.down,
-                  onPanStart: (_) => onGrab(),
-                  onPanUpdate: (details) => onResize(details.delta),
-                  onPanEnd: (_) => onRelease(),
-                  child: Container(
-                    width: 18,
-                    height: 18,
-                    decoration: BoxDecoration(
-                      color: theme.colorScheme.primary,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: theme.colorScheme.onPrimary,
-                        width: 2,
                       ),
                     ),
                   ),
-                ),
-              ),
-          ],
+                // Turning it: a handle above the card, the way every tool that
+                // rotates puts one. Held with shift it steps in fifteens.
+                if (selected && !spot.locked)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    top: -28,
+                    child: Center(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        dragStartBehavior: DragStartBehavior.down,
+                        onPanStart: (_) => onGrab(),
+                        onPanUpdate: (details) =>
+                            onRotate(details.globalPosition),
+                        onPanEnd: (_) => onRelease(),
+                        child: Container(
+                          width: 18,
+                          height: 18,
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.tertiary,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: theme.colorScheme.onPrimary,
+                              width: 2,
+                            ),
+                          ),
+                          child: Icon(
+                            Icons.rotate_right,
+                            size: 10,
+                            color: theme.colorScheme.onTertiary,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );

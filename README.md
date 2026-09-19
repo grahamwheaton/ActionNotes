@@ -48,6 +48,16 @@ pasting one file — or by pointing the model at the repo.
   and Ctrl+A takes the lot. Dragging any one of a group moves the group, and
   the menu, the arrow keys and Delete all act on the whole selection.
 
+  **Each card** can be turned by the handle above it — hold shift to step in
+  fifteens — mirrored across or down, locked in place so a background stays
+  put, duplicated, and moved one step through the stack rather than all the
+  way. **Pack into rows** tidies a heap into an arrangement you can look at,
+  and cards can be matched to the widest or the narrowest of them. Z zooms to
+  what is selected.
+
+  **Getting pictures on**: the bar, Ctrl+V — an image from the clipboard, or
+  text as a note — or dropping files straight onto the canvas.
+
   **Lining things up**: dragging a card near another settles it onto that
   card's edge or centre line, with a guide drawn between the two saying what it
   found — hold alt to drag past. With several selected, the card menu offers

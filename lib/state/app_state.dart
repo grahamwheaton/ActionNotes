@@ -873,6 +873,44 @@ class AppState extends ChangeNotifier {
     await setBlockBody(slug, section, CanvasCards.serialize(cards));
   }
 
+  /// Puts a copy of a card on the canvas beside the original.
+  ///
+  /// Both the markdown and the arrangement gain an entry, so the copy is a
+  /// card in its own right rather than the same one drawn twice.
+  Future<void> duplicateCanvasCard(
+    String slug,
+    String section,
+    int index,
+  ) async {
+    final project = projectBySlug(slug);
+    if (project == null) return;
+
+    final block = project.blocks.firstWhere(
+      (block) => block.title == section,
+      orElse: () => const ProjectBlock(title: ''),
+    );
+    if (block.title.isEmpty) return;
+
+    final cards = CanvasCards.parse(block.body);
+    if (index < 0 || index >= cards.length) return;
+    cards.insert(index + 1, cards[index]);
+
+    final spots = [...layoutFor(slug).spotsFor(section)];
+    if (index < spots.length) {
+      final from = spots[index];
+      spots.insert(
+        index + 1,
+        // Offset a little, so the copy is visibly a second card rather than
+        // one exactly on top of another.
+        from.copyWith(x: from.x + 24, y: from.y + 24, locked: false),
+      );
+      _layouts[slug] = layoutFor(slug).withSection(section, spots);
+      unawaited(_pushLayout(slug));
+    }
+
+    await setBlockBody(slug, section, CanvasCards.serialize(cards));
+  }
+
   Future<void> setCanvasSpots(
     String slug,
     String section,
