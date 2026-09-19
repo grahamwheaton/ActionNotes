@@ -1211,35 +1211,53 @@ class CanvasViewState extends State<CanvasView> {
     _transform(targets, (spot) => spot.copyWith(width: width));
   }
 
-  /// Scales everything selected to the same area, which is what makes a wall
-  /// of references read evenly.
+  /// Scales everything selected so that one measurement of it matches.
   ///
-  /// Area rather than width, because a tall photograph and a wide one at the
-  /// same width are nothing like the same size on the board. Height follows
-  /// width, so the area of a card goes as the square of its width and the
-  /// scaling factor is the square root of the ratio.
-  void _normaliseSize(Set<int> targets) {
+  /// Height, width or area, taken either from the first card of the selection
+  /// or averaged across it — which is the pair of choices PureRef offers, and
+  /// they are genuinely different jobs: "make these match that one" and "even
+  /// these out".
+  ///
+  /// A card's height follows its width, so every one of these comes out as a
+  /// new width. Area is the one that makes a wall of references read evenly,
+  /// because a tall photograph and a wide one at the same width are nothing
+  /// like the same size on a board; its factor is the square root of the
+  /// ratio, since the area goes as the square of the width.
+  void _normalise(
+    Set<int> targets,
+    _Measure measure, {
+    required bool fromFirst,
+  }) {
     if (targets.length < 2) return;
 
-    final areas = <int, double>{};
-    for (final at in targets) {
-      final size = _sceneSize(at);
-      final area = size.width * size.height;
-      if (area > 0) areas[at] = area;
-    }
-    if (areas.length < 2) return;
+    // In the order they are on the canvas, so "the first" means something a
+    // person can point at rather than whichever was clicked first.
+    final order = targets.toList()..sort();
 
-    final mean = areas.values.reduce((a, b) => a + b) / areas.length;
+    final values = <int, double>{};
+    for (final at in order) {
+      final size = _sceneSize(at);
+      final value = switch (measure) {
+        _Measure.height => size.height,
+        _Measure.width => size.width,
+        _Measure.area => size.width * size.height,
+      };
+      if (value > 0) values[at] = value;
+    }
+    if (values.length < 2) return;
+
+    final target = fromFirst
+        ? values[order.firstWhere(values.containsKey)]!
+        : values.values.reduce((a, b) => a + b) / values.length;
 
     setState(() {
-      for (final entry in areas.entries) {
+      for (final entry in values.entries) {
         final spot = _spots[entry.key];
         if (spot.locked) continue;
+        final ratio = target / entry.value;
+        final factor = measure == _Measure.area ? math.sqrt(ratio) : ratio;
         _spots[entry.key] = spot.copyWith(
-          width: (spot.width * math.sqrt(mean / entry.value)).clamp(
-            40.0,
-            4000.0,
-          ),
+          width: (spot.width * factor).clamp(40.0, 4000.0),
         );
       }
     });
@@ -1297,6 +1315,24 @@ class CanvasViewState extends State<CanvasView> {
             ),
           ),
         ),
+    ], at);
+  }
+
+  /// Which measurement is being evened out, and against what.
+  void _showNormaliseMenu(Set<int> targets, Offset at) {
+    showItemMenu(context, [
+      for (final measure in _Measure.values) ...[
+        ContextMenuAction(
+          label: '${measure.label}: average',
+          icon: measure.icon,
+          onSelected: () => _normalise(targets, measure, fromFirst: false),
+        ),
+        ContextMenuAction(
+          label: '${measure.label}: match the first',
+          icon: measure.icon,
+          onSelected: () => _normalise(targets, measure, fromFirst: true),
+        ),
+      ],
     ], at);
   }
 
@@ -1360,9 +1396,9 @@ class CanvasViewState extends State<CanvasView> {
         onSelected: () => _matchWidth(targets, widest: false),
       ),
       ContextMenuAction(
-        label: 'Normalise size',
+        label: 'Normalise…',
         icon: Icons.photo_size_select_large,
-        onSelected: () => _normaliseSize(targets),
+        onSelected: () => _showNormaliseMenu(targets, at),
       ),
     ], at);
   }
@@ -1457,6 +1493,18 @@ class CanvasViewState extends State<CanvasView> {
           icon: Icons.align_horizontal_left,
           onSelected: () => _showAlignMenu(targets, at),
         ),
+      ContextMenuAction(
+        label: 'Invert the selection',
+        icon: Icons.flip_camera_android_outlined,
+        onSelected: () => setState(() {
+          _selection
+            ..clear()
+            ..addAll([
+              for (var i = 0; i < widget.cards.length; i++)
+                if (!targets.contains(i)) i,
+            ]);
+        }),
+      ),
       ContextMenuAction(
         label: many ? 'Bring ${targets.length} to front' : 'Bring to front',
         icon: Icons.flip_to_front,
@@ -1603,6 +1651,25 @@ class CanvasViewState extends State<CanvasView> {
 ///
 /// Positioned in viewport coordinates rather than inside a scaled Stack, so a
 /// card's text stays crisp at any zoom and its own gestures arrive unscaled.
+/// What "the same size" is being measured by.
+enum _Measure {
+  area,
+  width,
+  height;
+
+  String get label => switch (this) {
+    _Measure.area => 'Area',
+    _Measure.width => 'Width',
+    _Measure.height => 'Height',
+  };
+
+  IconData get icon => switch (this) {
+    _Measure.area => Icons.photo_size_select_large,
+    _Measure.width => Icons.width_wide,
+    _Measure.height => Icons.height,
+  };
+}
+
 /// The ways a group of cards can be lined up.
 enum _Align { left, centreX, right, top, middleY, bottom, spreadX, spreadY }
 

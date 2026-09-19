@@ -302,7 +302,9 @@ void main() {
       await menuOn(tester, 'One');
       await tester.tap(find.text('Line 3 up…'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Normalise size'));
+      await tester.tap(find.text('Normalise…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Area: average'));
       await tester.pumpAndSettle();
 
       final widths = spotsOf(state).map((s) => s.width).toList();
@@ -312,6 +314,43 @@ void main() {
       expect(widths[1], lessThan(200));
       expect(widths[0], greaterThan(120));
       expect(widths[0], widths[2]);
+      await settle(tester);
+    });
+
+    testWidgets('normalising width against the first matches that one', (
+      tester,
+    ) async {
+      final state = await pumpCanvas(tester, spots: threeApart);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      await menuOn(tester, 'One');
+      await tester.tap(find.text('Line 3 up…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Normalise…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Width: match the first'));
+      await tester.pumpAndSettle();
+
+      // The first on the canvas is 120 wide, so everything becomes 120 —
+      // "make these match that one", not "even these out".
+      expect(spotsOf(state).map((s) => s.width), [120, 120, 120]);
+      await settle(tester);
+    });
+
+    testWidgets('inverting the selection takes everything else', (
+      tester,
+    ) async {
+      await pumpCanvas(tester, spots: threeApart);
+
+      await menuOn(tester, 'One');
+      await tester.tap(find.text('Invert the selection'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 selected'), findsOneWidget);
       await settle(tester);
     });
   });
