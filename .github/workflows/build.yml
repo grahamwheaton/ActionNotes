@@ -43,28 +43,6 @@ jobs:
       - run: flutter analyze
       - run: flutter test
 
-      # Says whether the signing secrets are visible to Actions, without
-      # showing them: a missing or misnamed one silently produces a
-      # debug-signed APK, which is only noticeable when Android refuses to
-      # install it over the last release.
-      - name: Report which signing secrets are visible
-        env:
-          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          report() {
-            if [ -n "$2" ]; then
-              echo "$1: set (${#2} characters)"
-            else
-              echo "$1: MISSING"
-            fi
-          }
-          report ANDROID_KEYSTORE_BASE64 "$KEYSTORE"
-          report ANDROID_KEYSTORE_PASSWORD "$KEYSTORE_PASSWORD"
-          report ANDROID_KEY_ALIAS "$KEY_ALIAS"
-          report ANDROID_KEY_PASSWORD "$KEY_PASSWORD"
 
   android-debug:
     name: Android APK (debug)
