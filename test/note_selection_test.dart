@@ -80,8 +80,12 @@ class FakeClipboard {
         }
       },
     );
-    addTearDown(() => tester.binding.defaultBinaryMessenger
-        .setMockMethodCallHandler(SystemChannels.platform, null));
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
   }
 }
 
@@ -111,8 +115,9 @@ Future<String> saveAndRead(WidgetTester tester, FakeLocalStore store) async {
 }
 
 void main() {
-  testWidgets('shift and down turns a run of lines into checkboxes',
-      (tester) async {
+  testWidgets('shift and down turns a run of lines into checkboxes', (
+    tester,
+  ) async {
     final store = FakeLocalStore();
     await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
 
@@ -135,8 +140,9 @@ void main() {
     expect(await saveAndRead(tester, store), '- One\n- Two');
   });
 
-  testWidgets('with nothing selected the shortcut still changes one line',
-      (tester) async {
+  testWidgets('with nothing selected the shortcut still changes one line', (
+    tester,
+  ) async {
     final store = FakeLocalStore();
     await openNote(tester, store, notes: 'One\n\nTwo');
 
@@ -178,8 +184,9 @@ void main() {
     expect(notes.split('\n').where((l) => l.startsWith('- [ ]')), hasLength(2));
   });
 
-  testWidgets('shift and down inside a long line selects text, not rows',
-      (tester) async {
+  testWidgets('shift and down inside a long line selects text, not rows', (
+    tester,
+  ) async {
     final store = FakeLocalStore();
     await openNote(tester, store, notes: 'One\n\nTwo');
 
@@ -203,8 +210,9 @@ void main() {
   });
 
   group('across lines', () {
-    testWidgets('dragging from one line into another selects the lines',
-        (tester) async {
+    testWidgets('dragging from one line into another selects the lines', (
+      tester,
+    ) async {
       final store = FakeLocalStore();
       await openNote(tester, store, notes: 'One\n\nTwo\n\nThree');
 
@@ -227,8 +235,9 @@ void main() {
       expect(await saveAndRead(tester, store), 'One\n\n- [ ] Two\n- [ ] Three');
     });
 
-    testWidgets('a drag back into its own line hands selecting back to it',
-        (tester) async {
+    testWidgets('a drag back into its own line hands selecting back to it', (
+      tester,
+    ) async {
       final store = FakeLocalStore();
       await openNote(tester, store, notes: 'One\n\nTwo');
 
@@ -270,8 +279,9 @@ void main() {
       expect(await saveAndRead(tester, store), '- [ ] One\n\nTwo\n\nThree');
     });
 
-    testWidgets('copying a selection puts its markdown on the clipboard',
-        (tester) async {
+    testWidgets('copying a selection puts its markdown on the clipboard', (
+      tester,
+    ) async {
       final clipboard = FakeClipboard();
       final store = FakeLocalStore();
       await openNote(tester, store, notes: '# Title\n\nOne\n\n- Two');
@@ -367,4 +377,58 @@ void main() {
       expect(await saveAndRead(tester, store), 'One\n\nTwo\n\nThree');
     });
   });
+  group('an arrow key at the edge of a row', () {
+    testWidgets('down carries on into the row below', (tester) async {
+      await openNote(tester, FakeLocalStore(), notes: 'First\nSecond');
+
+      await tester.tap(blockField(0));
+      await tester.pumpAndSettle();
+      _caretAt(tester, 0, 'First'.length);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+
+      // The note is one piece of writing even though every line is its own
+      // field, so the caret walks through it rather than stopping dead.
+      expect(_focused(tester, 1), isTrue);
+      expect(_caret(tester, 1), 0);
+    });
+
+    testWidgets('up goes back to the end of the row above', (tester) async {
+      await openNote(tester, FakeLocalStore(), notes: 'First\nSecond');
+
+      await tester.tap(blockField(1));
+      await tester.pumpAndSettle();
+      _caretAt(tester, 1, 0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+
+      expect(_focused(tester, 0), isTrue);
+      expect(_caret(tester, 0), 'First'.length);
+    });
+
+    testWidgets('the last row keeps the caret rather than losing it', (
+      tester,
+    ) async {
+      await openNote(tester, FakeLocalStore(), notes: 'First\nSecond');
+
+      await tester.tap(blockField(1));
+      await tester.pumpAndSettle();
+      _caretAt(tester, 1, 'Second'.length);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+
+      expect(_focused(tester, 1), isTrue);
+    });
+  });
 }
+
+void _caretAt(WidgetTester tester, int row, int offset) {
+  final field = tester.widget<TextField>(blockField(row));
+  field.controller!.selection = TextSelection.collapsed(offset: offset);
+}
+
+bool _focused(WidgetTester tester, int row) =>
+    tester.widget<TextField>(blockField(row)).focusNode!.hasFocus;
+
+int _caret(WidgetTester tester, int row) =>
+    tester.widget<TextField>(blockField(row)).controller!.selection.baseOffset;

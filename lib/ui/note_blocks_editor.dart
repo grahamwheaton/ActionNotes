@@ -176,6 +176,31 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     });
   }
 
+  /// Moves the caret to the row above or below, the way an arrow key moves
+  /// between the lines of one field.
+  ///
+  /// Every row is its own field, so without this the caret stops dead at the
+  /// end of a line: the note reads as one piece of writing and has to be
+  /// walked through as one. The caret only ever steps from the very edge of
+  /// a row, so it lands at the near edge of the next one — the end of the
+  /// row above, or the start of the row below. Images are stepped over
+  /// rather than landed on, since there is nowhere in one to put a caret.
+  bool _stepRow(_Row row, int delta) {
+    var next = _indexOfId(row.id) + delta;
+    while (next >= 0 && next < _rows.length && !_rows[next].block.isText) {
+      next += delta;
+    }
+    if (next < 0 || next >= _rows.length) return false;
+
+    final target = _rows[next];
+    _clearRowSelection();
+    target.focus?.requestFocus();
+    target.controller!.selection = TextSelection.collapsed(
+      offset: delta > 0 ? 0 : target.controller!.text.length,
+    );
+    return true;
+  }
+
   /// Grows the selection by one row, the way shift and an arrow key do in a
   /// list. Starts one from the row the caret is in.
   void _extendRows(_Row row, int delta) {
@@ -736,6 +761,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
               selected: _selectedIds.contains(row.id),
               onSetType: (kind) => _applyBlockType(row, kind),
               onExtendRows: (delta) => _extendRows(row, delta),
+              onStepRow: (delta) => _stepRow(row, delta),
               onExtendTo: () => _extendTo(row),
               onClearSelection: _clearRowSelection,
               onPaste: widget.onPaste,
@@ -777,6 +803,7 @@ class _TextBlock extends StatelessWidget {
     required this.onToggleTask,
     required this.selected,
     required this.onExtendRows,
+    required this.onStepRow,
     required this.onExtendTo,
     required this.onClearSelection,
     required this.onCopySelection,
@@ -801,6 +828,11 @@ class _TextBlock extends StatelessWidget {
   /// Whether this row is part of a run picked out for a block-type change.
   final bool selected;
   final ValueChanged<int> onExtendRows;
+
+  /// Takes the caret to the row above or below. False when there is no row
+  /// that way, so the key falls through.
+  final bool Function(int delta) onStepRow;
+
   final VoidCallback onExtendTo;
   final VoidCallback onClearSelection;
 
@@ -928,6 +960,27 @@ class _TextBlock extends StatelessWidget {
             (up && selection.extentOffset <= 0);
         if (atEdge) {
           onExtendRows(down ? 1 : -1);
+          return KeyEventResult.handled;
+        }
+      }
+    }
+
+    // A plain arrow key runs off the end of a row into the next one. The
+    // field moves the caret within its own wrapped lines first and only parks
+    // it at the very edge once there is nowhere left to go, so testing the
+    // edge is enough to tell "next visual line" from "next row".
+    {
+      final down = event.logicalKey == LogicalKeyboardKey.arrowDown;
+      final up = event.logicalKey == LogicalKeyboardKey.arrowUp;
+      if ((down || up) && !HardwareKeyboard.instance.isShiftPressed) {
+        final selection = row.controller!.selection;
+        final text = row.controller!.text;
+        final atEdge =
+            selection.isCollapsed &&
+            (down
+                ? selection.extentOffset >= text.length
+                : selection.extentOffset <= 0);
+        if (atEdge && onStepRow(down ? 1 : -1)) {
           return KeyEventResult.handled;
         }
       }

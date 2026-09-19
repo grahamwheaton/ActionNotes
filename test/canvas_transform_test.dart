@@ -288,5 +288,64 @@ void main() {
       expect(spotsOf(state).map((s) => s.width), [200, 200, 200]);
       await settle(tester);
     });
+
+    testWidgets('normalising size evens them out without matching widths', (
+      tester,
+    ) async {
+      final state = await pumpCanvas(tester, spots: threeApart);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyA);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      await menuOn(tester, 'One');
+      await tester.tap(find.text('Line 3 up…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Normalise size'));
+      await tester.pumpAndSettle();
+
+      final widths = spotsOf(state).map((s) => s.width).toList();
+      // The wide one comes down and the narrow ones go up, so the spread
+      // closes without everything being forced to one width — the point is
+      // equal area, and these cards are not the same shape.
+      expect(widths[1], lessThan(200));
+      expect(widths[0], greaterThan(120));
+      expect(widths[0], widths[2]);
+      await settle(tester);
+    });
+  });
+
+  group('how a canvas is drawn', () {
+    testWidgets('the background can be changed and is remembered', (
+      tester,
+    ) async {
+      final state = await pumpCanvas(tester, spots: threeApart);
+
+      await tester.tap(find.byTooltip('How the canvas looks'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Grid').last);
+      await tester.pumpAndSettle();
+
+      expect(
+        state.canvasSettings('list', 'Board').background,
+        CanvasBackground.grid,
+      );
+      await settle(tester);
+    });
+
+    testWidgets('a canvas can keep its own dark whatever the app is set to', (
+      tester,
+    ) async {
+      final state = await pumpCanvas(tester, spots: threeApart);
+
+      await tester.tap(find.byTooltip('How the canvas looks'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Dark').last);
+      await tester.pumpAndSettle();
+
+      expect(state.canvasSettings('list', 'Board').dark, isTrue);
+      await settle(tester);
+    });
   });
 }

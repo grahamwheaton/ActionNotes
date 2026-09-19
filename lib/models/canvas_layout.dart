@@ -110,6 +110,96 @@ class CanvasSpot {
       Object.hash(x, y, width, z, ref, rotation, flipX, flipY, locked);
 }
 
+/// How one canvas is drawn, as opposed to what is on it.
+///
+/// Lives beside the positions for the same reason they do: none of it is
+/// readable markdown, and none of it is content — losing it costs a
+/// preference and nothing else.
+class CanvasSettings {
+  const CanvasSettings({
+    this.height = defaultHeight,
+    this.background = CanvasBackground.dots,
+    this.dark,
+  });
+
+  /// How tall the canvas is drawn inside a project, in logical pixels. A
+  /// canvas sits in a scrolling list, so it has to be given a height; this is
+  /// the one the bottom edge drags.
+  final double height;
+
+  /// What is drawn under the cards.
+  final CanvasBackground background;
+
+  /// Null follows the app's theme, which is what a canvas did before this
+  /// existed. Set, the canvas keeps its own light or dark regardless — a
+  /// moodboard is often worth looking at on the opposite one.
+  final bool? dark;
+
+  static const defaultHeight = 420.0;
+  static const minHeight = 160.0;
+  static const maxHeight = 1600.0;
+
+  static const standard = CanvasSettings();
+
+  bool get isStandard =>
+      height == defaultHeight &&
+      background == CanvasBackground.dots &&
+      dark == null;
+
+  CanvasSettings copyWith({
+    double? height,
+    CanvasBackground? background,
+    bool? dark,
+    bool clearDark = false,
+  }) => CanvasSettings(
+    height: height ?? this.height,
+    background: background ?? this.background,
+    dark: clearDark ? null : (dark ?? this.dark),
+  );
+
+  Map<String, dynamic> toJson() => {
+    if (height != defaultHeight) 'h': height,
+    if (background != CanvasBackground.dots) 'bg': background.name,
+    if (dark != null) 'dark': dark,
+  };
+
+  static CanvasSettings fromJson(Map<String, dynamic> json) => CanvasSettings(
+    height: json.containsKey('h')
+        ? CanvasSpot._number(json['h']).clamp(minHeight, maxHeight)
+        : defaultHeight,
+    background: CanvasBackground.byName(json['bg'] as String?),
+    dark: json['dark'] is bool ? json['dark'] as bool : null,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is CanvasSettings &&
+      other.height == height &&
+      other.background == background &&
+      other.dark == dark;
+
+  @override
+  int get hashCode => Object.hash(height, background, dark);
+}
+
+/// What is drawn under the cards on a canvas.
+enum CanvasBackground {
+  dots,
+  grid,
+  plain;
+
+  String get label => switch (this) {
+    CanvasBackground.dots => 'Dots',
+    CanvasBackground.grid => 'Grid',
+    CanvasBackground.plain => 'Plain',
+  };
+
+  static CanvasBackground byName(String? name) => values.firstWhere(
+    (value) => value.name == name,
+    orElse: () => CanvasBackground.dots,
+  );
+}
+
 /// Where everything on one project's canvases sits.
 ///
 /// Kept beside the project rather than in it, in `canvas/<slug>.json`. A
@@ -127,11 +217,20 @@ class CanvasSpot {
 /// markdown, and keeping it here means a project with no layout file has no
 /// canvases and simply shows its sections as notes.
 class CanvasLayout {
-  const CanvasLayout({this.sections = const {}, this.sha});
+  const CanvasLayout({
+    this.sections = const {},
+    this.settings = const {},
+    this.sha,
+  });
 
   /// Section title to the spots of its cards, in the order the cards are in
   /// the file.
   final Map<String, List<CanvasSpot>> sections;
+
+  /// Section title to how that canvas is drawn. A section missing from here
+  /// is drawn the standard way, so a layout file written before this existed
+  /// reads back unchanged.
+  final Map<String, CanvasSettings> settings;
 
   /// The blob SHA GitHub last gave us for the layout file.
   final String? sha;
@@ -144,10 +243,28 @@ class CanvasLayout {
 
   List<CanvasSpot> spotsFor(String section) => sections[section] ?? const [];
 
+  CanvasSettings settingsFor(String section) =>
+      settings[section] ?? CanvasSettings.standard;
+
   CanvasLayout copyWith({
     Map<String, List<CanvasSpot>>? sections,
+    Map<String, CanvasSettings>? settings,
     String? sha,
-  }) => CanvasLayout(sections: sections ?? this.sections, sha: sha ?? this.sha);
+  }) => CanvasLayout(
+    sections: sections ?? this.sections,
+    settings: settings ?? this.settings,
+    sha: sha ?? this.sha,
+  );
+
+  /// Back to standard drops the entry rather than writing one that says
+  /// nothing, so a canvas nobody has adjusted leaves no trace in the file.
+  CanvasLayout withSettings(String section, CanvasSettings value) => copyWith(
+    settings: {
+      for (final entry in settings.entries)
+        if (entry.key != section) entry.key: entry.value,
+      if (!value.isStandard) section: value,
+    },
+  );
 
   CanvasLayout withSection(String section, List<CanvasSpot> spots) =>
       copyWith(sections: {...sections, section: spots});
@@ -155,6 +272,10 @@ class CanvasLayout {
   CanvasLayout withoutSection(String section) => copyWith(
     sections: {
       for (final entry in sections.entries)
+        if (entry.key != section) entry.key: entry.value,
+    },
+    settings: {
+      for (final entry in settings.entries)
         if (entry.key != section) entry.key: entry.value,
     },
   );
@@ -168,6 +289,10 @@ class CanvasLayout {
         for (final entry in sections.entries)
           if (entry.key == from) to: entry.value else entry.key: entry.value,
       },
+      settings: {
+        for (final entry in settings.entries)
+          if (entry.key == from) to: entry.value else entry.key: entry.value,
+      },
     );
   }
 
@@ -179,6 +304,13 @@ class CanvasLayout {
       for (final entry in sections.entries)
         entry.key: [for (final spot in entry.value) spot.toJson()],
     },
+    // Only when something was actually changed, so the file a canvas has
+    // always written does not grow a key that says nothing.
+    if (settings.values.any((value) => !value.isStandard))
+      'settings': {
+        for (final entry in settings.entries)
+          if (!entry.value.isStandard) entry.key: entry.value.toJson(),
+      },
   });
 
   /// Reads the file. A layout that cannot be understood is treated as absent
@@ -201,7 +333,18 @@ class CanvasLayout {
             if (spot is Map<String, dynamic>) CanvasSpot.fromJson(spot),
         ];
       }
-      return CanvasLayout(sections: sections, sha: sha);
+      final settings = <String, CanvasSettings>{};
+      final rawSettings = json['settings'];
+      if (rawSettings is Map<String, dynamic>) {
+        for (final entry in rawSettings.entries) {
+          final value = entry.value;
+          if (value is Map<String, dynamic>) {
+            settings[entry.key] = CanvasSettings.fromJson(value);
+          }
+        }
+      }
+
+      return CanvasLayout(sections: sections, settings: settings, sha: sha);
     } on FormatException {
       return CanvasLayout(sha: sha);
     }

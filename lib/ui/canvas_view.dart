@@ -14,6 +14,7 @@ import 'image_viewer.dart';
 import 'canvas_snap.dart';
 import 'context_menu.dart';
 import 'note_view.dart';
+import 'theme.dart';
 import 'touch_input.dart';
 
 /// A canvas: pictures and notes laid out on a surface that pans and zooms.
@@ -29,6 +30,8 @@ class CanvasView extends StatefulWidget {
     required this.cards,
     required this.spots,
     required this.onChanged,
+    this.settings = CanvasSettings.standard,
+    this.onSettingsChanged,
     this.onRemoveCard,
     this.onDuplicateCard,
     this.onOpenFullScreen,
@@ -44,6 +47,13 @@ class CanvasView extends StatefulWidget {
 
   /// Fires with the new positions when something is moved or resized.
   final ValueChanged<List<CanvasSpot>> onChanged;
+
+  /// How this canvas is drawn — its background and whether it keeps its own
+  /// light or dark.
+  final CanvasSettings settings;
+
+  /// Null where the drawing is not the viewer's to change.
+  final ValueChanged<CanvasSettings>? onSettingsChanged;
 
   /// Takes a card off the canvas, which means off the section's markdown —
   /// null where that is not on offer.
@@ -512,7 +522,14 @@ class CanvasViewState extends State<CanvasView> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final settings = widget.settings;
+    // A canvas can keep its own light or dark: a moodboard of photographs
+    // usually wants the dark one whatever the rest of the app is set to, and
+    // a board of notes usually wants the light one. Null follows the app,
+    // which is what a canvas did before this was on offer.
+    final theme = settings.dark == null
+        ? Theme.of(context)
+        : (settings.dark! ? AppTheme.dark() : AppTheme.light());
     final touch = TouchInput.isPrimary;
 
     _cardKeys.removeWhere((index, _) => index >= widget.cards.length);
@@ -527,176 +544,189 @@ class CanvasViewState extends State<CanvasView> {
     final order = [for (var i = 0; i < drawable; i++) i]
       ..sort((a, b) => _spots[a].z.compareTo(_spots[b].z));
 
-    return Focus(
-      focusNode: _focus,
-      autofocus: widget.autofocus,
-      onKeyEvent: _onKey,
-      child: Listener(
-        // A pointer signal is a wheel or a trackpad, and never joins the
-        // gesture arena, so it can sit above everything without taking
-        // anything away from the cards.
-        onPointerSignal: _onPointerSignal,
-        // The middle button pans, and never joins the gesture arena, so it
-        // works while the left button is drawing a marquee.
-        onPointerDown: (event) {
-          if (event.buttons & kMiddleMouseButton == 0) return;
-          _middlePan = event.pointer;
-        },
-        onPointerMove: (event) {
-          if (event.pointer != _middlePan) return;
-          setState(() => _pan += event.delta);
-        },
-        onPointerUp: (event) {
-          if (event.pointer == _middlePan) _middlePan = null;
-        },
-        onPointerCancel: (event) {
-          if (event.pointer == _middlePan) _middlePan = null;
-        },
-        child: ClipRect(
-          child: Stack(
-            key: _viewport,
-            clipBehavior: Clip.none,
-            children: [
-              // The surface, *behind* the cards rather than around them. As an
-              // ancestor its scale recognizer beat every card to the gesture
-              // and nothing could be dragged; as a sibling underneath, a
-              // pointer that lands on a card is taken by the card and never
-              // reaches here.
-              Positioned.fill(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    _focus.requestFocus();
-                    setState(_selection.clear);
-                  },
-                  // Under a finger, a drag pans and two fingers zoom. With a
-                  // mouse, a drag draws a marquee unless space is held, and
-                  // panning is the middle button, space and drag, or the
-                  // wheel.
-                  onScaleStart: touch ? _onScaleStart : null,
-                  onScaleUpdate: touch ? _onScaleUpdate : null,
-                  onPanStart: touch
-                      ? null
-                      : (details) {
-                          _focus.requestFocus();
-                          // Space held: this drag pans instead of selecting,
-                          // and leaving the marquee unstarted is what the
-                          // update below reads as "pan".
-                          if (_panning) return;
-                          _marqueeStart(details.localPosition);
-                        },
-                  onPanUpdate: touch
-                      ? null
-                      : (details) {
-                          if (_marqueeFrom != null) {
-                            _marqueeUpdate(details.localPosition);
-                            return;
-                          }
-                          setState(() => _pan += details.delta);
-                        },
-                  onPanEnd: touch ? null : (_) => _marqueeEnd(),
-                  child: CustomPaint(
-                    painter: _GridPainter(
-                      pan: _pan,
-                      scale: _scale,
-                      colour: theme.colorScheme.outlineVariant.withValues(
-                        alpha: 0.5,
-                      ),
-                    ),
+    return Theme(
+      data: theme,
+      child: Focus(
+        focusNode: _focus,
+        autofocus: widget.autofocus,
+        onKeyEvent: _onKey,
+        child: Listener(
+          // A pointer signal is a wheel or a trackpad, and never joins the
+          // gesture arena, so it can sit above everything without taking
+          // anything away from the cards.
+          onPointerSignal: _onPointerSignal,
+          // The middle button pans, and never joins the gesture arena, so it
+          // works while the left button is drawing a marquee.
+          onPointerDown: (event) {
+            if (event.buttons & kMiddleMouseButton == 0) return;
+            _middlePan = event.pointer;
+          },
+          onPointerMove: (event) {
+            if (event.pointer != _middlePan) return;
+            setState(() => _pan += event.delta);
+          },
+          onPointerUp: (event) {
+            if (event.pointer == _middlePan) _middlePan = null;
+          },
+          onPointerCancel: (event) {
+            if (event.pointer == _middlePan) _middlePan = null;
+          },
+          child: ClipRect(
+            child: Stack(
+              key: _viewport,
+              clipBehavior: Clip.none,
+              children: [
+                // The surface, *behind* the cards rather than around them. As an
+                // ancestor its scale recognizer beat every card to the gesture
+                // and nothing could be dragged; as a sibling underneath, a
+                // pointer that lands on a card is taken by the card and never
+                // reaches here.
+                // The canvas's own paper. Only when it is keeping a light or
+                // dark of its own — otherwise whatever it is sitting in shows
+                // through, the way it always did.
+                if (settings.dark != null)
+                  Positioned.fill(
+                    child: ColoredBox(color: theme.colorScheme.surface),
                   ),
-                ),
-              ),
-              for (final index in order)
-                _CardOnCanvas(
-                  key: ValueKey(
-                    'card-${widget.section}-'
-                    '${widget.cards[index].ref}-$index',
-                  ),
-                  card: widget.cards[index],
-                  spot: _spots[index],
-                  pan: _pan,
-                  scale: _scale,
-                  slug: widget.slug,
-                  cardKey: _cardKeys.putIfAbsent(index, GlobalKey.new),
-                  selected: _selection.contains(index),
-                  onGrab: () {
-                    _focus.requestFocus();
-                    _active = index;
-                    _select(index, additive: _additive);
-                    _beginDrag(index);
-                    // Raise whatever is now selected, so a group picked up
-                    // comes forward together rather than one of it.
-                    _bringToFront(
-                      _selection.contains(index) ? _selection : {index},
-                    );
-                  },
-                  onMenu: (at) => _showCardMenu(index, at),
-                  onMove: (delta) => _moveBy(index, delta),
-                  onRotate: (at) => _rotateTo(index, at),
-                  onResize: (delta) => _resizeBy(index, delta),
-                  onRelease: () {
-                    _active = null;
-                    _endDrag();
-                    _commit();
-                  },
-                ),
-              for (final guide in _guides)
-                Positioned.fromRect(
-                  rect: _guideRect(guide),
-                  child: IgnorePointer(
-                    child: ColoredBox(color: theme.colorScheme.tertiary),
-                  ),
-                ),
-              if (_marquee != null)
-                Positioned.fromRect(
-                  rect: _marquee!,
-                  child: IgnorePointer(
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.primary.withValues(
-                          alpha: 0.12,
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      _focus.requestFocus();
+                      setState(_selection.clear);
+                    },
+                    // Under a finger, a drag pans and two fingers zoom. With a
+                    // mouse, a drag draws a marquee unless space is held, and
+                    // panning is the middle button, space and drag, or the
+                    // wheel.
+                    onScaleStart: touch ? _onScaleStart : null,
+                    onScaleUpdate: touch ? _onScaleUpdate : null,
+                    onPanStart: touch
+                        ? null
+                        : (details) {
+                            _focus.requestFocus();
+                            // Space held: this drag pans instead of selecting,
+                            // and leaving the marquee unstarted is what the
+                            // update below reads as "pan".
+                            if (_panning) return;
+                            _marqueeStart(details.localPosition);
+                          },
+                    onPanUpdate: touch
+                        ? null
+                        : (details) {
+                            if (_marqueeFrom != null) {
+                              _marqueeUpdate(details.localPosition);
+                              return;
+                            }
+                            setState(() => _pan += details.delta);
+                          },
+                    onPanEnd: touch ? null : (_) => _marqueeEnd(),
+                    child: CustomPaint(
+                      painter: _GridPainter(
+                        pan: _pan,
+                        scale: _scale,
+                        style: settings.background,
+                        colour: theme.colorScheme.outlineVariant.withValues(
+                          alpha: 0.5,
                         ),
-                        border: Border.all(color: theme.colorScheme.primary),
                       ),
                     ),
                   ),
                 ),
-              if (_selection.length > 1)
+                for (final index in order)
+                  _CardOnCanvas(
+                    key: ValueKey(
+                      'card-${widget.section}-'
+                      '${widget.cards[index].ref}-$index',
+                    ),
+                    card: widget.cards[index],
+                    spot: _spots[index],
+                    pan: _pan,
+                    scale: _scale,
+                    slug: widget.slug,
+                    cardKey: _cardKeys.putIfAbsent(index, GlobalKey.new),
+                    selected: _selection.contains(index),
+                    onGrab: () {
+                      _focus.requestFocus();
+                      _active = index;
+                      _select(index, additive: _additive);
+                      _beginDrag(index);
+                      // Raise whatever is now selected, so a group picked up
+                      // comes forward together rather than one of it.
+                      _bringToFront(
+                        _selection.contains(index) ? _selection : {index},
+                      );
+                    },
+                    onMenu: (at) => _showCardMenu(index, at),
+                    onMove: (delta) => _moveBy(index, delta),
+                    onRotate: (at) => _rotateTo(index, at),
+                    onResize: (delta) => _resizeBy(index, delta),
+                    onRelease: () {
+                      _active = null;
+                      _endDrag();
+                      _commit();
+                    },
+                  ),
+                for (final guide in _guides)
+                  Positioned.fromRect(
+                    rect: _guideRect(guide),
+                    child: IgnorePointer(
+                      child: ColoredBox(color: theme.colorScheme.tertiary),
+                    ),
+                  ),
+                if (_marquee != null)
+                  Positioned.fromRect(
+                    rect: _marquee!,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.primary.withValues(
+                            alpha: 0.12,
+                          ),
+                          border: Border.all(color: theme.colorScheme.primary),
+                        ),
+                      ),
+                    ),
+                  ),
+                if (_selection.length > 1)
+                  Positioned(
+                    left: 8,
+                    bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
+                    child: IgnorePointer(
+                      child: Material(
+                        color: theme.colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(16),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          child: Text(
+                            '${_selection.length} selected',
+                            style: theme.textTheme.labelMedium,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 Positioned(
-                  left: 8,
+                  right: 8,
+                  // Clear of the system bar at the bottom of a phone, which was
+                  // sitting on top of the zoom controls.
                   bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
-                  child: IgnorePointer(
-                    child: Material(
-                      color: theme.colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(16),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 6,
-                        ),
-                        child: Text(
-                          '${_selection.length} selected',
-                          style: theme.textTheme.labelMedium,
-                        ),
-                      ),
-                    ),
+                  child: _CanvasControls(
+                    scale: _scale,
+                    settings: settings,
+                    onSettingsChanged: widget.onSettingsChanged,
+                    onOpenFullScreen: widget.onOpenFullScreen,
+                    onZoomIn: () => _zoomAround(_centre(), 1.2),
+                    onZoomOut: () => _zoomAround(_centre(), 1 / 1.2),
+                    onFit: fit,
+                    onReset: () => setState(() => _scale = 1),
                   ),
                 ),
-              Positioned(
-                right: 8,
-                // Clear of the system bar at the bottom of a phone, which was
-                // sitting on top of the zoom controls.
-                bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
-                child: _CanvasControls(
-                  scale: _scale,
-                  onOpenFullScreen: widget.onOpenFullScreen,
-                  onZoomIn: () => _zoomAround(_centre(), 1.2),
-                  onZoomOut: () => _zoomAround(_centre(), 1 / 1.2),
-                  onFit: fit,
-                  onReset: () => setState(() => _scale = 1),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -912,6 +942,41 @@ class CanvasViewState extends State<CanvasView> {
     _transform(targets, (spot) => spot.copyWith(width: width));
   }
 
+  /// Scales everything selected to the same area, which is what makes a wall
+  /// of references read evenly.
+  ///
+  /// Area rather than width, because a tall photograph and a wide one at the
+  /// same width are nothing like the same size on the board. Height follows
+  /// width, so the area of a card goes as the square of its width and the
+  /// scaling factor is the square root of the ratio.
+  void _normaliseSize(Set<int> targets) {
+    if (targets.length < 2) return;
+
+    final areas = <int, double>{};
+    for (final at in targets) {
+      final size = _sceneSize(at);
+      final area = size.width * size.height;
+      if (area > 0) areas[at] = area;
+    }
+    if (areas.length < 2) return;
+
+    final mean = areas.values.reduce((a, b) => a + b) / areas.length;
+
+    setState(() {
+      for (final entry in areas.entries) {
+        final spot = _spots[entry.key];
+        if (spot.locked) continue;
+        _spots[entry.key] = spot.copyWith(
+          width: (spot.width * math.sqrt(mean / entry.value)).clamp(
+            40.0,
+            4000.0,
+          ),
+        );
+      }
+    });
+    _commit();
+  }
+
   /// Fills the view with whatever is selected, or everything if nothing is.
   void zoomToSelection() {
     if (_selection.isEmpty) {
@@ -1003,6 +1068,11 @@ class CanvasViewState extends State<CanvasView> {
         label: 'Match the narrowest',
         icon: Icons.width_normal,
         onSelected: () => _matchWidth(targets, widest: false),
+      ),
+      ContextMenuAction(
+        label: 'Normalise size',
+        icon: Icons.photo_size_select_large,
+        onSelected: () => _normaliseSize(targets),
       ),
     ], at);
   }
@@ -1475,6 +1545,8 @@ class _CanvasImageState extends State<_CanvasImage> {
 class _CanvasControls extends StatelessWidget {
   const _CanvasControls({
     required this.scale,
+    required this.settings,
+    required this.onSettingsChanged,
     required this.onZoomIn,
     required this.onZoomOut,
     required this.onFit,
@@ -1483,6 +1555,8 @@ class _CanvasControls extends StatelessWidget {
   });
 
   final double scale;
+  final CanvasSettings settings;
+  final ValueChanged<CanvasSettings>? onSettingsChanged;
   final VoidCallback? onOpenFullScreen;
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
@@ -1527,6 +1601,52 @@ class _CanvasControls extends StatelessWidget {
               icon: const Icon(Icons.fit_screen_outlined, size: 18),
               onPressed: onFit,
             ),
+            if (onSettingsChanged != null)
+              PopupMenuButton<void>(
+                tooltip: 'How the canvas looks',
+                icon: const Icon(Icons.tune, size: 18),
+                iconSize: 18,
+                position: PopupMenuPosition.under,
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    enabled: false,
+                    height: 32,
+                    child: Text('Background'),
+                  ),
+                  for (final option in CanvasBackground.values)
+                    CheckedPopupMenuItem(
+                      checked: settings.background == option,
+                      onTap: () => onSettingsChanged!(
+                        settings.copyWith(background: option),
+                      ),
+                      child: Text(option.label),
+                    ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    enabled: false,
+                    height: 32,
+                    child: Text('Shade'),
+                  ),
+                  CheckedPopupMenuItem(
+                    checked: settings.dark == null,
+                    onTap: () =>
+                        onSettingsChanged!(settings.copyWith(clearDark: true)),
+                    child: const Text('Match the app'),
+                  ),
+                  CheckedPopupMenuItem(
+                    checked: settings.dark == false,
+                    onTap: () =>
+                        onSettingsChanged!(settings.copyWith(dark: false)),
+                    child: const Text('Light'),
+                  ),
+                  CheckedPopupMenuItem(
+                    checked: settings.dark == true,
+                    onTap: () =>
+                        onSettingsChanged!(settings.copyWith(dark: true)),
+                    child: const Text('Dark'),
+                  ),
+                ],
+              ),
             if (onOpenFullScreen != null)
               IconButton(
                 tooltip: 'Open full screen',
@@ -1541,23 +1661,47 @@ class _CanvasControls extends StatelessWidget {
   }
 }
 
-/// A faint grid, so panning an empty canvas shows that it is moving.
+/// What is under the cards, so panning an empty canvas shows that it is
+/// moving — and so a board can be read against dots, against a grid, or
+/// against nothing at all.
 class _GridPainter extends CustomPainter {
-  _GridPainter({required this.pan, required this.scale, required this.colour});
+  _GridPainter({
+    required this.pan,
+    required this.scale,
+    required this.colour,
+    required this.style,
+  });
 
   final Offset pan;
   final double scale;
   final Color colour;
+  final CanvasBackground style;
 
   @override
   void paint(Canvas canvas, Size size) {
+    if (style == CanvasBackground.plain) return;
+
     const spacing = 80.0;
     final step = spacing * scale;
+    // Zoomed far enough out the marks merge into a wash, which reads as a
+    // tinted canvas rather than as a background. Better to have none.
     if (step < 8) return;
 
     final paint = Paint()
       ..color = colour
       ..strokeWidth = 1;
+
+    if (style == CanvasBackground.dots) {
+      // A dot at every crossing, sized so it stays a mark rather than
+      // becoming a blob as the canvas is zoomed in.
+      final radius = math.min(1.6, 0.9 * math.max(scale, 0.6));
+      for (var x = pan.dx % step; x < size.width; x += step) {
+        for (var y = pan.dy % step; y < size.height; y += step) {
+          canvas.drawCircle(Offset(x, y), radius, paint);
+        }
+      }
+      return;
+    }
 
     for (var x = pan.dx % step; x < size.width; x += step) {
       canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
@@ -1569,5 +1713,8 @@ class _GridPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GridPainter old) =>
-      old.pan != pan || old.scale != scale || old.colour != colour;
+      old.pan != pan ||
+      old.scale != scale ||
+      old.colour != colour ||
+      old.style != style;
 }

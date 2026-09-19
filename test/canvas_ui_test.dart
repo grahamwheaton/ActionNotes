@@ -56,6 +56,7 @@ Future<List<CanvasSpot>> pumpCanvas(
 
 void main() {
   _addingToACanvas();
+  _resizingTheCanvasInAProject();
 
   group('moving a card', () {
     testWidgets('drags it, and reports where it ended up', (tester) async {
@@ -322,5 +323,55 @@ void _addingToACanvas() {
     expect(state.projects.single.items, isEmpty);
     expect(state.projects.single.blocks.single.body, contains('- A thought'));
     expect(find.byType(CanvasView), findsOneWidget);
+  });
+}
+
+void _resizingTheCanvasInAProject() {
+  testWidgets('the handle under a canvas drags its height and keeps it', (
+    tester,
+  ) async {
+    TouchInput.debugOverride = true;
+    addTearDown(() => TouchInput.debugOverride = null);
+    tester.view.physicalSize = const Size(600, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final state = newTestState(FakeLocalStore());
+    await state.init();
+    await state.createProject('List');
+    await state.addBlock('list', 'Moodboard');
+    await state.setBlockBody('list', 'Moodboard', '- One');
+    await state.setCanvas('list', 'Moodboard', true);
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: const ChecklistView(slug: 'list'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final before = tester.getSize(find.byType(CanvasView)).height;
+    expect(before, CanvasSettings.defaultHeight);
+
+    await tester.drag(
+      find.byTooltip('Drag to resize the canvas'),
+      const Offset(0, 120),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.getSize(find.byType(CanvasView)).height,
+      CanvasSettings.defaultHeight + 120,
+    );
+    // And it is the layout file that remembers, not just this screen.
+    expect(
+      state.canvasSettings('list', 'Moodboard').height,
+      CanvasSettings.defaultHeight + 120,
+    );
+    await tester.pump(const Duration(seconds: 3));
   });
 }

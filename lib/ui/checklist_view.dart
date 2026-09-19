@@ -10,6 +10,7 @@ import '../markdown/canvas_cards.dart';
 import '../markdown/canvas_placement.dart';
 import '../markdown/note_conversation.dart';
 import '../markdown/project_links.dart';
+import '../models/canvas_layout.dart';
 import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
@@ -1452,7 +1453,7 @@ class _BlockSection extends StatelessWidget {
 /// as positions only — dragging never rewrites the markdown it is drawing,
 /// which is what makes losing the layout cost the arrangement and nothing
 /// else.
-class _SectionCanvas extends StatelessWidget {
+class _SectionCanvas extends StatefulWidget {
   const _SectionCanvas({
     super.key,
     required this.slug,
@@ -1465,10 +1466,42 @@ class _SectionCanvas extends StatelessWidget {
   final String body;
 
   @override
+  State<_SectionCanvas> createState() => _SectionCanvasState();
+}
+
+class _SectionCanvasState extends State<_SectionCanvas> {
+  /// The height being dragged to, kept here rather than written on every
+  /// frame: a resize is one change to the layout file, not sixty.
+  double? _dragHeight;
+
+  void _resizeBy(double delta, CanvasSettings settings) {
+    setState(
+      () => _dragHeight = ((_dragHeight ?? settings.height) + delta).clamp(
+        CanvasSettings.minHeight,
+        CanvasSettings.maxHeight,
+      ),
+    );
+  }
+
+  void _commitResize(CanvasSettings settings) {
+    final height = _dragHeight;
+    setState(() => _dragHeight = null);
+    if (height == null) return;
+    context.read<AppState>().setCanvasSettings(
+      widget.slug,
+      widget.section,
+      settings.copyWith(height: height),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final slug = widget.slug;
+    final section = widget.section;
     final theme = Theme.of(context);
     final state = context.watch<AppState>();
-    final cards = CanvasCards.parse(body);
+    final settings = state.canvasSettings(slug, section);
+    final cards = CanvasCards.parse(widget.body);
 
     if (cards.isEmpty) {
       return Padding(
@@ -1496,26 +1529,85 @@ class _SectionCanvas extends StatelessWidget {
       );
     }
 
-    return SizedBox(
-      // A canvas inside a scrolling list needs a height of its own, and one
-      // tall enough to be worth panning about in.
-      height: 420,
-      child: CanvasView(
-        slug: slug,
-        section: section,
-        cards: cards,
-        spots: CanvasPlacement.place(
-          cards,
-          state.layoutFor(slug).spotsFor(section),
+    return Column(
+      children: [
+        SizedBox(
+          // A canvas inside a scrolling list needs a height of its own. How
+          // tall is a matter of what is on it, so the bottom edge drags.
+          height: _dragHeight ?? settings.height,
+          child: CanvasView(
+            slug: slug,
+            section: section,
+            cards: cards,
+            settings: settings,
+            onSettingsChanged: (value) => context
+                .read<AppState>()
+                .setCanvasSettings(slug, section, value),
+            spots: CanvasPlacement.place(
+              cards,
+              state.layoutFor(slug).spotsFor(section),
+            ),
+            onChanged: (moved) =>
+                context.read<AppState>().setCanvasSpots(slug, section, moved),
+            onRemoveCard: (index) =>
+                context.read<AppState>().removeCanvasCard(slug, section, index),
+            onDuplicateCard: (index) => context
+                .read<AppState>()
+                .duplicateCanvasCard(slug, section, index),
+            onOpenFullScreen: () =>
+                CanvasScreen.open(context, slug: slug, section: section),
+          ),
         ),
-        onChanged: (moved) =>
-            context.read<AppState>().setCanvasSpots(slug, section, moved),
-        onRemoveCard: (index) =>
-            context.read<AppState>().removeCanvasCard(slug, section, index),
-        onDuplicateCard: (index) =>
-            context.read<AppState>().duplicateCanvasCard(slug, section, index),
-        onOpenFullScreen: () =>
-            CanvasScreen.open(context, slug: slug, section: section),
+        _CanvasResizeHandle(
+          onDrag: (delta) => _resizeBy(delta, settings),
+          onDone: () => _commitResize(settings),
+        ),
+      ],
+    );
+  }
+}
+
+/// The bar under a canvas that drags its height.
+///
+/// Its own widget so the grip is a real target rather than an edge to hunt
+/// for: a canvas lives in a scrolling list, and a two-pixel edge there would
+/// be a scroll half the time.
+class _CanvasResizeHandle extends StatelessWidget {
+  const _CanvasResizeHandle({required this.onDrag, required this.onDone});
+
+  final ValueChanged<double> onDrag;
+  final VoidCallback onDone;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeRow,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        // From where the finger lands rather than 18 pixels later, which on a
+        // short drag was the whole drag.
+        dragStartBehavior: DragStartBehavior.down,
+        onVerticalDragUpdate: (details) => onDrag(details.delta.dy),
+        onVerticalDragEnd: (_) => onDone(),
+        onVerticalDragCancel: onDone,
+        child: Tooltip(
+          message: 'Drag to resize the canvas',
+          child: SizedBox(
+            height: 18,
+            child: Center(
+              child: Container(
+                width: 48,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.outlineVariant,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

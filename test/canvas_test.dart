@@ -89,6 +89,80 @@ void main() {
     });
   });
 
+  group('how a canvas is drawn', () {
+    test('a canvas nobody has adjusted writes nothing extra', () {
+      const layout = CanvasLayout(
+        sections: {
+          'Moodboard': [CanvasSpot(x: 1, y: 2)],
+        },
+      );
+      expect(layout.toJsonString(), isNot(contains('settings')));
+      expect(layout.settingsFor('Moodboard'), CanvasSettings.standard);
+    });
+
+    test('height, background and shade round-trip', () {
+      const layout = CanvasLayout(
+        sections: {
+          'Moodboard': [CanvasSpot(x: 1, y: 2)],
+        },
+        settings: {
+          'Moodboard': CanvasSettings(
+            height: 640,
+            background: CanvasBackground.grid,
+            dark: true,
+          ),
+        },
+      );
+
+      final again = CanvasLayout.parse(layout.toJsonString());
+      final settings = again.settingsFor('Moodboard');
+      expect(settings.height, 640);
+      expect(settings.background, CanvasBackground.grid);
+      expect(settings.dark, isTrue);
+    });
+
+    test('a layout file written before this reads back unchanged', () {
+      final again = CanvasLayout.parse(
+        '{"sections": {"Moodboard": [{"x": 1, "y": 2}]}}',
+      );
+      expect(again.isCanvas('Moodboard'), isTrue);
+      expect(again.settingsFor('Moodboard'), CanvasSettings.standard);
+    });
+
+    test(
+      'back to standard drops the entry rather than writing an empty one',
+      () {
+        const layout = CanvasLayout(
+          sections: {'Moodboard': []},
+          settings: {'Moodboard': CanvasSettings(height: 640)},
+        );
+        final plain = layout.withSettings('Moodboard', CanvasSettings.standard);
+        expect(plain.settings, isEmpty);
+        expect(plain.toJsonString(), isNot(contains('settings')));
+      },
+    );
+
+    test('a silly height is clamped rather than believed', () {
+      final again = CanvasLayout.parse(
+        '{"sections": {"M": []}, "settings": {"M": {"h": 99999}}}',
+      );
+      expect(again.settingsFor('M').height, CanvasSettings.maxHeight);
+    });
+
+    test('renaming and deleting a section take its settings along', () {
+      const layout = CanvasLayout(
+        sections: {'Moodboard': []},
+        settings: {'Moodboard': CanvasSettings(height: 640)},
+      );
+
+      expect(
+        layout.renameSection('Moodboard', 'Refs').settingsFor('Refs').height,
+        640,
+      );
+      expect(layout.withoutSection('Moodboard').settings, isEmpty);
+    });
+  });
+
   group('putting the positions back on the cards', () {
     List<CanvasCard> cardsOf(List<String> paths) => [
       for (final path in paths) CanvasCards.image(path),

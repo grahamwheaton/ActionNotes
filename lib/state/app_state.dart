@@ -918,6 +918,24 @@ class AppState extends ChangeNotifier {
   /// changes. Turning a canvas back into notes forgets where things were —
   /// which is the cost of the arrangement living in its own file, and is said
   /// plainly rather than hidden.
+  /// How a canvas is drawn: its height in a project, its background, whether
+  /// it keeps its own light or dark.
+  CanvasSettings canvasSettings(String slug, String section) =>
+      layoutFor(slug).settingsFor(section);
+
+  Future<void> setCanvasSettings(
+    String slug,
+    String section,
+    CanvasSettings settings,
+  ) async {
+    final layout = layoutFor(slug);
+    if (layout.settingsFor(section) == settings) return;
+
+    _layouts[slug] = layout.withSettings(section, settings);
+    notifyListeners();
+    await _pushLayout(slug);
+  }
+
   Future<void> setCanvas(String slug, String section, bool canvas) async {
     final layout = layoutFor(slug);
     if (layout.isCanvas(section) == canvas) return;

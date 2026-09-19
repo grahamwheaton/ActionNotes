@@ -270,6 +270,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       section: section,
                       cards: cards,
                       spots: spots,
+                      settings: state.canvasSettings(slug, section),
+                      onSettingsChanged: (settings) => context
+                          .read<AppState>()
+                          .setCanvasSettings(slug, section, settings),
                       onChanged: (moved) => context
                           .read<AppState>()
                           .setCanvasSpots(slug, section, moved),
