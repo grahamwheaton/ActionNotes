@@ -106,6 +106,9 @@ class CanvasViewState extends State<CanvasView> {
   CanvasTool _tool = CanvasTool.select;
   CanvasColour _colour = CanvasColour.yellow;
 
+  /// How heavy a mark the pen and the shapes make.
+  double _thickness = 2;
+
   /// The mark being drawn, in scene coordinates, before it is committed.
   List<double>? _drawing;
 
@@ -267,11 +270,28 @@ class CanvasViewState extends State<CanvasView> {
     final to = Offset(drawing[drawing.length - 2], drawing[drawing.length - 1]);
     if (drawing.length == 4 && (to - from).distance < 4) return;
 
+    // An arrow that ends on a card holds on to it, so moving the card takes
+    // the arrow with it. Only arrows: a box drawn round three references is
+    // a box round that spot on the board, not a thing attached to one of
+    // them.
+    CanvasAnchor? hold(Offset point) {
+      if (kind != CanvasShapeKind.arrow) return null;
+      for (final entry in _cardRects.entries) {
+        if (!entry.value.inflate(8 / _scale).contains(point)) continue;
+        final at = CanvasMarks.nearestHold(entry.value, point);
+        return CanvasAnchor(ref: entry.key, ax: at.dx, ay: at.dy);
+      }
+      return null;
+    }
+
     widget.onDrawShape?.call(
       CanvasShape(
         kind: kind,
         points: List.unmodifiable(drawing),
         colour: _colour,
+        thickness: _thickness,
+        from: hold(from),
+        to: hold(to),
       ),
     );
   }
@@ -282,7 +302,14 @@ class CanvasViewState extends State<CanvasView> {
     final reach = 10 / _scale;
     for (var i = 0; i < widget.shapes.length; i++) {
       if (_rubbed.contains(i)) continue;
-      if (CanvasMarks.touches(widget.shapes[i], scene, reach)) _rubbed.add(i);
+      if (CanvasMarks.touches(
+        widget.shapes[i],
+        scene,
+        reach,
+        cards: _cardRects,
+      )) {
+        _rubbed.add(i);
+      }
     }
   }
 
@@ -486,6 +513,22 @@ class CanvasViewState extends State<CanvasView> {
     final width = spot.width;
     if (render is! RenderBox || !render.hasSize) return Size(width, width);
     return Size(width, render.size.height / _scale);
+  }
+
+  /// Where each card is, by what it says it is — what an arrow's hold is
+  /// resolved against.
+  ///
+  /// Two cards can say the same thing, in which case the first wins. That is
+  /// the same rule the positions use, and the cost of it is an arrow pointing
+  /// at whichever of two identical notes came first, which is not worth a
+  /// second naming scheme to avoid.
+  Map<String, Rect> get _cardRects {
+    final rects = <String, Rect>{};
+    final drawable = math.min(widget.cards.length, _spots.length);
+    for (var i = 0; i < drawable; i++) {
+      rects.putIfAbsent(widget.cards[i].ref, () => _sceneRect(i));
+    }
+    return rects;
   }
 
   /// What a frame is holding: everything whose middle stands on it.
@@ -907,10 +950,12 @@ class CanvasViewState extends State<CanvasView> {
                         pending: _drawing,
                         pendingKind: _tool.draws,
                         pendingColour: _colour,
+                        pendingThickness: _thickness,
                         pan: _pan,
                         scale: _scale,
                         theme: theme,
                         rubbed: _rubbed,
+                        cards: _cardRects,
                       ),
                     ),
                   ),
@@ -975,6 +1020,9 @@ class CanvasViewState extends State<CanvasView> {
                               _tool = _tool == tool ? CanvasTool.select : tool,
                         ),
                         onColour: (colour) => setState(() => _colour = colour),
+                        thickness: _thickness,
+                        onThickness: (value) =>
+                            setState(() => _thickness = value),
                       ),
                     ),
                   ),
@@ -2093,10 +2141,12 @@ class _MarksPainter extends CustomPainter {
     required this.pending,
     required this.pendingKind,
     required this.pendingColour,
+    required this.pendingThickness,
     required this.pan,
     required this.scale,
     required this.theme,
     required this.rubbed,
+    required this.cards,
   });
 
   final List<CanvasShape> shapes;
@@ -2105,6 +2155,7 @@ class _MarksPainter extends CustomPainter {
   final List<double>? pending;
   final CanvasShapeKind? pendingKind;
   final CanvasColour pendingColour;
+  final double pendingThickness;
 
   final Offset pan;
   final double scale;
@@ -2113,6 +2164,10 @@ class _MarksPainter extends CustomPainter {
   /// What the eraser has passed over, drawn faintly so that letting go is not
   /// a surprise.
   final Set<int> rubbed;
+
+  /// Where each card is, so an arrow held to one is drawn at the card rather
+  /// than where it was first dragged.
+  final Map<String, Rect> cards;
 
   Offset _at(List<double> points, int index) =>
       Offset(points[index * 2], points[index * 2 + 1]) * scale + pan;
@@ -2190,7 +2245,7 @@ class _MarksPainter extends CustomPainter {
       _draw(
         canvas,
         shape.kind,
-        shape.points,
+        CanvasMarks.pointsOf(shape, cards),
         shape.colour,
         shape.thickness,
         rubbed.contains(i) ? 0.2 : 1,
@@ -2199,7 +2254,14 @@ class _MarksPainter extends CustomPainter {
 
     final drawing = pending;
     if (drawing != null && pendingKind != null) {
-      _draw(canvas, pendingKind!, drawing, pendingColour, 2, 0.7);
+      _draw(
+        canvas,
+        pendingKind!,
+        drawing,
+        pendingColour,
+        pendingThickness,
+        0.7,
+      );
     }
   }
 
@@ -2278,12 +2340,21 @@ class _CanvasTools extends StatelessWidget {
     required this.colour,
     required this.onTool,
     required this.onColour,
+    required this.thickness,
+    required this.onThickness,
   });
 
   final CanvasTool tool;
   final CanvasColour colour;
   final ValueChanged<CanvasTool> onTool;
   final ValueChanged<CanvasColour> onColour;
+  final double thickness;
+  final ValueChanged<double> onThickness;
+
+  /// Fine, ordinary and bold. Three weights rather than a slider: a slider
+  /// in a column this narrow is a thing to fight with, and nobody has ever
+  /// wanted a line exactly 3.4 wide.
+  static const _weights = [1.0, 2.0, 5.0];
 
   static const _shapes = [
     CanvasTool.line,
@@ -2372,6 +2443,39 @@ class _CanvasTools extends StatelessWidget {
                 icon: Icon(option.icon, size: 18),
                 onPressed: () => onTool(option),
               ),
+            // Only while something is being drawn, since a note has no
+            // stroke to weigh.
+            if (tool.draws != null) ...[
+              const Divider(height: 8, indent: 6, endIndent: 6),
+              for (final weight in _weights)
+                Tooltip(
+                  message: switch (weight) {
+                    1.0 => 'Fine',
+                    5.0 => 'Bold',
+                    _ => 'Ordinary',
+                  },
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => onThickness(weight),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 4,
+                      ),
+                      child: Container(
+                        width: 16,
+                        height: weight + 2,
+                        decoration: BoxDecoration(
+                          color: weight == thickness
+                              ? theme.colorScheme.primary
+                              : theme.colorScheme.onSurfaceVariant,
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
             // Only while something is armed that a colour would apply to: a
             // row of swatches with nothing to colour is a row of buttons that
             // do nothing.

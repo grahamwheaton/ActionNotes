@@ -367,6 +367,94 @@ void _drawingOnTheBoard() {
       await settle(tester);
     });
 
+    testWidgets('the pen draws at the weight that was chosen', (tester) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Pen'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Bold'));
+      await tester.pumpAndSettle();
+
+      await tester.dragFrom(const Offset(600, 400), const Offset(60, 60));
+      await tester.pumpAndSettle();
+
+      expect(state.canvasDrawing('list', 'Board').single.thickness, 5);
+      await settle(tester);
+    });
+
+    testWidgets('an arrow ending on a card holds on to it, and follows it', (
+      tester,
+    ) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- One\n- Two',
+        spots: const [
+          CanvasSpot(x: 400, y: 300, width: 120, ref: 'One'),
+          CanvasSpot(x: 900, y: 900, width: 120, ref: 'Two'),
+        ],
+      );
+
+      await tester.tap(find.byTooltip('Shapes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Arrow').last);
+      await tester.pumpAndSettle();
+
+      // From empty canvas into the card, so only the far end takes hold.
+      final card = tester.getRect(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('One'),
+        ),
+      );
+      await tester.dragFrom(
+        const Offset(200, 600),
+        card.center - const Offset(200, 600),
+      );
+      await tester.pumpAndSettle();
+
+      final arrow = state.canvasDrawing('list', 'Board').single;
+      expect(arrow.kind, CanvasShapeKind.arrow);
+      expect(arrow.from, isNull);
+      expect(arrow.to?.ref, 'One');
+
+      // Renaming the card it holds carries the hold, rather than letting go.
+      await state.setCanvasCard('list', 'Board', 0, 'Won');
+      await tester.pumpAndSettle();
+      expect(state.canvasDrawing('list', 'Board').single.to?.ref, 'Won');
+      await settle(tester);
+    });
+
+    testWidgets('a line ending on a card does not hold on to it', (
+      tester,
+    ) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- One',
+        spots: const [CanvasSpot(x: 400, y: 300, width: 120, ref: 'One')],
+      );
+
+      await tester.tap(find.byTooltip('Shapes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Line').last);
+      await tester.pumpAndSettle();
+
+      final card = tester.getRect(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('One'),
+        ),
+      );
+      await tester.dragFrom(
+        const Offset(200, 600),
+        card.center - const Offset(200, 600),
+      );
+      await tester.pumpAndSettle();
+
+      // A line is a line on the board; only an arrow points at something.
+      expect(state.canvasDrawing('list', 'Board').single.isStuck, isFalse);
+      await settle(tester);
+    });
+
     testWidgets('the eraser takes what it is dragged over, and undo brings '
         'it back', (tester) async {
       final state = await pumpBoard(tester);

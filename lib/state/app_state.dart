@@ -1129,8 +1129,34 @@ class AppState extends ChangeNotifier {
     // one that has never been placed.
     final spots = [...layoutFor(slug).spotsFor(section)];
     if (index < spots.length) {
-      spots[index] = spots[index].copyWith(ref: cards[index].ref);
-      _layouts[slug] = layoutFor(slug).withSection(section, spots);
+      final was = spots[index].ref;
+      final now = cards[index].ref;
+      spots[index] = spots[index].copyWith(ref: now);
+
+      // An arrow holding on to this card names it by what it said, so the
+      // hold has to follow the rename or the arrow would quietly let go.
+      CanvasAnchor? renamed(CanvasAnchor? anchor) =>
+          anchor == null || anchor.ref != was
+          ? anchor
+          : CanvasAnchor(ref: now, ax: anchor.ax, ay: anchor.ay);
+
+      final drawing = [
+        for (final shape in layoutFor(slug).drawingFor(section))
+          shape.isStuck
+              ? CanvasShape(
+                  kind: shape.kind,
+                  points: shape.points,
+                  colour: shape.colour,
+                  thickness: shape.thickness,
+                  from: renamed(shape.from),
+                  to: renamed(shape.to),
+                )
+              : shape,
+      ];
+
+      _layouts[slug] = layoutFor(
+        slug,
+      ).withSection(section, spots).withDrawing(section, drawing);
       unawaited(_pushLayout(slug));
     }
 

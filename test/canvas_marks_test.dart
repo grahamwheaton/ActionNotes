@@ -8,6 +8,8 @@ CanvasShape mark(CanvasShapeKind kind, List<double> points) =>
     CanvasShape(kind: kind, points: points);
 
 void main() {
+  _stickyArrows();
+
   group('what a mark covers', () {
     test('a line is touched along its length, not beside it', () {
       final line = mark(CanvasShapeKind.line, [0, 0, 100, 0]);
@@ -110,6 +112,99 @@ void main() {
       );
 
       expect(layout.withDrawing('Board', const []).drawings, isEmpty);
+    });
+  });
+}
+
+void _stickyArrows() {
+  group('an arrow held to a card', () {
+    const card = Rect.fromLTWH(100, 100, 200, 100);
+
+    test('holds at the nearest of nine places on it', () {
+      expect(
+        CanvasMarks.nearestHold(card, const Offset(100, 100)),
+        Offset.zero,
+      );
+      expect(
+        CanvasMarks.nearestHold(card, const Offset(300, 150)),
+        const Offset(1, 0.5),
+      );
+      expect(
+        CanvasMarks.nearestHold(card, const Offset(205, 155)),
+        const Offset(0.5, 0.5),
+      );
+      expect(
+        CanvasMarks.nearestHold(card, const Offset(295, 195)),
+        const Offset(1, 1),
+      );
+    });
+
+    test('follows the card when it moves', () {
+      const arrow = CanvasShape(
+        kind: CanvasShapeKind.arrow,
+        points: [0, 0, 300, 150],
+        to: CanvasAnchor(ref: 'door.png', ax: 1, ay: 0.5),
+      );
+
+      // Where it was drawn.
+      expect(CanvasMarks.pointsOf(arrow, {'door.png': card}), [0, 0, 300, 150]);
+
+      // The card moves a hundred to the right and fifty down, and the arrow's
+      // point goes with it without the file being rewritten.
+      expect(
+        CanvasMarks.pointsOf(arrow, {
+          'door.png': card.shift(const Offset(100, 50)),
+        }),
+        [0, 0, 400, 200],
+      );
+    });
+
+    test('a hold on a card that has gone falls back to where it was drawn', () {
+      const arrow = CanvasShape(
+        kind: CanvasShapeKind.arrow,
+        points: [0, 0, 300, 150],
+        to: CanvasAnchor(ref: 'door.png', ax: 1, ay: 0.5),
+      );
+
+      expect(CanvasMarks.pointsOf(arrow, const {}), [0, 0, 300, 150]);
+    });
+
+    test('the eraser finds it where it is now, not where it was drawn', () {
+      const arrow = CanvasShape(
+        kind: CanvasShapeKind.arrow,
+        points: [0, 0, 300, 150],
+        to: CanvasAnchor(ref: 'door.png', ax: 1, ay: 0.5),
+      );
+      final moved = {'door.png': card.shift(const Offset(0, 400))};
+
+      expect(
+        CanvasMarks.touches(arrow, const Offset(150, 275), 6, cards: moved),
+        isTrue,
+      );
+      expect(
+        CanvasMarks.touches(arrow, const Offset(150, 75), 6, cards: moved),
+        isFalse,
+      );
+    });
+
+    test('the hold round-trips through the file', () {
+      const layout = CanvasLayout(sections: {'Board': []});
+      final saved = layout.withDrawing('Board', const [
+        CanvasShape(
+          kind: CanvasShapeKind.arrow,
+          points: [0, 0, 10, 10],
+          from: CanvasAnchor(ref: 'a', ax: 0.5, ay: 1),
+          to: CanvasAnchor(ref: 'b', ax: 0, ay: 0.5),
+        ),
+      ]);
+
+      final again = CanvasLayout.parse(
+        saved.toJsonString(),
+      ).drawingFor('Board').single;
+      expect(again.from?.ref, 'a');
+      expect(again.from?.ay, 1);
+      expect(again.to?.ref, 'b');
+      expect(again.to?.ax, 0);
     });
   });
 }

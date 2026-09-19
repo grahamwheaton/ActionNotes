@@ -303,6 +303,44 @@ enum CanvasBackground {
   );
 }
 
+/// One end of an arrow, held on to a card.
+///
+/// Where on the card, as a fraction of its box: 0,0 is its top-left corner,
+/// 1,0.5 the middle of its right edge. Kept as a fraction rather than as a
+/// distance so the hold survives the card being resized, and named by what
+/// the card says rather than by its position in the list, for the same reason
+/// a position is.
+class CanvasAnchor {
+  const CanvasAnchor({required this.ref, required this.ax, required this.ay});
+
+  final String ref;
+  final double ax;
+  final double ay;
+
+  Map<String, dynamic> toJson() => {'ref': ref, 'ax': ax, 'ay': ay};
+
+  static CanvasAnchor? fromJson(Object? json) {
+    if (json is! Map<String, dynamic>) return null;
+    final ref = json['ref'];
+    if (ref is! String || ref.isEmpty) return null;
+    return CanvasAnchor(
+      ref: ref,
+      ax: CanvasSpot._number(json['ax']).clamp(0.0, 1.0),
+      ay: CanvasSpot._number(json['ay']).clamp(0.0, 1.0),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is CanvasAnchor &&
+      other.ref == ref &&
+      other.ax == ax &&
+      other.ay == ay;
+
+  @override
+  int get hashCode => Object.hash(ref, ax, ay);
+}
+
 /// A mark drawn on a canvas: a line, an arrow, a box, an ellipse, or a stroke
 /// of the pen.
 ///
@@ -318,6 +356,8 @@ class CanvasShape {
     required this.points,
     this.colour = CanvasColour.none,
     this.thickness = 2,
+    this.from,
+    this.to,
   });
 
   final CanvasShapeKind kind;
@@ -330,13 +370,32 @@ class CanvasShape {
   final CanvasColour colour;
   final double thickness;
 
+  /// The cards this mark's two ends are held to, where they are held to any.
+  /// An arrow that names a card follows it about; one that names none stays
+  /// where it was drawn.
+  final CanvasAnchor? from;
+  final CanvasAnchor? to;
+
+  bool get isStuck => from != null || to != null;
+
   bool get isDrawable => points.length >= 4;
+
+  CanvasShape copyWith({CanvasAnchor? from, CanvasAnchor? to}) => CanvasShape(
+    kind: kind,
+    points: points,
+    colour: colour,
+    thickness: thickness,
+    from: from ?? this.from,
+    to: to ?? this.to,
+  );
 
   Map<String, dynamic> toJson() => {
     'k': kind.name,
     'p': points,
     if (colour != CanvasColour.none) 'c': colour.name,
     if (thickness != 2) 'w': thickness,
+    if (from != null) 'from': from!.toJson(),
+    if (to != null) 'to': to!.toJson(),
   };
 
   static CanvasShape? fromJson(Map<String, dynamic> json) {
@@ -350,6 +409,8 @@ class CanvasShape {
       points: List.unmodifiable(points),
       colour: CanvasColour.byName(json['c'] as String?),
       thickness: json.containsKey('w') ? CanvasSpot._number(json['w']) : 2,
+      from: CanvasAnchor.fromJson(json['from']),
+      to: CanvasAnchor.fromJson(json['to']),
     );
   }
 
@@ -359,6 +420,8 @@ class CanvasShape {
         other.kind != kind ||
         other.colour != colour ||
         other.thickness != thickness ||
+        other.from != from ||
+        other.to != to ||
         other.points.length != points.length) {
       return false;
     }
@@ -370,7 +433,7 @@ class CanvasShape {
 
   @override
   int get hashCode =>
-      Object.hash(kind, colour, thickness, Object.hashAll(points));
+      Object.hash(kind, colour, thickness, from, to, Object.hashAll(points));
 }
 
 /// What sort of mark a shape is.
