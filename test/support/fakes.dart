@@ -128,6 +128,7 @@ AppState newTestState(
   FakeLocalStore store, {
   GitHubConfig? config,
   SyncService? syncService,
+  FakeAttachmentStore? attachments,
 }) {
   return AppState(
     localStore: store,
@@ -135,6 +136,7 @@ AppState newTestState(
         ? FakeSettingsStore()
         : FakeSettingsStore(config: config),
     syncService: syncService ?? SyncService(localStore: store),
+    attachmentStore: attachments,
   );
 }
 

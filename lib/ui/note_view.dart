@@ -19,10 +19,20 @@ class NoteView extends StatelessWidget {
     required this.markdown,
     this.selectable = true,
     this.onOpenProject,
+    this.maxImageHeight,
   });
 
   final String markdown;
   final bool selectable;
+
+  /// How tall a picture in this note may be drawn, or null for no cap.
+  ///
+  /// Applied to the picture itself rather than to the box around it, because
+  /// a clamped box only cuts the bottom off: a markdown body lays its
+  /// children out down the page and hands each one as much height as it asks
+  /// for, so the picture came out full size and was then clipped. Capping the
+  /// picture scales it instead, which is what "too tall" should mean.
+  final double? maxImageHeight;
 
   /// Called when a link to another project is tapped. Without it, such links
   /// are shown but do nothing.
@@ -45,6 +55,7 @@ class NoteView extends StatelessWidget {
         alt: alt,
         store: state.attachments,
         state: state,
+        maxHeight: maxImageHeight,
       ),
       onTapLink: (_, href, __) {
         if (href == null) return;
@@ -57,9 +68,9 @@ class NoteView extends StatelessWidget {
 
         // Opening external links needs a launcher plugin; until then show the
         // target rather than appearing to do nothing.
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(href)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(href)));
       },
     );
   }
@@ -99,7 +110,10 @@ MarkdownStyleSheet _styleSheet(BuildContext context) {
     blockquotePadding: const EdgeInsets.fromLTRB(16, 2, 0, 2),
     blockquoteDecoration: BoxDecoration(
       border: Border(
-        left: BorderSide(color: scheme.primary.withValues(alpha: 0.4), width: 3),
+        left: BorderSide(
+          color: scheme.primary.withValues(alpha: 0.4),
+          width: 3,
+        ),
       ),
     ),
     code: mono.copyWith(
@@ -125,12 +139,14 @@ class _NoteImage extends StatefulWidget {
     required this.alt,
     required this.store,
     required this.state,
+    this.maxHeight,
   });
 
   final String reference;
   final String? alt;
   final AttachmentStore store;
   final AppState state;
+  final double? maxHeight;
 
   @override
   State<_NoteImage> createState() => _NoteImageState();
@@ -198,8 +214,11 @@ class _NoteImageState extends State<_NoteImage> {
             ),
             child: Row(
               children: [
-                Icon(Icons.image_not_supported_outlined,
-                    size: 18, color: theme.colorScheme.onSurfaceVariant),
+                Icon(
+                  Icons.image_not_supported_outlined,
+                  size: 18,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -259,9 +278,10 @@ class _NoteImageState extends State<_NoteImage> {
                   // is still decoding — and so that a tiny picture is still
                   // worth aiming at.
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(
+                    constraints: BoxConstraints(
                       minWidth: 32,
                       minHeight: 32,
+                      maxHeight: widget.maxHeight ?? double.infinity,
                     ),
                     child: Image.file(file, fit: BoxFit.contain),
                   ),

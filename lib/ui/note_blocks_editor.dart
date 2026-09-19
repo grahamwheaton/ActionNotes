@@ -1357,37 +1357,38 @@ class _ImageBlock extends StatelessWidget {
         // non-positioned children too, so topRight moved the picture as well
         // as the button.
         alignment: Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 340),
-          child: Stack(
-            children: [
-              ClipRRect(
-                borderRadius: BorderRadius.circular(8),
-                // Reuses the note renderer, so an image resolves from the
-                // same attachment cache here as in a rendered note.
-                child: NoteView(
-                  markdown: '![${block.imageAlt}](${block.imagePath})',
-                  selectable: false,
-                  onOpenProject: onOpenProject,
+        child: Stack(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              // Reuses the note renderer, so an image resolves from the
+              // same attachment cache here as in a rendered note.
+              child: NoteView(
+                markdown: '![${block.imageAlt}](${block.imagePath})',
+                selectable: false,
+                onOpenProject: onOpenProject,
+                // Scaled down to fit rather than cut off at the bottom: a
+                // tall photograph should still read as the whole
+                // photograph while it is being written around.
+                maxImageHeight: 340,
+              ),
+            ),
+            Positioned(
+              top: 4,
+              right: 4,
+              child: Material(
+                color: theme.colorScheme.surface.withValues(alpha: 0.85),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: 'Remove image',
+                  iconSize: 16,
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.close),
+                  onPressed: onRemove,
                 ),
               ),
-              Positioned(
-                top: 4,
-                right: 4,
-                child: Material(
-                  color: theme.colorScheme.surface.withValues(alpha: 0.85),
-                  shape: const CircleBorder(),
-                  child: IconButton(
-                    tooltip: 'Remove image',
-                    iconSize: 16,
-                    visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.close),
-                    onPressed: onRemove,
-                  ),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
