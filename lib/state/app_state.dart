@@ -473,6 +473,35 @@ class AppState extends ChangeNotifier {
     );
   });
 
+  /// Moves a `##` section, and the items under it, to another place in the
+  /// project.
+  ///
+  /// The flat item list is rebuilt to match, so the order on screen, the order
+  /// in the file and the order of the indices everything else uses stay one
+  /// order rather than three.
+  Future<void> reorderBlocks(String slug, int oldIndex, int newIndex) =>
+      _mutate(slug, (project) {
+        final blocks = [...project.blocks];
+        if (oldIndex < 0 || oldIndex >= blocks.length) return project;
+
+        // A list that reorders downwards reports the index the row will sit
+        // at once it has been taken out, so close the gap first.
+        var target = newIndex;
+        if (target > oldIndex) target -= 1;
+        target = target.clamp(0, blocks.length - 1);
+        if (target == oldIndex) return project;
+
+        blocks.insert(target, blocks.removeAt(oldIndex));
+
+        return project.copyWith(
+          blocks: blocks,
+          items: [
+            ...project.itemsIn(null),
+            for (final block in blocks) ...project.itemsIn(block.title),
+          ],
+        );
+      });
+
   Future<void> setBlockBody(String slug, String title, String body) =>
       _mutate(slug, (project) {
         final blocks = [

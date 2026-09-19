@@ -453,21 +453,29 @@ class _ChecklistViewState extends State<ChecklistView> {
                             );
                           },
                         ),
-                      for (final block in project.blocks)
-                        SliverToBoxAdapter(
-                          child: _BlockSection(
-                            key: ValueKey(
-                              'block-${widget.slug}-${block.title}',
-                            ),
-                            slug: widget.slug,
-                            block: block,
-                            indices: project.indicesIn(block.title),
-                            items: project.itemsIn(block.title),
-                            expandedNotes: _expandedNotes,
-                            flashing: _flashing,
-                            onToggleNotes: _toggleNotes,
-                            onNotesChanged: _notesChanged,
-                          ),
+                      if (project.blocks.isNotEmpty)
+                        SliverReorderableList(
+                          itemCount: project.blocks.length,
+                          onReorderItem: (oldIndex, newIndex) => context
+                              .read<AppState>()
+                              .reorderBlocks(widget.slug, oldIndex, newIndex),
+                          itemBuilder: (context, position) {
+                            final block = project.blocks[position];
+                            return _BlockSection(
+                              key: ValueKey(
+                                'block-${widget.slug}-${block.title}',
+                              ),
+                              slug: widget.slug,
+                              block: block,
+                              dragPosition: position,
+                              indices: project.indicesIn(block.title),
+                              items: project.itemsIn(block.title),
+                              expandedNotes: _expandedNotes,
+                              flashing: _flashing,
+                              onToggleNotes: _toggleNotes,
+                              onNotesChanged: _notesChanged,
+                            );
+                          },
                         ),
                       const SliverToBoxAdapter(child: SizedBox(height: 8)),
                     ],
@@ -673,8 +681,15 @@ class _ItemTile extends StatelessWidget {
             onTap: touch ? onToggleNotes : openEditor,
             onDoubleTap: touch ? openEditor : null,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: _ItemTitle(item: item),
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: _ItemTitle(
+                item: item,
+                notesExpanded: notesExpanded,
+                // Only where the marker at the end of the row is gone. On a
+                // desktop that button is still there and says the same thing,
+                // and two of them beside each other says it twice.
+                showNotesMarker: touch,
+              ),
             ),
           ),
         ),
@@ -688,8 +703,14 @@ class _ItemTile extends StatelessWidget {
             hasNotes: item.hasNotes,
             onTap: onToggleNotes,
           ),
+        // Compact, and sat right beside the menu: a default icon button keeps
+        // a 48-pixel box around a 20-pixel star, and two of those at the end
+        // of a phone row is most of a word's worth of title.
         IconButton(
           tooltip: item.starred ? 'Remove star' : 'Star',
+          visualDensity: VisualDensity.compact,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
           icon: Icon(
             item.starred ? Icons.star : Icons.star_border,
             size: 20,
@@ -738,7 +759,7 @@ class _ItemTile extends StatelessWidget {
       // button at the end of it.
       longPress: !touch,
       child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
         // A Material of its own, not a decorated box: it carries the row's own
         // fill and outline, so an ink splash lands on top of them rather than
         // on the Scaffold underneath where none of it can be seen — and a row
@@ -772,8 +793,13 @@ class _ItemTile extends StatelessWidget {
               header,
               if (notesExpanded)
                 Padding(
-                  // Indented to start under the item's text, not its checkbox.
-                  padding: const EdgeInsets.fromLTRB(36, 0, 12, 10),
+                  // Indented under the item's text on a wide window, where
+                  // lining up with the title reads well. On a phone the indent
+                  // is most of a word per line, so the notes start near the
+                  // edge and use the width instead.
+                  padding: touch
+                      ? const EdgeInsets.fromLTRB(2, 0, 6, 6)
+                      : const EdgeInsets.fromLTRB(36, 0, 12, 8),
                   child: _InlineNotes(
                     // Keyed by the item so that editing one note and opening
                     // another does not hand the second the first one's blocks.
@@ -1003,9 +1029,21 @@ class _NotesToggle extends StatelessWidget {
 /// brackets. Wrapped so a long title and its tags flow onto another line
 /// instead of squeezing each other.
 class _ItemTitle extends StatelessWidget {
-  const _ItemTitle({required this.item});
+  const _ItemTitle({
+    required this.item,
+    this.notesExpanded = false,
+    this.showNotesMarker = false,
+  });
 
   final ChecklistItem item;
+
+  /// Whether the notes are open underneath, which changes what the marker
+  /// after the title is saying.
+  final bool notesExpanded;
+
+  /// Whether to say that this item has notes. Off where the row still carries
+  /// the marker button that says it.
+  final bool showNotesMarker;
 
   @override
   Widget build(BuildContext context) {
@@ -1017,7 +1055,24 @@ class _ItemTitle extends StatelessWidget {
 
     final tags = item.tags;
     final awaiting = item.done ? const <String>[] : item.awaiting;
-    if (tags.isEmpty && awaiting.isEmpty) {
+
+    // Says there is something under this row. The marker that used to do this
+    // was a button at the end of the row and took a button's width; this is
+    // part of the title, wraps with it, and costs a character or two.
+    //
+    // Only when there is something to see: every row can be opened to write a
+    // note in, so a marker on all of them would say nothing.
+    final marker = showNotesMarker && item.hasNotes
+        ? Icon(
+            notesExpanded ? Icons.expand_less : Icons.notes,
+            size: 15,
+            color: item.done
+                ? theme.colorScheme.outlineVariant
+                : theme.colorScheme.outline,
+          )
+        : null;
+
+    if (tags.isEmpty && awaiting.isEmpty && marker == null) {
       return Text(item.text, style: style);
     }
 
@@ -1033,6 +1088,7 @@ class _ItemTitle extends StatelessWidget {
         if (item.title.isNotEmpty) Text(item.title, style: style),
         for (final tag in tags) TagPill(tag: tag, faded: item.done),
         for (final name in awaiting) WaitingPill(name: name),
+        if (marker != null) marker,
       ],
     );
   }
@@ -1040,8 +1096,13 @@ class _ItemTitle extends StatelessWidget {
 
 /// One `##` section of a project: its heading, its items and its prose.
 ///
-/// Deliberately plainer than the ungrouped list above it — no separate
-/// Completed group, and one order rather than three — because a block is
+/// Drawn as a card like the rows it holds, so a section reads as one thing
+/// rather than a title with loose items under it. The heading is a band across
+/// the top and the prose is the body underneath — which is the distinction a
+/// section was getting wrong: a name is typed once, a body is typed into.
+///
+/// Deliberately plainer inside than the ungrouped list above it — no separate
+/// Completed group, and one order rather than three — because a section is
 /// already a grouping and grouping inside a grouping reads as noise.
 class _BlockSection extends StatelessWidget {
   const _BlockSection({
@@ -1054,13 +1115,17 @@ class _BlockSection extends StatelessWidget {
     required this.flashing,
     required this.onToggleNotes,
     required this.onNotesChanged,
+    this.dragPosition,
   });
 
   final String slug;
   final ProjectBlock block;
 
-  /// Where this block's items are in the project's flat list, so an edit still
-  /// addresses the right line.
+  /// Where this section sits among the others, for moving it.
+  final int? dragPosition;
+
+  /// Where this section's items are in the project's flat list, so an edit
+  /// still addresses the right line.
   final List<int> indices;
   final List<ChecklistItem> items;
 
@@ -1073,84 +1138,197 @@ class _BlockSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final state = context.read<AppState>();
+    final touch = TouchInput.isPrimary;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 18, 8, 4),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  block.title,
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
+    final actions = <ContextMenuAction>[
+      ContextMenuAction(
+        label: 'Add an item here',
+        icon: Icons.add,
+        onSelected: () async {
+          final text = await TextPromptDialog.show(
+            context,
+            title: 'New item in ${block.title}',
+          );
+          if (text != null) {
+            await state.addItem(slug, text, block: block.title);
+          }
+        },
+      ),
+      ContextMenuAction(
+        label: 'Rename section',
+        icon: Icons.drive_file_rename_outline,
+        onSelected: () async {
+          final title = await TextPromptDialog.show(
+            context,
+            title: 'Rename section',
+            initialValue: block.title,
+          );
+          if (title != null) {
+            await state.renameBlock(slug, block.title, title);
+          }
+        },
+      ),
+    ];
+
+    Widget heading = Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+        border: Border(
+          bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 0, 2, 0),
+      child: Row(
+        children: [
+          Expanded(
+            child: _BlockTitleField(
+              key: ValueKey('title-$slug-${block.title}'),
+              title: block.title,
+              onRename: (title) => state.renameBlock(slug, block.title, title),
+            ),
+          ),
+          ItemMenuButton(tooltip: 'Section actions', actions: actions),
+          if (!touch && dragPosition != null)
+            ReorderableDragStartListener(
+              index: dragPosition!,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 6, left: 2),
+                child: Icon(
+                  Icons.drag_indicator,
+                  size: 18,
+                  color: theme.colorScheme.outlineVariant,
                 ),
               ),
-              ItemMenuButton(
-                tooltip: 'Section actions',
-                actions: [
-                  ContextMenuAction(
-                    label: 'Add an item here',
-                    icon: Icons.add,
-                    onSelected: () async {
-                      final text = await TextPromptDialog.show(
-                        context,
-                        title: 'New item in ${block.title}',
-                      );
-                      if (text != null) {
-                        await state.addItem(slug, text, block: block.title);
-                      }
-                    },
-                  ),
-                  ContextMenuAction(
-                    label: 'Rename section',
-                    icon: Icons.drive_file_rename_outline,
-                    onSelected: () async {
-                      final title = await TextPromptDialog.show(
-                        context,
-                        title: 'Rename section',
-                        initialValue: block.title,
-                      );
-                      if (title != null) {
-                        await state.renameBlock(slug, block.title, title);
-                      }
-                    },
-                  ),
-                ],
+            ),
+        ],
+      ),
+    );
+
+    // A phone moves a section by holding its heading, the same as it moves a
+    // row. The heading only — a hold inside the body belongs to the text
+    // there, and the name is a field that a hold is trying to select in.
+    if (touch && dragPosition != null) {
+      heading = ReorderableDelayedDragStartListener(
+        index: dragPosition!,
+        child: heading,
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+      child: Material(
+        color: theme.colorScheme.surfaceContainerLowest,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(color: theme.colorScheme.outlineVariant),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            heading,
+            for (var position = 0; position < items.length; position++)
+              _ItemTile(
+                key: ValueKey('block-${block.title}-${indices[position]}'),
+                slug: slug,
+                index: indices[position],
+                item: items[position],
+                notesExpanded: expandedNotes.contains(items[position].text),
+                flashing: flashing == items[position].text,
+                onToggleNotes: () =>
+                    onToggleNotes(indices[position], items[position].text),
+                onNotesChanged: (notes) =>
+                    onNotesChanged(items[position].text, notes),
               ),
-            ],
-          ),
+            // Always present, so a section made a moment ago has somewhere to
+            // type rather than only a name.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(10, 4, 8, 6),
+              child: _BlockBody(
+                key: ValueKey('body-$slug-${block.title}'),
+                slug: slug,
+                title: block.title,
+                initialMarkdown: block.body,
+              ),
+            ),
+          ],
         ),
-        for (var position = 0; position < items.length; position++)
-          _ItemTile(
-            key: ValueKey('block-${block.title}-${indices[position]}'),
-            slug: slug,
-            index: indices[position],
-            item: items[position],
-            notesExpanded: expandedNotes.contains(items[position].text),
-            flashing: flashing == items[position].text,
-            onToggleNotes: () =>
-                onToggleNotes(indices[position], items[position].text),
-            onNotesChanged: (notes) =>
-                onNotesChanged(items[position].text, notes),
-          ),
-        // A section with no items is a note, and a section with both shows its
-        // prose under them. Always present so a heading just added has
-        // somewhere to type.
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
-          child: _BlockBody(
-            key: ValueKey('body-$slug-${block.title}'),
-            slug: slug,
-            title: block.title,
-            initialMarkdown: block.body,
-          ),
-        ),
-      ],
+      ),
+    );
+  }
+}
+
+/// A section's name, typed in place.
+///
+/// The name used to be reachable only through Rename, which made a section
+/// feel like something declared rather than something written. This is an
+/// ordinary field that happens to look like a heading. It commits when it
+/// loses focus rather than per keystroke: a rename carries the section's items
+/// with it, so typing one would rewrite the file through every half-finished
+/// name on the way.
+class _BlockTitleField extends StatefulWidget {
+  const _BlockTitleField({
+    super.key,
+    required this.title,
+    required this.onRename,
+  });
+
+  final String title;
+  final ValueChanged<String> onRename;
+
+  @override
+  State<_BlockTitleField> createState() => _BlockTitleFieldState();
+}
+
+class _BlockTitleFieldState extends State<_BlockTitleField> {
+  late final _controller = TextEditingController(text: widget.title);
+  late final FocusNode _focus = FocusNode()..addListener(_focusChanged);
+
+  void _focusChanged() {
+    if (!_focus.hasFocus) _commit();
+  }
+
+  void _commit() {
+    final title = _controller.text.trim();
+    if (title.isEmpty) {
+      // A section has to be called something, since its name is what its items
+      // point at. Put the old one back rather than write a heading that cannot
+      // be addressed.
+      _controller.text = widget.title;
+      return;
+    }
+    if (title != widget.title) widget.onRename(title);
+  }
+
+  @override
+  void dispose() {
+    _focus.removeListener(_focusChanged);
+    _commit();
+    _focus.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return TextField(
+      controller: _controller,
+      focusNode: _focus,
+      textCapitalization: TextCapitalization.sentences,
+      textInputAction: TextInputAction.done,
+      style: theme.textTheme.titleSmall?.copyWith(
+        fontWeight: FontWeight.w700,
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+      decoration: const InputDecoration(
+        hintText: 'Section name',
+        border: InputBorder.none,
+        isDense: true,
+        contentPadding: EdgeInsets.symmetric(vertical: 10),
+      ),
+      onSubmitted: (_) => _focus.unfocus(),
     );
   }
 }
@@ -1221,6 +1399,7 @@ class _BlockBodyState extends State<_BlockBody> {
         key: _editor,
         initialMarkdown: widget.initialMarkdown,
         shrinkWrap: true,
+        placeholder: 'Write here…',
         onChanged: _changed,
         onPaste: () async => _images.currentState?.paste(),
         onOpenProject: (slug) => context.read<AppState>().select(slug),

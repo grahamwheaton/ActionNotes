@@ -29,7 +29,9 @@ pasting one file — or by pointing the model at the repo.
   items and its own prose, so one project can hold a list, a set of notes, and
   another list. There is nothing to declare: a section holding checklist lines
   is a list and one holding prose is a note. A file with no headings is exactly
-  the file it was.
+  the file it was. A section is a card like the rows it holds, with its name as
+  a band across the top — typed in place rather than through a dialog — and its
+  prose as the body. Sections are dragged into order the same way items are.
 - **The composer** at the bottom of a project is a card with the text above and
   the controls below: + attaches a photo, a pill picks whether you are adding a
   task or a section of notes, and the round button adds it — held, it adds it

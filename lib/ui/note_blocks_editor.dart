@@ -16,10 +16,10 @@ import 'theme.dart';
 /// for as long as that block exists.
 class _Row {
   _Row(this.id, this.block)
-      : controller = block.isText
-            ? MarkdownTextController(text: block.text)
-            : null,
-        focus = block.isText ? FocusNode() : null;
+    : controller = block.isText
+          ? MarkdownTextController(text: block.text)
+          : null,
+      focus = block.isText ? FocusNode() : null;
 
   final int id;
   NoteBlock block;
@@ -49,9 +49,14 @@ class NoteBlocksEditor extends StatefulWidget {
     this.onRequestLink,
     this.onPaste,
     this.shrinkWrap = false,
+    this.placeholder,
   });
 
   final String initialMarkdown;
+
+  /// Shown in the first line while the note is empty, so somewhere that can be
+  /// typed into does not read as blank space.
+  final String? placeholder;
 
   /// Lays the blocks out at their natural height instead of scrolling, for
   /// when the note is embedded in a list that scrolls for it.
@@ -103,7 +108,6 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   /// Cleared when the button comes up.
   int? _dragFromId;
   bool _dragLeftItsRow = false;
-
 
   late final NoteHistory _history = NoteHistory(widget.initialMarkdown);
 
@@ -259,11 +263,11 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   /// The markdown of the selected rows, which is what a copy puts on the
   /// clipboard — markdown, so pasting it anywhere else keeps the structure.
   String _selectionMarkdown() => NoteBlocks.serialize([
-        for (final row in _selectedRows)
-          row.block.isText
-              ? row.block.copyWith(text: row.controller!.text)
-              : row.block,
-      ]);
+    for (final row in _selectedRows)
+      row.block.isText
+          ? row.block.copyWith(text: row.controller!.text)
+          : row.block,
+  ]);
 
   Future<void> copySelection({bool cut = false}) async {
     if (_selectedIds.isEmpty) return;
@@ -288,10 +292,12 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     _clearRowSelection();
 
     if (_rows.every((row) => !row.block.isText)) {
-      setState(() => _rows.insert(
-            at.clamp(0, _rows.length),
-            _row(const NoteBlock.paragraph('')),
-          ));
+      setState(
+        () => _rows.insert(
+          at.clamp(0, _rows.length),
+          _row(const NoteBlock.paragraph('')),
+        ),
+      );
     }
 
     final landing = _rows[(at - 1).clamp(0, _rows.length - 1)];
@@ -338,14 +344,12 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     _emit(structural: true);
   }
 
-  String get markdown => NoteBlocks.serialize(
-        [
-          for (final row in _rows)
-            row.block.isText
-                ? row.block.copyWith(text: row.controller!.text)
-                : row.block,
-        ],
-      );
+  String get markdown => NoteBlocks.serialize([
+    for (final row in _rows)
+      row.block.isText
+          ? row.block.copyWith(text: row.controller!.text)
+          : row.block,
+  ]);
 
   void _emit({bool structural = false}) {
     final current = markdown;
@@ -454,8 +458,9 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
       controller.value = TextEditingValue(
         text: '$before$insert$after',
-        selection:
-            TextSelection.collapsed(offset: before.length + insert.length),
+        selection: TextSelection.collapsed(
+          offset: before.length + insert.length,
+        ),
       );
       row.focus?.requestFocus();
       _emit();
@@ -480,7 +485,10 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   /// Enter splits the block at the caret, as a new paragraph below.
   void _splitAt(_Row row) {
     final controller = row.controller!;
-    final caret = controller.selection.baseOffset.clamp(0, controller.text.length);
+    final caret = controller.selection.baseOffset.clamp(
+      0,
+      controller.text.length,
+    );
     final before = controller.text.substring(0, caret);
     final after = controller.text.substring(caret);
 
@@ -522,9 +530,11 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   /// Tab and Shift+Tab nest a list row and lift it back out.
   void _nudgeIndent(_Row row, int delta) {
     if (!row.block.isListRow) return;
-    setState(() => row.block = row.block.copyWith(
-          indent: (row.block.indent + delta).clamp(0, 5),
-        ));
+    setState(
+      () => row.block = row.block.copyWith(
+        indent: (row.block.indent + delta).clamp(0, 5),
+      ),
+    );
     row.focus?.requestFocus();
     _emit(structural: true);
   }
@@ -538,10 +548,12 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   /// plain form, and only merge upwards once it is already a paragraph.
   bool _backspaceAtStart(_Row row) {
     if (row.block.type != NoteBlockType.paragraph) {
-      setState(() => row.block = row.block.copyWith(
-            type: NoteBlockType.paragraph,
-            level: 1,
-          ));
+      setState(
+        () => row.block = row.block.copyWith(
+          type: NoteBlockType.paragraph,
+          level: 1,
+        ),
+      );
       _emit(structural: true);
       return true;
     }
@@ -562,7 +574,8 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     }
 
     final joinAt = previous.controller!.text.length;
-    previous.controller!.text = previous.controller!.text + row.controller!.text;
+    previous.controller!.text =
+        previous.controller!.text + row.controller!.text;
 
     setState(() => _rows.removeAt(index));
     row.dispose();
@@ -631,10 +644,9 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
       return;
     }
 
-    setState(() => row.block = row.block.copyWith(
-          type: kind.type,
-          level: kind.level,
-        ));
+    setState(
+      () => row.block = row.block.copyWith(type: kind.type, level: kind.level),
+    );
     row.focus?.requestFocus();
     _emit(structural: true);
   }
@@ -686,59 +698,66 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   Widget _buildList() {
     return ListView.builder(
       shrinkWrap: widget.shrinkWrap,
-      physics:
-          widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
+      physics: widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
       padding: widget.shrinkWrap
           ? const EdgeInsets.fromLTRB(16, 0, 0, 0)
           : const EdgeInsets.fromLTRB(16, 10, 16, 10),
       itemCount: _rows.length,
-      itemBuilder: (context, index) =>
-          KeyedSubtree(key: _rows[index].boxKey, child: _buildRow(_rows[index])),
+      itemBuilder: (context, index) => KeyedSubtree(
+        key: _rows[index].boxKey,
+        child: _buildRow(_rows[index]),
+      ),
     );
   }
 
   Widget _buildRow(_Row row) {
     {
-        if (row.block.type == NoteBlockType.divider) {
-          return _DividerBlock(
-            key: ValueKey(row.id),
-            onRemove: () => _removeRow(row),
-          );
-        }
+      if (row.block.type == NoteBlockType.divider) {
+        return _DividerBlock(
+          key: ValueKey(row.id),
+          onRemove: () => _removeRow(row),
+        );
+      }
 
-        return row.block.isText
-            ? _TextBlock(
-                key: ValueKey(row.id),
-                row: row,
-                onChanged: () => _onTextChanged(row),
-                onSplit: () => _splitAt(row),
-                onBackspaceAtStart: () => _backspaceAtStart(row),
-                selected: _selectedIds.contains(row.id),
-                onSetType: (kind) => _applyBlockType(row, kind),
-                onExtendRows: (delta) => _extendRows(row, delta),
-                onExtendTo: () => _extendTo(row),
-                onClearSelection: _clearRowSelection,
-                onPaste: widget.onPaste,
-                onCopySelection: copySelection,
-                onDeleteSelection: deleteSelection,
-                onSelectAllRows: selectAllRows,
-                onMark: (mark) => _applyMark(row, mark),
-                onClearMarks: () => _clearMarks(row),
-                onIndent: (delta) => _nudgeIndent(row, delta),
-                onToggleTask: () => _toggleTask(row),
-                onRequestLink: widget.onRequestLink == null
-                    ? null
-                    : () async {
-                        final snippet = await widget.onRequestLink!();
-                        if (snippet != null) insertInline(snippet);
-                      },
-              )
-            : _ImageBlock(
-                key: ValueKey(row.id),
-                block: row.block,
-                onOpenProject: widget.onOpenProject,
-                onRemove: () => _removeRow(row),
-              );
+      return row.block.isText
+          ? _TextBlock(
+              key: ValueKey(row.id),
+              row: row,
+              // Only while there is nothing at all: a hint on the first of
+              // several lines would be a label for the note.
+              placeholder:
+                  _rows.length == 1 && (row.controller?.text ?? "").isEmpty
+                  ? widget.placeholder
+                  : null,
+              onChanged: () => _onTextChanged(row),
+              onSplit: () => _splitAt(row),
+              onBackspaceAtStart: () => _backspaceAtStart(row),
+              selected: _selectedIds.contains(row.id),
+              onSetType: (kind) => _applyBlockType(row, kind),
+              onExtendRows: (delta) => _extendRows(row, delta),
+              onExtendTo: () => _extendTo(row),
+              onClearSelection: _clearRowSelection,
+              onPaste: widget.onPaste,
+              onCopySelection: copySelection,
+              onDeleteSelection: deleteSelection,
+              onSelectAllRows: selectAllRows,
+              onMark: (mark) => _applyMark(row, mark),
+              onClearMarks: () => _clearMarks(row),
+              onIndent: (delta) => _nudgeIndent(row, delta),
+              onToggleTask: () => _toggleTask(row),
+              onRequestLink: widget.onRequestLink == null
+                  ? null
+                  : () async {
+                      final snippet = await widget.onRequestLink!();
+                      if (snippet != null) insertInline(snippet);
+                    },
+            )
+          : _ImageBlock(
+              key: ValueKey(row.id),
+              block: row.block,
+              onOpenProject: widget.onOpenProject,
+              onRemove: () => _removeRow(row),
+            );
     }
   }
 }
@@ -764,9 +783,11 @@ class _TextBlock extends StatelessWidget {
     required this.onSelectAllRows,
     this.onRequestLink,
     this.onPaste,
+    this.placeholder,
   });
 
   final _Row row;
+  final String? placeholder;
   final VoidCallback onChanged;
   final VoidCallback onSplit;
   final bool Function() onBackspaceAtStart;
@@ -828,7 +849,8 @@ class _TextBlock extends StatelessWidget {
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
-    final control = HardwareKeyboard.instance.isControlPressed ||
+    final control =
+        HardwareKeyboard.instance.isControlPressed ||
         HardwareKeyboard.instance.isMetaPressed;
 
     if (control) {
@@ -899,7 +921,8 @@ class _TextBlock extends StatelessWidget {
       final up = event.logicalKey == LogicalKeyboardKey.arrowUp;
       if (down || up) {
         final selection = row.controller!.selection;
-        final atEdge = selected ||
+        final atEdge =
+            selected ||
             (down && selection.extentOffset >= row.controller!.text.length) ||
             (up && selection.extentOffset <= 0);
         if (atEdge) {
@@ -914,7 +937,8 @@ class _TextBlock extends StatelessWidget {
       return KeyEventResult.handled;
     }
 
-    final enter = event.logicalKey == LogicalKeyboardKey.enter ||
+    final enter =
+        event.logicalKey == LogicalKeyboardKey.enter ||
         event.logicalKey == LogicalKeyboardKey.numpadEnter;
     if (enter && !HardwareKeyboard.instance.isShiftPressed) {
       onSplit();
@@ -1021,7 +1045,7 @@ class _TextBlock extends StatelessWidget {
                   contentPadding: EdgeInsets.zero,
                   hintText: row.block.type == NoteBlockType.heading
                       ? 'Heading'
-                      : null,
+                      : placeholder,
                 ),
                 // The formatting toolbar rides on the selection toolbar, so
                 // it appears at the selection and is positioned by Flutter
