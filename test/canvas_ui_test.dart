@@ -56,6 +56,7 @@ Future<List<CanvasSpot>> pumpCanvas(
 
 void main() {
   _addingToACanvas();
+  _textOnACard();
   _resizingTheCanvasInAProject();
 
   group('moving a card', () {
@@ -373,5 +374,63 @@ void _resizingTheCanvasInAProject() {
       CanvasSettings.defaultHeight + 120,
     );
     await tester.pump(const Duration(seconds: 3));
+  });
+}
+
+void _textOnACard() {
+  testWidgets('a card\'s writing is scaled with the canvas', (tester) async {
+    tester.view.physicalSize = const Size(900, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final state = newTestState(FakeLocalStore());
+    await state.init();
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: CanvasView(
+              slug: 'list',
+              section: 'Moodboard',
+              cards: [CanvasCards.text('Here is a sticky note!')],
+              spots: const [
+                CanvasSpot(x: 20, y: 20, width: 200, ref: 'Here is a sticky'),
+              ],
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final atFullSize = tester.getSize(find.byType(CanvasView));
+    expect(atFullSize, isNotNull);
+
+    double cardHeight() => tester
+        .getSize(
+          find
+              .ancestor(
+                of: find.textContaining('sticky note'),
+                matching: find.byType(Padding),
+              )
+              .first,
+        )
+        .height;
+
+    final before = cardHeight();
+
+    // Zoom out twice. The box narrows with the zoom, so writing left at its
+    // own size would wrap to a letter a line and stretch the card into a
+    // ribbon — the card would get *taller* as the canvas got smaller.
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(find.byTooltip('Zoom out'));
+      await tester.pumpAndSettle();
+    }
+
+    expect(cardHeight(), lessThan(before));
   });
 }

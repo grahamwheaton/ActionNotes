@@ -2122,11 +2122,29 @@ class _CardOnCanvas extends StatelessWidget {
                             )
                           : card.isImage
                           ? _CanvasImage(reference: card.imagePath!)
-                          : Padding(
-                              padding: EdgeInsets.all(
-                                8 * scale.clamp(0.5, 1.5),
+                          // The writing is scaled with the canvas, not left
+                          // at its own size. A card's box is drawn at
+                          // width × zoom, so text that did not scale kept
+                          // full-size glyphs in a shrinking box: zoomed out,
+                          // a sticky note wrapped to one letter a line and
+                          // stretched into a ribbon.
+                          //
+                          // Scaled through the text scaler rather than by
+                          // transforming the widget, so the glyphs are laid
+                          // out at the size they are drawn and stay crisp.
+                          : MediaQuery(
+                              data: MediaQuery.of(context).copyWith(
+                                textScaler: _ZoomedText(
+                                  MediaQuery.textScalerOf(context),
+                                  scale.clamp(0.2, 4.0),
+                                ),
                               ),
-                              child: NoteView(markdown: card.markdown),
+                              child: Padding(
+                                padding: EdgeInsets.all(
+                                  8 * scale.clamp(0.5, 1.5),
+                                ),
+                                child: NoteView(markdown: card.markdown),
+                              ),
                             ),
                     ),
                   ),
@@ -2197,6 +2215,35 @@ class _CardOnCanvas extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The canvas's zoom applied on top of whatever text size the person has
+/// asked their device for.
+///
+/// Composed rather than replaced: a canvas zoomed to a half should halve the
+/// writing on it, but it has no business undoing someone's larger-text
+/// setting on the way.
+class _ZoomedText extends TextScaler {
+  const _ZoomedText(this.base, this.zoom);
+
+  final TextScaler base;
+  final double zoom;
+
+  @override
+  double scale(double fontSize) => base.scale(fontSize) * zoom;
+
+  // Still required by the base class, though nothing should be reading a
+  // single factor now that scaling is allowed to be nonlinear.
+  @override
+  // ignore: deprecated_member_use
+  double get textScaleFactor => base.textScaleFactor * zoom;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _ZoomedText && other.base == base && other.zoom == zoom;
+
+  @override
+  int get hashCode => Object.hash(base, zoom);
 }
 
 /// A picture on the canvas, at whatever width the card is.
