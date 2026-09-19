@@ -194,8 +194,32 @@ jobs:
 
           echo "::warning::Could not pre-install CMake; leaving it to Gradle"
 
+      # Stops a release that would come out debug-signed, rather than letting
+      # it publish and finding out when Android refuses to install it over the
+      # last one. Every release so far has gone out unsigned because a missing
+      # secret only skipped a step quietly; this says which one is missing and
+      # goes no further, and no tag or release is created because publish
+      # waits on this job.
+      - name: Require the signing secrets
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          missing=""
+          [ -n "$ANDROID_KEYSTORE_BASE64" ] || missing="$missing ANDROID_KEYSTORE_BASE64"
+          [ -n "$KEYSTORE_PASSWORD" ] || missing="$missing ANDROID_KEYSTORE_PASSWORD"
+          [ -n "$KEY_ALIAS" ] || missing="$missing ANDROID_KEY_ALIAS"
+          [ -n "$KEY_PASSWORD" ] || missing="$missing ANDROID_KEY_PASSWORD"
+
+          if [ -n "$missing" ]; then
+            echo "::error::Not building a release: these repository secrets are missing or empty —$missing"
+            echo "Add them under Settings → Secrets and variables → Actions → Repository secrets."
+            exit 1
+          fi
+          echo "All four signing secrets are present."
+
       - name: Set up release signing
-        if: env.ANDROID_KEYSTORE_BASE64 != ''
         env:
           KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -220,7 +244,9 @@ jobs:
           set -euo pipefail
           mv build/app/outputs/flutter-apk/app-release.apk "actionnotes-$TAG.apk"
           # The publish job cannot see this job's secrets context, so pass the
-          # answer along with the artifact.
+          # answer along with the artifact. It can only say "signed" now that
+          # the build refuses to run without the secrets, but the release
+          # notes still read it rather than assuming.
           test -f android/key.properties && echo signed > signing.txt || echo debug > signing.txt
 
       - uses: actions/upload-artifact@v4
