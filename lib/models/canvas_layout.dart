@@ -1,5 +1,21 @@
 import 'dart:convert';
 
+/// What a thing on a canvas is.
+enum CanvasSpotKind {
+  /// An ordinary card: a picture or a piece of writing, as tall as what is
+  /// in it.
+  card,
+
+  /// A labelled rectangle drawn behind the cards that grouping them together
+  /// — moving it takes everything standing on it along.
+  frame;
+
+  static CanvasSpotKind byName(String? name) => values.firstWhere(
+    (value) => value.name == name,
+    orElse: () => CanvasSpotKind.card,
+  );
+}
+
 /// Where one card sits on a canvas.
 class CanvasSpot {
   const CanvasSpot({
@@ -12,6 +28,8 @@ class CanvasSpot {
     this.flipX = false,
     this.flipY = false,
     this.locked = false,
+    this.kind = CanvasSpotKind.card,
+    this.height,
   });
 
   final double x;
@@ -38,6 +56,16 @@ class CanvasSpot {
   /// turned, so a background sheet stays put while things are arranged on it.
   final bool locked;
 
+  /// A card or a frame.
+  final CanvasSpotKind kind;
+
+  /// How tall it is drawn, for the things that do not take their height from
+  /// what is in them. Null for a card, whose height follows its picture or
+  /// its text; set for a frame, which is a rectangle someone drew.
+  final double? height;
+
+  bool get isFrame => kind == CanvasSpotKind.frame;
+
   CanvasSpot copyWith({
     double? x,
     double? y,
@@ -48,6 +76,8 @@ class CanvasSpot {
     bool? flipX,
     bool? flipY,
     bool? locked,
+    CanvasSpotKind? kind,
+    double? height,
   }) => CanvasSpot(
     x: x ?? this.x,
     y: y ?? this.y,
@@ -58,6 +88,8 @@ class CanvasSpot {
     flipX: flipX ?? this.flipX,
     flipY: flipY ?? this.flipY,
     locked: locked ?? this.locked,
+    kind: kind ?? this.kind,
+    height: height ?? this.height,
   );
 
   // Written only when it is not the default, so a card nobody has turned or
@@ -72,6 +104,8 @@ class CanvasSpot {
     if (flipX) 'fx': true,
     if (flipY) 'fy': true,
     if (locked) 'lock': true,
+    if (kind != CanvasSpotKind.card) 'kind': kind.name,
+    if (height != null) 'h': height,
   };
 
   static CanvasSpot fromJson(Map<String, dynamic> json) => CanvasSpot(
@@ -84,6 +118,8 @@ class CanvasSpot {
     flipX: json['fx'] == true,
     flipY: json['fy'] == true,
     locked: json['lock'] == true,
+    kind: CanvasSpotKind.byName(json['kind'] as String?),
+    height: json.containsKey('h') ? _number(json['h']) : null,
   );
 
   static double _number(Object? value) => switch (value) {
@@ -103,11 +139,24 @@ class CanvasSpot {
       other.rotation == rotation &&
       other.flipX == flipX &&
       other.flipY == flipY &&
-      other.locked == locked;
+      other.locked == locked &&
+      other.kind == kind &&
+      other.height == height;
 
   @override
-  int get hashCode =>
-      Object.hash(x, y, width, z, ref, rotation, flipX, flipY, locked);
+  int get hashCode => Object.hash(
+    x,
+    y,
+    width,
+    z,
+    ref,
+    rotation,
+    flipX,
+    flipY,
+    locked,
+    kind,
+    height,
+  );
 }
 
 /// How one canvas is drawn, as opposed to what is on it.

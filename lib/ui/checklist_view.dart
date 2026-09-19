@@ -1554,6 +1554,9 @@ class _SectionCanvasState extends State<_SectionCanvas> {
             onDuplicateCard: (index) => context
                 .read<AppState>()
                 .duplicateCanvasCard(slug, section, index),
+            onEditCard: (index, markdown) => context
+                .read<AppState>()
+                .setCanvasCard(slug, section, index, markdown),
             onOpenFullScreen: () =>
                 CanvasScreen.open(context, slug: slug, section: section),
           ),

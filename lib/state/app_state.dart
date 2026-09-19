@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../markdown/canvas_cards.dart';
+import '../markdown/canvas_placement.dart';
 import '../markdown/project_links.dart';
 import '../markdown/project_merge.dart';
 import '../models/canvas_layout.dart';
@@ -972,6 +973,102 @@ class AppState extends ChangeNotifier {
       ...CanvasCards.parse(block.body),
       CanvasCards.text(markdown),
     ];
+    await setBlockBody(slug, section, CanvasCards.serialize(cards));
+  }
+
+  /// Puts a frame on a canvas: a labelled rectangle to group things inside.
+  ///
+  /// A frame is a card like any other — its title is a bullet in the section's
+  /// markdown, so a canvas read anywhere else still says what its groups were
+  /// called. What makes it a frame is its position, which is also where its
+  /// height lives: a frame is a rectangle someone drew, not a box that fits
+  /// what is in it.
+  Future<void> addCanvasFrame(
+    String slug,
+    String section, {
+    String title = 'Frame',
+    double x = 40,
+    double y = 40,
+    double width = 560,
+    double height = 400,
+  }) async {
+    final project = projectBySlug(slug);
+    if (project == null) return;
+
+    final block = project.blocks.firstWhere(
+      (block) => block.title == section,
+      orElse: () => const ProjectBlock(title: ''),
+    );
+    if (block.title.isEmpty) return;
+
+    _rememberCanvas(slug, section);
+
+    final card = CanvasCards.text(title);
+    final cards = [...CanvasCards.parse(block.body), card];
+
+    // Behind everything, because a frame is what the other cards stand on.
+    final existing = CanvasPlacement.place(
+      CanvasCards.parse(block.body),
+      layoutFor(slug).spotsFor(section),
+    );
+    var lowest = 0;
+    for (final spot in existing) {
+      if (spot.z < lowest) lowest = spot.z;
+    }
+
+    _layouts[slug] = layoutFor(slug).withSection(section, [
+      ...existing,
+      CanvasSpot(
+        x: x,
+        y: y,
+        width: width,
+        height: height,
+        z: lowest - 1,
+        ref: card.ref,
+        kind: CanvasSpotKind.frame,
+      ),
+    ]);
+    unawaited(_pushLayout(slug));
+
+    await setBlockBody(slug, section, CanvasCards.serialize(cards));
+  }
+
+  /// Rewrites one card's markdown, leaving where it sits alone.
+  ///
+  /// Renaming a frame and editing a note on the board are the same operation:
+  /// a card is its markdown, and its position is somewhere else entirely.
+  Future<void> setCanvasCard(
+    String slug,
+    String section,
+    int index,
+    String markdown,
+  ) async {
+    final project = projectBySlug(slug);
+    if (project == null) return;
+
+    final block = project.blocks.firstWhere(
+      (block) => block.title == section,
+      orElse: () => const ProjectBlock(title: ''),
+    );
+    if (block.title.isEmpty) return;
+
+    final cards = CanvasCards.parse(block.body);
+    if (index < 0 || index >= cards.length) return;
+    if (markdown.trim().isEmpty) return;
+
+    _rememberCanvas(slug, section);
+    cards[index] = CanvasCards.text(markdown);
+
+    // The position points at the card by what the card said, so a renamed
+    // card takes its position's ref with it rather than looking like a new
+    // one that has never been placed.
+    final spots = [...layoutFor(slug).spotsFor(section)];
+    if (index < spots.length) {
+      spots[index] = spots[index].copyWith(ref: cards[index].ref);
+      _layouts[slug] = layoutFor(slug).withSection(section, spots);
+      unawaited(_pushLayout(slug));
+    }
+
     await setBlockBody(slug, section, CanvasCards.serialize(cards));
   }
 

@@ -12,6 +12,7 @@ import '../markdown/canvas_placement.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
 import 'canvas_view.dart';
+import 'text_prompt.dart';
 
 /// A canvas on a screen of its own.
 ///
@@ -135,6 +136,22 @@ class _CanvasScreenState extends State<CanvasScreen> {
     await state.addCanvasCard(slug, section, text.trim());
   }
 
+  Future<void> _addFrame(BuildContext context) async {
+    final state = context.read<AppState>();
+    final title = await TextPromptDialog.show(
+      context,
+      title: 'Name the frame',
+      initialValue: 'Frame',
+      confirmLabel: 'Add',
+    );
+    if (title == null) return;
+    await state.addCanvasFrame(
+      slug,
+      section,
+      title: title.trim().isEmpty ? 'Frame' : title.trim(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -198,6 +215,11 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   onPressed: () => _addNote(context),
                 ),
                 IconButton(
+                  tooltip: 'Add a frame',
+                  icon: const Icon(Icons.crop_free),
+                  onPressed: () => _addFrame(context),
+                ),
+                IconButton(
                   tooltip: 'Paste',
                   icon: const Icon(Icons.content_paste),
                   onPressed: _paste,
@@ -212,6 +234,8 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         _addPhoto(context);
                       case 'note':
                         _addNote(context);
+                      case 'frame':
+                        _addFrame(context);
                       case 'paste':
                         _paste();
                     }
@@ -219,6 +243,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
                   itemBuilder: (_) => const [
                     PopupMenuItem(value: 'photo', child: Text('Add photos')),
                     PopupMenuItem(value: 'note', child: Text('Add a note')),
+                    PopupMenuItem(value: 'frame', child: Text('Add a frame')),
                     PopupMenuItem(value: 'paste', child: Text('Paste')),
                   ],
                 ),
@@ -283,6 +308,9 @@ class _CanvasScreenState extends State<CanvasScreen> {
                       onDuplicateCard: (index) => context
                           .read<AppState>()
                           .duplicateCanvasCard(slug, section, index),
+                      onEditCard: (index, markdown) => context
+                          .read<AppState>()
+                          .setCanvasCard(slug, section, index, markdown),
                     ),
             ),
           ),

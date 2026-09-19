@@ -15,6 +15,7 @@ import 'canvas_snap.dart';
 import 'context_menu.dart';
 import 'note_view.dart';
 import 'theme.dart';
+import 'text_prompt.dart';
 import 'touch_input.dart';
 
 /// A canvas: pictures and notes laid out on a surface that pans and zooms.
@@ -34,6 +35,7 @@ class CanvasView extends StatefulWidget {
     this.onSettingsChanged,
     this.onRemoveCard,
     this.onDuplicateCard,
+    this.onEditCard,
     this.onOpenFullScreen,
     this.autofocus = false,
   });
@@ -61,6 +63,9 @@ class CanvasView extends StatefulWidget {
 
   /// Puts a copy of a card on the canvas, next to the original.
   final void Function(int index)? onDuplicateCard;
+
+  /// Rewrites a card's markdown — renaming a frame, or retyping a note.
+  final void Function(int index, String markdown)? onEditCard;
 
   /// Opens the canvas on a screen of its own. Null when it already is one.
   final VoidCallback? onOpenFullScreen;
@@ -328,10 +333,31 @@ class CanvasViewState extends State<CanvasView> {
   /// treated as square, which only decides where a guide is drawn for one
   /// frame.
   Size _sceneSize(int index) {
+    final spot = _spots[index];
+    // A frame is a rectangle someone drew, so it knows its own height rather
+    // than taking it from what is inside it.
+    if (spot.height != null) return Size(spot.width, spot.height!);
+
     final render = _cardKeys[index]?.currentContext?.findRenderObject();
-    final width = _spots[index].width;
+    final width = spot.width;
     if (render is! RenderBox || !render.hasSize) return Size(width, width);
     return Size(width, render.size.height / _scale);
+  }
+
+  /// What a frame is holding: everything whose middle stands on it.
+  ///
+  /// By the middle rather than by overlap, so a card poking over the edge
+  /// still belongs to the frame it is mostly on and a card merely brushing
+  /// one does not get carried off by it.
+  Set<int> _within(int frame) {
+    final bounds = _sceneRect(frame);
+    return {
+      for (var i = 0; i < _spots.length; i++)
+        if (i != frame &&
+            !_spots[i].isFrame &&
+            bounds.contains(_sceneRect(i).center))
+          i,
+    };
   }
 
   Rect _sceneRect(int index) {
@@ -340,7 +366,13 @@ class CanvasViewState extends State<CanvasView> {
   }
 
   void _beginDrag(int index) {
-    final moving = _selection.contains(index) ? _selection : {index};
+    var moving = _selection.contains(index) ? {..._selection} : {index};
+    // Picking up a frame picks up what is standing on it, which is what a
+    // frame is for. Worked out as the drag starts, so a card does not join or
+    // leave the group halfway across the canvas.
+    for (final at in moving.toList()) {
+      if (_spots[at].isFrame) moving = {...moving, ..._within(at)};
+    }
     _dragFrom
       ..clear()
       // A locked card stays where it is even when it is part of what was
@@ -428,6 +460,11 @@ class CanvasViewState extends State<CanvasView> {
       final spot = _spots[index];
       _spots[index] = spot.copyWith(
         width: math.max(80, spot.width + delta.dx / _scale),
+        // A card's height follows what is in it, so only its width is
+        // dragged. A frame is a rectangle, so both corners move.
+        height: spot.height == null
+            ? null
+            : math.max(80, spot.height! + delta.dy / _scale),
       );
     });
   }
@@ -1141,6 +1178,19 @@ class CanvasViewState extends State<CanvasView> {
     }
   }
 
+  Future<void> _editCard(int index) async {
+    final frame = _spots[index].isFrame;
+    final text = await TextPromptDialog.show(
+      context,
+      title: frame ? 'Rename the frame' : 'Edit the card',
+      initialValue: widget.cards[index].markdown,
+      maxLines: frame ? 1 : 6,
+      minLines: frame ? null : 2,
+    );
+    if (text == null) return;
+    widget.onEditCard?.call(index, text);
+  }
+
   void _showCardMenu(int index, Offset at) {
     // Whatever is selected, or the card that was clicked if it is not part of
     // the selection.
@@ -1195,6 +1245,12 @@ class CanvasViewState extends State<CanvasView> {
           icon: Icons.rotate_left,
           onSelected: () =>
               _transform(targets, (spot) => spot.copyWith(rotation: 0)),
+        ),
+      if (!many && widget.onEditCard != null && !widget.cards[index].isImage)
+        ContextMenuAction(
+          label: _spots[index].isFrame ? 'Rename frame' : 'Edit text',
+          icon: Icons.edit_outlined,
+          onSelected: () => _editCard(index),
         ),
       ContextMenuAction(
         label: _spots[index].locked ? 'Unlock' : 'Lock in place',
@@ -1343,6 +1399,9 @@ class _CardOnCanvas extends StatelessWidget {
       left: at.dx,
       top: at.dy,
       width: spot.width * scale,
+      // A frame is drawn at the size it was given; a card is as tall as what
+      // is in it.
+      height: spot.height == null ? null : spot.height! * scale,
       // Turned and mirrored about its own centre. The box it is positioned in
       // stays square to the canvas, which is what everything else — snapping,
       // the marquee, resizing — goes on reasoning about.
@@ -1381,13 +1440,21 @@ class _CardOnCanvas extends StatelessWidget {
               children: [
                 Container(
                   decoration: BoxDecoration(
-                    color: card.isImage
+                    color: spot.isFrame
+                        // Barely there: a frame is a boundary, not a panel,
+                        // and what stands on it has to stay readable.
+                        ? theme.colorScheme.surfaceContainerHighest.withValues(
+                            alpha: 0.35,
+                          )
+                        : card.isImage
                         ? Colors.transparent
                         : theme.colorScheme.surfaceContainerLowest,
                     borderRadius: BorderRadius.circular(4),
                     border: Border.all(
                       color: selected
                           ? theme.colorScheme.primary
+                          : spot.isFrame
+                          ? theme.colorScheme.outline
                           : card.isImage
                           ? Colors.transparent
                           : theme.colorScheme.outlineVariant,
@@ -1411,7 +1478,33 @@ class _CardOnCanvas extends StatelessWidget {
                   // could be looked at and never moved. On a canvas a card is an
                   // object you pick up, not a page you interact with.
                   child: IgnorePointer(
-                    child: card.isImage
+                    child: spot.isFrame
+                        // A frame shows only its name, at the top left where
+                        // a label goes — the rest of it is the space it
+                        // encloses, and drawing anything there would be
+                        // drawing over what it is holding.
+                        ? Align(
+                            alignment: Alignment.topLeft,
+                            child: Padding(
+                              padding: EdgeInsets.all(
+                                6 * scale.clamp(0.5, 1.5),
+                              ),
+                              child: Text(
+                                card.markdown,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.labelLarge
+                                    ?.copyWith(
+                                      color: theme.colorScheme.onSurfaceVariant,
+                                      fontWeight: FontWeight.w600,
+                                    )
+                                    .apply(
+                                      fontSizeFactor: scale.clamp(0.6, 1.4),
+                                    ),
+                              ),
+                            ),
+                          )
+                        : card.isImage
                         ? _CanvasImage(reference: card.imagePath!)
                         : Padding(
                             padding: EdgeInsets.all(8 * scale.clamp(0.5, 1.5)),
