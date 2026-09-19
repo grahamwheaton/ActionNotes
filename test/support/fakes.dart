@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'dart:io';
 
+import 'package:actionnotes/models/canvas_layout.dart';
 import 'package:actionnotes/models/project.dart';
 import 'package:actionnotes/storage/attachment_store.dart';
 import 'package:actionnotes/state/app_state.dart';
@@ -14,6 +15,22 @@ import 'package:http/testing.dart';
 
 /// Keeps projects in memory so the UI can be driven without a filesystem.
 class FakeLocalStore implements LocalStore {
+  /// Canvas layouts, kept in memory the way the projects are.
+  final Map<String, CanvasLayout> layouts = {};
+
+  @override
+  Future<CanvasLayout> loadLayout(String slug) async =>
+      layouts[slug] ?? CanvasLayout.empty;
+
+  @override
+  Future<void> saveLayout(String slug, CanvasLayout layout) async {
+    if (layout.isEmpty) {
+      layouts.remove(slug);
+    } else {
+      layouts[slug] = layout;
+    }
+  }
+
   final Map<String, Project> saved = {};
 
   @override
@@ -52,18 +69,21 @@ class FakeAttachmentStore extends AttachmentStore {
   }
 
   @override
-  Future<File?> resolve(String repoPath, GitHubConfig config) => cached(repoPath);
+  Future<File?> resolve(String repoPath, GitHubConfig config) =>
+      cached(repoPath);
 }
 
 /// Reports no repo configured by default, so nothing tries to reach the
 /// network unless a test opts in with a complete config.
 class FakeSettingsStore implements SettingsStore {
-  FakeSettingsStore({this.config = const GitHubConfig(
-    owner: '',
-    repo: '',
-    branch: 'main',
-    token: '',
-  )});
+  FakeSettingsStore({
+    this.config = const GitHubConfig(
+      owner: '',
+      repo: '',
+      branch: 'main',
+      token: '',
+    ),
+  });
 
   final GitHubConfig config;
 

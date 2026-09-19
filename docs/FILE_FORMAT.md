@@ -290,6 +290,58 @@ outside `projects/`, which is the only one the app scans, so an archived item
 is kept and readable — on GitHub, in an editor, by a model — without coming
 back as a checklist. Nothing is deleted.
 
+## Canvases
+
+A canvas is a section shown on a surface that pans and zooms, with its
+pictures and notes placed on it rather than listed down the page.
+
+Its **content is ordinary markdown**, in the section it belongs to — a bullet
+list, one bullet per card:
+
+```markdown
+## Moodboard
+
+  - ![door](../attachments/house-move/door.png)
+  - The handle is the bit worth copying
+  - ![window](../attachments/house-move/window.png)
+```
+
+Its **arrangement** lives beside the project, in `canvas/<slug>.json`:
+
+```json
+{
+  "version": 1,
+  "sections": {
+    "Moodboard": [
+      { "x": 120, "y": 40, "w": 320, "z": 1, "ref": "door.png" }
+    ]
+  }
+}
+```
+
+Two files rather than one, deliberately. A canvas needs an x, a y, a width and
+a stacking order for everything on it, and none of that is readable markdown —
+writing it into the project file would turn a file anyone can open into a blob
+with co-ordinates in it. So the markdown keeps what the canvas is made of and
+the sidecar keeps only where it sits.
+
+What follows from that:
+
+- **Losing the layout costs the arrangement and nothing else.** Without the
+  JSON the section is a list of pictures and notes, which is exactly what it
+  is on GitHub and to anything that has never heard of a canvas.
+- **The layout is what says a section is a canvas.** There is no marker in the
+  markdown, so a project with no layout file has no canvases.
+- **Positions are matched to cards by position, then by `ref`.** `ref` is an
+  image's path, or the opening of a note's text. A card that has shifted along
+  the list keeps its place; a card with no position is put down in free space
+  rather than on the pile; a position whose card has gone is dropped. The
+  markdown always wins.
+- **The layout is last-write-wins.** It is an arrangement, not content, so a
+  rejected write is answered by reading the current file and writing over it
+  rather than by asking anyone to resolve anything. The worst case is a card
+  going back where this device had it, which you can see and drag back.
+
 ## Attachments
 
 Images are stored in the repo at `attachments/<project-slug>/<filename>` and

@@ -123,7 +123,16 @@ class _ActionRow extends StatelessWidget {
       children: [
         Icon(action.icon, size: 18, color: color),
         const SizedBox(width: 12),
-        Text(action.label, style: TextStyle(color: color)),
+        // Flexible, because a menu opened near the edge of a narrow screen
+        // has less room than the longest label needs, and a label that does
+        // not fit should be shortened rather than overflow off the side.
+        Flexible(
+          child: Text(
+            action.label,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: color),
+          ),
+        ),
       ],
     );
   }

@@ -2,6 +2,7 @@ import '../markdown/project_links.dart';
 import '../markdown/project_markdown.dart';
 import '../markdown/project_merge.dart';
 import '../models/checklist_item.dart';
+import '../models/canvas_layout.dart';
 import '../models/project.dart';
 import 'github_client.dart';
 import 'local_store.dart';
@@ -49,8 +50,10 @@ class ProjectConflict {
 /// overwriting a remote edit made to a file you had also edited locally — which
 /// is why a push that fails the SHA check is surfaced rather than forced.
 class SyncService {
-  SyncService({required this.localStore, GitHubClient Function(GitHubConfig)? clientFactory})
-      : _clientFactory = clientFactory ?? GitHubClient.new;
+  SyncService({
+    required this.localStore,
+    GitHubClient Function(GitHubConfig)? clientFactory,
+  }) : _clientFactory = clientFactory ?? GitHubClient.new;
 
   final LocalStore localStore;
 
@@ -128,8 +131,11 @@ class SyncService {
         final file = await client.readFile(path);
         if (file == null) continue;
 
-        final remote =
-            ProjectMarkdown.parse(file.content, slug: slug, sha: file.sha);
+        final remote = ProjectMarkdown.parse(
+          file.content,
+          slug: slug,
+          sha: file.sha,
+        );
         if (existing != null && existing.sha == file.sha) continue;
 
         byslug[slug] = remote;
@@ -137,7 +143,9 @@ class SyncService {
       }
 
       final projects = byslug.values.toList()
-        ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+        ..sort(
+          (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
+        );
 
       return SyncResult(
         projects: projects,
@@ -204,9 +212,9 @@ class SyncService {
     final chosen = switch (resolution) {
       ConflictResolution.keepLocal => conflict.local,
       ConflictResolution.merge => ProjectMerge.merge(
-          local: conflict.local,
-          remote: conflict.remote,
-        ),
+        local: conflict.local,
+        remote: conflict.remote,
+      ),
       ConflictResolution.keepRemote => conflict.remote,
     };
 
@@ -264,7 +272,9 @@ class SyncService {
         buffer
           ..writeln('# ${project.title} — archive')
           ..writeln()
-          ..writeln('Completed items moved out of `projects/${project.slug}.md`.')
+          ..writeln(
+            'Completed items moved out of `projects/${project.slug}.md`.',
+          )
           ..writeln();
       } else {
         buffer.write(existing.content);
@@ -282,7 +292,8 @@ class SyncService {
       await client.writeFile(
         path: path,
         content: buffer.toString(),
-        message: 'Archive ${items.length} completed '
+        message:
+            'Archive ${items.length} completed '
             '${items.length == 1 ? 'item' : 'items'} from ${project.title}',
         sha: existing?.sha,
       );
@@ -298,6 +309,73 @@ class SyncService {
 
   /// Uploads one attachment. Errors are left to the caller, which already
   /// turns a [GitHubException] into something readable.
+  /// Reads a project's canvas layout from the repo.
+  ///
+  /// Absent, unreadable or nonsense all mean the same thing — no layout — so a
+  /// canvas whose positions cannot be read opens as the list of pictures and
+  /// notes it is rather than as an error.
+  Future<CanvasLayout> readLayout(GitHubConfig config, String slug) async {
+    final client = _clientFactory(config);
+    try {
+      final file = await client.readFile(CanvasLayout.path(slug));
+      if (file == null) return CanvasLayout.empty;
+      return CanvasLayout.parse(file.content, sha: file.sha);
+    } on GitHubException {
+      return CanvasLayout.empty;
+    }
+  }
+
+  /// Writes a project's canvas layout, and returns it with the SHA GitHub
+  /// gave back.
+  ///
+  /// Last write wins, deliberately. A layout is an arrangement, not content —
+  /// the pictures and the notes are in the markdown and merge the way they
+  /// always did — so a rejected SHA is answered by reading the current one and
+  /// writing over it rather than by asking anyone to resolve anything. The
+  /// worst case is that a card someone else moved goes back where this device
+  /// had it, which is a thing you can see and drag back.
+  Future<CanvasLayout> writeLayout(
+    GitHubConfig config,
+    String slug,
+    CanvasLayout layout,
+  ) async {
+    final client = _clientFactory(config);
+    final path = CanvasLayout.path(slug);
+
+    if (layout.isEmpty) {
+      // Nothing left to arrange: take the file away rather than leave an empty
+      // one implying the project still has a canvas.
+      if (layout.sha != null) {
+        try {
+          await client.deleteFile(
+            path: path,
+            sha: layout.sha!,
+            message: 'Remove canvas layout for $slug',
+          );
+        } on GitHubException {
+          // It is already gone, or cannot be removed; either way there is
+          // nothing here worth interrupting anyone over.
+        }
+      }
+      return CanvasLayout.empty;
+    }
+
+    Future<String> write(String? sha) => client.writeFile(
+      path: path,
+      content: layout.toJsonString(),
+      message: 'Update canvas layout for $slug',
+      sha: sha,
+    );
+
+    try {
+      return layout.copyWith(sha: await write(layout.sha));
+    } on GitHubException catch (error) {
+      if (error.statusCode != 409 && error.statusCode != 422) rethrow;
+      final current = await client.readFile(path);
+      return layout.copyWith(sha: await write(current?.sha));
+    }
+  }
+
   Future<void> uploadAttachment(
     GitHubConfig config, {
     required String path,
@@ -363,10 +441,7 @@ class SyncService {
   ///
   /// Called after an edit, so removing an image from a note takes the file
   /// with it instead of leaving it in the repo for good.
-  Future<void> pruneAttachments(
-    GitHubConfig config,
-    Project project,
-  ) async {
+  Future<void> pruneAttachments(GitHubConfig config, Project project) async {
     if (!config.isComplete) return;
 
     final referenced = <String>{};

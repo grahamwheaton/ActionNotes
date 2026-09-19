@@ -6,11 +6,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../markdown/canvas_cards.dart';
+import '../markdown/canvas_placement.dart';
 import '../markdown/note_conversation.dart';
 import '../markdown/project_links.dart';
 import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
+import 'canvas_view.dart';
 import 'composer.dart';
 import 'context_menu.dart';
 import 'conversation_view.dart';
@@ -241,6 +244,17 @@ class _ChecklistViewState extends State<ChecklistView> {
     if (text.isEmpty) return;
 
     final state = context.read<AppState>();
+
+    // On a canvas, what is typed goes onto the board as a card rather than
+    // into a list underneath it — the canvas is what the section is now.
+    final target = _resolvedTarget;
+    if (target != null && state.isCanvas(widget.slug, target)) {
+      state.addCanvasCard(widget.slug, target, text);
+      _newItemController.clear();
+      _newItemFocus.requestFocus();
+      return;
+    }
+
     if (_addKind == AddKind.note) {
       // What was typed is the heading: a note block is named, and its body is
       // written underneath it once it is there. Sections do not nest, so this
@@ -286,6 +300,15 @@ class _ChecklistViewState extends State<ChecklistView> {
     if (reference == null || !mounted) return;
 
     final target = _resolvedTarget;
+
+    // A picture put on a canvas is a card on the board, not an item in a list.
+    if (target != null && state.isCanvas(widget.slug, target)) {
+      await state.addCanvasCard(widget.slug, target, reference);
+      if (!mounted) return;
+      _newItemController.clear();
+      return;
+    }
+
     await state.addItem(
       widget.slug,
       text.isEmpty ? 'Photo' : text,
@@ -1187,8 +1210,14 @@ class _BlockSection extends StatelessWidget {
     final theme = Theme.of(context);
     final state = context.read<AppState>();
     final touch = TouchInput.isPrimary;
+    final canvas = context.watch<AppState>().isCanvas(slug, block.title);
 
     final actions = <ContextMenuAction>[
+      ContextMenuAction(
+        label: canvas ? 'Show as notes' : 'Turn into a canvas',
+        icon: canvas ? Icons.subject : Icons.dashboard_customize_outlined,
+        onSelected: () => state.setCanvas(slug, block.title, !canvas),
+      ),
       ContextMenuAction(
         label: 'Add an item here',
         icon: Icons.add,
@@ -1277,17 +1306,25 @@ class _BlockSection extends StatelessWidget {
               // written in and the order a document is written in: a heading, a
               // paragraph, then a list. Always present, so a section made a
               // moment ago has somewhere to type rather than only a name.
-              Padding(
-                padding: touch
-                    ? const EdgeInsets.fromLTRB(2, 4, 6, 4)
-                    : const EdgeInsets.fromLTRB(10, 4, 8, 4),
-                child: _BlockBody(
-                  key: ValueKey('body-$slug-${block.title}'),
+              if (canvas)
+                _SectionCanvas(
+                  key: ValueKey('canvas-$slug-${block.title}'),
                   slug: slug,
-                  title: block.title,
-                  initialMarkdown: block.body,
+                  section: block.title,
+                  body: block.body,
+                )
+              else
+                Padding(
+                  padding: touch
+                      ? const EdgeInsets.fromLTRB(2, 4, 6, 4)
+                      : const EdgeInsets.fromLTRB(10, 4, 8, 4),
+                  child: _BlockBody(
+                    key: ValueKey('body-$slug-${block.title}'),
+                    slug: slug,
+                    title: block.title,
+                    initialMarkdown: block.body,
+                  ),
                 ),
-              ),
               for (var position = 0; position < items.length; position++)
                 _ItemTile(
                   key: ValueKey('block-${block.title}-${indices[position]}'),
@@ -1305,6 +1342,65 @@ class _BlockSection extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// A section shown as a canvas.
+///
+/// Reads the section's markdown as cards and the layout file as where they
+/// sit, and hands both to the surface. Everything the surface moves comes back
+/// as positions only — dragging never rewrites the markdown it is drawing,
+/// which is what makes losing the layout cost the arrangement and nothing
+/// else.
+class _SectionCanvas extends StatelessWidget {
+  const _SectionCanvas({
+    super.key,
+    required this.slug,
+    required this.section,
+    required this.body,
+  });
+
+  final String slug;
+  final String section;
+  final String body;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final state = context.watch<AppState>();
+    final cards = CanvasCards.parse(body);
+
+    if (cards.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 24),
+        child: Center(
+          child: Text(
+            'Nothing on this canvas yet — add a photo with + below.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return SizedBox(
+      // A canvas inside a scrolling list needs a height of its own, and one
+      // tall enough to be worth panning about in.
+      height: 420,
+      child: CanvasView(
+        slug: slug,
+        section: section,
+        cards: cards,
+        spots: CanvasPlacement.place(
+          cards,
+          state.layoutFor(slug).spotsFor(section),
+        ),
+        onChanged: (moved) =>
+            context.read<AppState>().setCanvasSpots(slug, section, moved),
       ),
     );
   }

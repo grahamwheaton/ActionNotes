@@ -3,8 +3,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../markdown/canvas_cards.dart';
 import '../markdown/project_links.dart';
 import '../markdown/project_merge.dart';
+import '../models/canvas_layout.dart';
 import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../storage/attachment_store.dart';
@@ -250,6 +252,9 @@ class AppState extends ChangeNotifier {
     _login = await _settingsStore.loadLogin();
     _config = await _settingsStore.load();
     _projects = await _localStore.loadAll();
+    for (final project in _projects) {
+      await _loadLayout(project.slug);
+    }
     _loading = false;
     notifyListeners();
 
@@ -519,6 +524,10 @@ class AppState extends ChangeNotifier {
         if (name.isEmpty || name == from) return project;
         if (project.blocks.any((block) => block.title == name)) return project;
 
+        // The canvas is keyed by the section's name, so it has to follow or
+        // it is left pointing at a heading that has gone.
+        _renameCanvasSection(slug, from, name);
+
         return project.copyWith(
           blocks: [
             for (final block in project.blocks)
@@ -767,6 +776,112 @@ class AppState extends ChangeNotifier {
       ),
     );
     return null;
+  }
+
+  // --- Canvases -----------------------------------------------------------
+  //
+  // A canvas's content is the section's markdown, the same as any other
+  // section. Only the arrangement lives here, in a file beside the project,
+  // and it is the layout that says which sections are canvases at all — so a
+  // project with no layout has no canvases and shows its sections as notes.
+
+  final Map<String, CanvasLayout> _layouts = {};
+  final Map<String, Timer> _layoutTimers = {};
+
+  CanvasLayout layoutFor(String slug) => _layouts[slug] ?? CanvasLayout.empty;
+
+  bool isCanvas(String slug, String section) =>
+      layoutFor(slug).isCanvas(section);
+
+  Future<void> _loadLayout(String slug) async {
+    final layout = await _localStore.loadLayout(slug);
+    if (layout.isEmpty) return;
+    _layouts[slug] = layout;
+    notifyListeners();
+  }
+
+  /// Turns a section into a canvas, or back into notes.
+  ///
+  /// Nothing is rewritten either way: the section's markdown is the same list
+  /// of pictures and notes, and only whether there is an arrangement for it
+  /// changes. Turning a canvas back into notes forgets where things were —
+  /// which is the cost of the arrangement living in its own file, and is said
+  /// plainly rather than hidden.
+  Future<void> setCanvas(String slug, String section, bool canvas) async {
+    final layout = layoutFor(slug);
+    if (layout.isCanvas(section) == canvas) return;
+
+    _layouts[slug] = canvas
+        ? layout.withSection(section, const [])
+        : layout.withoutSection(section);
+    notifyListeners();
+    await _pushLayout(slug);
+  }
+
+  /// Puts a new card on a canvas.
+  ///
+  /// Appended to the section's markdown as another bullet, which is all a card
+  /// is — the arrangement follows on its own, since a card with no position is
+  /// laid down in free space rather than on the pile.
+  Future<void> addCanvasCard(
+    String slug,
+    String section,
+    String markdown,
+  ) async {
+    final project = projectBySlug(slug);
+    if (project == null) return;
+
+    final block = project.blocks.firstWhere(
+      (block) => block.title == section,
+      orElse: () => const ProjectBlock(title: ''),
+    );
+    if (block.title.isEmpty) return;
+
+    final cards = [
+      ...CanvasCards.parse(block.body),
+      CanvasCards.text(markdown),
+    ];
+    await setBlockBody(slug, section, CanvasCards.serialize(cards));
+  }
+
+  Future<void> setCanvasSpots(
+    String slug,
+    String section,
+    List<CanvasSpot> spots,
+  ) async {
+    _layouts[slug] = layoutFor(slug).withSection(section, spots);
+    notifyListeners();
+
+    // Settled for a moment first: dragging a card across a canvas would
+    // otherwise be a commit per frame.
+    _layoutTimers[slug]?.cancel();
+    _layoutTimers[slug] = Timer(_pushDelay, () => _pushLayout(slug));
+  }
+
+  Future<void> _renameCanvasSection(String slug, String from, String to) async {
+    final layout = layoutFor(slug);
+    if (!layout.isCanvas(from)) return;
+    _layouts[slug] = layout.renameSection(from, to);
+    await _pushLayout(slug);
+  }
+
+  Future<void> _pushLayout(String slug) async {
+    _layoutTimers.remove(slug)?.cancel();
+    final layout = layoutFor(slug);
+    await _localStore.saveLayout(slug, layout);
+    if (!_config.isComplete) return;
+
+    try {
+      final pushed = await _syncService.writeLayout(_config, slug, layout);
+      // Adopt the SHA whatever else has happened in the meantime, the same as
+      // a project push does: throwing it away is what made every later write
+      // fail against a SHA GitHub had already moved past.
+      _layouts[slug] = layoutFor(slug).copyWith(sha: pushed.sha);
+      await _localStore.saveLayout(slug, _layouts[slug]!);
+    } catch (_) {
+      // An arrangement is worth no interruption. It is saved on the device and
+      // the next change will try again.
+    }
   }
 
   Future<void> setNotes(String slug, String notes) =>

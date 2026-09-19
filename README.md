@@ -32,6 +32,12 @@ pasting one file — or by pointing the model at the repo.
   the file it was. A section is a card like the rows it holds, with its name as
   a band across the top — typed in place rather than through a dialog — and its
   prose as the body. Sections are dragged into order the same way items are.
+- **Canvases.** A section can be shown as a canvas — pictures and notes on a
+  surface that pans and zooms, dragged where you want them and resized by the
+  corner. The pictures and notes are the section's own markdown, a bullet per
+  card, and only the arrangement lives beside the project in
+  `canvas/<slug>.json`. Lose that file and the canvas is the list it always
+  was; that is the trade it exists to make.
 - **The composer** at the bottom of a project is a card with the text above and
   the controls below: + attaches a photo, a pill picks whether you are adding a
   task or a section of notes, and the round button adds it — held, it adds it
