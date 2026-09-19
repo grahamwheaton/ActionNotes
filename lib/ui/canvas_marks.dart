@@ -11,6 +11,31 @@ import '../models/canvas_layout.dart';
 class CanvasMarks {
   CanvasMarks._();
 
+  /// How far apart to draw the background's marks, on the glass.
+  ///
+  /// A background drawn at one fixed scene spacing disappears twice over as
+  /// you zoom out: the marks crowd together *and* each one shrinks. Doubling
+  /// the scene spacing as the canvas shrinks — and halving it as it grows —
+  /// keeps what lands on screen inside a band a person can actually see, so
+  /// a background reads as a background at any zoom instead of as a faint
+  /// tint at one end and a cage at the other.
+  static const backgroundSpacing = 80.0;
+  static const minOnScreen = 24.0;
+  static const maxOnScreen = 160.0;
+
+  static double backgroundStep(double scale) {
+    if (scale <= 0 || !scale.isFinite) return 0;
+
+    var spacing = backgroundSpacing;
+    while (spacing * scale < minOnScreen && spacing < 1e9) {
+      spacing *= 2;
+    }
+    while (spacing * scale > maxOnScreen && spacing > 1e-6) {
+      spacing /= 2;
+    }
+    return spacing * scale;
+  }
+
   static Offset pointAt(CanvasShape shape, int index) =>
       Offset(shape.points[index * 2], shape.points[index * 2 + 1]);
 

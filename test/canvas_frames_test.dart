@@ -92,12 +92,14 @@ void main() {
   });
 
   group('adding a frame', () {
-    testWidgets('writes its name to the markdown and its shape to the layout', (
+    testWidgets('is a box you drag out, and it is the size you dragged', (
       tester,
     ) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Add a frame'));
+      await tester.tap(find.byTooltip('Frame'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(500, 300), const Offset(240, 160));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).last, 'Ideas');
       await tester.tap(find.text('Add'));
@@ -109,9 +111,29 @@ void main() {
 
       final frame = spotsOf(state).last;
       expect(frame.isFrame, isTrue);
-      expect(frame.height, isNotNull);
+      // The size is what was dragged, not a guess: that is the point of
+      // drawing a frame rather than asking for one.
+      expect(frame.width, closeTo(240, 1));
+      expect(frame.height, closeTo(160, 1));
+      // And it starts at the corner the drag started from, rather than
+      // eighteen pixels along it.
+      expect(frame.x, closeTo(500, 1));
       // Behind everything, because a frame is what the cards stand on.
       expect(frame.z, lessThan(spotsOf(state).first.z));
+      await settle(tester);
+    });
+
+    testWidgets('a press that goes nowhere makes no frame', (tester) async {
+      final state = await pumpBoard(tester);
+      final before = spotsOf(state).length;
+
+      await tester.tap(find.byTooltip('Frame'));
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(500, 300));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TextField), findsNothing);
+      expect(spotsOf(state).length, before);
       await settle(tester);
     });
   });
@@ -421,6 +443,35 @@ void _drawingOnTheBoard() {
       await state.setCanvasCard('list', 'Board', 0, 'Won');
       await tester.pumpAndSettle();
       expect(state.canvasDrawing('list', 'Board').single.to?.ref, 'Won');
+      await settle(tester);
+    });
+
+    testWidgets('an arrow can be drawn straight across a card', (tester) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- One',
+        spots: const [CanvasSpot(x: 300, y: 200, width: 400, ref: 'One')],
+      );
+
+      await tester.tap(find.byTooltip('Shapes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Arrow').last);
+      await tester.pumpAndSettle();
+
+      // Starting on top of the card: with a tool in hand the press is a mark
+      // being drawn, not the card being picked up.
+      final card = tester.getRect(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('One'),
+        ),
+      );
+      await tester.dragFrom(card.center, const Offset(200, 150));
+      await tester.pumpAndSettle();
+
+      expect(state.canvasDrawing('list', 'Board'), hasLength(1));
+      // And nothing was selected by the press that started it.
+      expect(find.text('1 selected'), findsNothing);
       await settle(tester);
     });
 

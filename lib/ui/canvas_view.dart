@@ -112,6 +112,11 @@ class CanvasViewState extends State<CanvasView> {
   /// The mark being drawn, in scene coordinates, before it is committed.
   List<double>? _drawing;
 
+  /// Where the pointer is on the canvas, while a tool that snaps is armed.
+  /// Only used to show what an arrow would hold on to, so it is not tracked
+  /// at any other time.
+  Offset? _pointer;
+
   /// What the eraser has passed over during this stroke.
   final Set<int> _rubbed = {};
 
@@ -227,7 +232,30 @@ class CanvasViewState extends State<CanvasView> {
 
   void _drawStart(Offset viewportPoint) {
     final scene = _toScene(viewportPoint);
-    setState(() => _drawing = [scene.dx, scene.dy, scene.dx, scene.dy]);
+    setState(() {
+      _pointer = viewportPoint;
+      _drawing = [scene.dx, scene.dy, scene.dx, scene.dy];
+    });
+  }
+
+  /// The place an arrow would take hold if it were let go here, or null when
+  /// there is nothing near enough to hold on to.
+  ///
+  /// Shown while the arrow tool is armed so that snapping is something you
+  /// watch happen rather than something you find out about afterwards.
+  ({Rect card, Offset at})? _holdNear(Offset scene) {
+    for (final entry in _cardRects.entries) {
+      if (!entry.value.inflate(8 / _scale).contains(scene)) continue;
+      final hold = CanvasMarks.nearestHold(entry.value, scene);
+      return (
+        card: entry.value,
+        at: Offset(
+          entry.value.left + entry.value.width * hold.dx,
+          entry.value.top + entry.value.height * hold.dy,
+        ),
+      );
+    }
+    return null;
   }
 
   void _drawUpdate(Offset viewportPoint) {
@@ -236,6 +264,7 @@ class CanvasViewState extends State<CanvasView> {
     final scene = _toScene(viewportPoint);
 
     setState(() {
+      _pointer = viewportPoint;
       if (_tool == CanvasTool.pen) {
         // Every wobble of a freehand line would be a hundred numbers in the
         // file, so a point is kept only once the pen has actually gone
@@ -254,21 +283,29 @@ class CanvasViewState extends State<CanvasView> {
     });
   }
 
-  void _drawEnd() {
+  Future<void> _drawEnd() async {
     final drawing = _drawing;
-    final kind = _tool.draws;
+    final tool = _tool;
+    final kind = tool.draws;
     setState(() {
       _drawing = null;
+      _pointer = null;
       // The pen keeps going, because a drawing is many strokes; a single
       // shape is one thing, so its tool disarms like the rest.
-      if (_tool != CanvasTool.pen) _tool = CanvasTool.select;
+      if (tool != CanvasTool.pen) _tool = CanvasTool.select;
     });
-    if (drawing == null || kind == null) return;
+    if (drawing == null) return;
 
     // A press that went nowhere is a press, not a mark.
     final from = Offset(drawing[0], drawing[1]);
     final to = Offset(drawing[drawing.length - 2], drawing[drawing.length - 1]);
     if (drawing.length == 4 && (to - from).distance < 4) return;
+
+    if (tool == CanvasTool.frame) {
+      await _placeFrame(Rect.fromPoints(from, to));
+      return;
+    }
+    if (kind == null) return;
 
     // An arrow that ends on a card holds on to it, so moving the card takes
     // the arrow with it. Only arrows: a box drawn round three references is
@@ -292,6 +329,30 @@ class CanvasViewState extends State<CanvasView> {
         thickness: _thickness,
         from: hold(from),
         to: hold(to),
+      ),
+    );
+  }
+
+  /// Names the box that was just dragged out, and puts a frame there.
+  Future<void> _placeFrame(Rect box) async {
+    final title = await TextPromptDialog.show(
+      context,
+      title: 'Name the frame',
+      initialValue: 'Frame',
+      confirmLabel: 'Add',
+    );
+    if (title == null || !mounted) return;
+
+    widget.onPlaceCard?.call(
+      title.trim().isEmpty ? 'Frame' : title.trim(),
+      CanvasSpot(
+        x: box.left,
+        y: box.top,
+        // A frame has to be big enough to hold something, so a box dragged
+        // out in a flick is nudged up rather than made as a sliver.
+        width: math.max(80, box.width),
+        height: math.max(80, box.height),
+        kind: CanvasSpotKind.frame,
       ),
     );
   }
@@ -327,15 +388,12 @@ class CanvasViewState extends State<CanvasView> {
     final scene = _toScene(viewportPoint);
     final text = await TextPromptDialog.show(
       context,
-      title: switch (tool) {
-        CanvasTool.sticky => 'What does the note say?',
-        CanvasTool.text => 'What does it say?',
-        _ => 'Name the frame',
-      },
-      initialValue: tool == CanvasTool.frame ? 'Frame' : '',
+      title: tool == CanvasTool.sticky
+          ? 'What does the note say?'
+          : 'What does it say?',
       confirmLabel: 'Add',
-      maxLines: tool == CanvasTool.frame ? 1 : 5,
-      minLines: tool == CanvasTool.frame ? null : 2,
+      maxLines: 5,
+      minLines: 2,
     );
     if (!mounted) return;
     setState(() => _tool = CanvasTool.select);
@@ -348,14 +406,10 @@ class CanvasViewState extends State<CanvasView> {
         // thing you are placing looks like it is going.
         x: scene.dx,
         y: scene.dy,
-        width: tool == CanvasTool.frame ? 480 : 220,
-        height: tool == CanvasTool.frame ? 360 : null,
-        kind: switch (tool) {
-          CanvasTool.sticky => CanvasSpotKind.sticky,
-          CanvasTool.text => CanvasSpotKind.text,
-          CanvasTool.frame => CanvasSpotKind.frame,
-          _ => CanvasSpotKind.card,
-        },
+        width: 220,
+        kind: tool == CanvasTool.sticky
+            ? CanvasSpotKind.sticky
+            : CanvasSpotKind.text,
         colour: tool == CanvasTool.sticky ? _colour : CanvasColour.none,
       ),
     );
@@ -759,7 +813,7 @@ class CanvasViewState extends State<CanvasView> {
     // panning or zooming.
     final drawing =
         widget.onDrawShape != null &&
-        (_tool.draws != null || _tool == CanvasTool.eraser);
+        (_tool.drags || _tool == CanvasTool.eraser);
 
     _cardKeys.removeWhere((index, _) => index >= widget.cards.length);
     _selection.removeWhere(
@@ -818,88 +872,105 @@ class CanvasViewState extends State<CanvasView> {
                     child: ColoredBox(color: theme.colorScheme.surface),
                   ),
                 Positioned.fill(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapUp: (details) {
-                      _focus.requestFocus();
-                      // A tool that is armed puts its thing down where the
-                      // press landed; select clears the selection, which is
-                      // what a press on empty canvas always did.
-                      if (_tool.places) {
-                        _useTool(details.localPosition);
-                        return;
-                      }
-                      // A drawing tool is worked by dragging; a press with
-                      // one armed is not a mark, so it does nothing rather
-                      // than quietly clearing the selection behind it.
-                      if (_tool != CanvasTool.select) return;
-                      setState(_selection.clear);
-                    },
-                    // Under a finger, a drag pans and two fingers zoom. With a
-                    // mouse, a drag draws a marquee unless space is held, and
-                    // panning is the middle button, space and drag, or the
-                    // wheel.
-                    //
-                    // A drawing tool takes the drag on either, finger or
-                    // mouse, since drawing is what the drag is now for. Two
-                    // fingers stop zooming while one is armed, which is the
-                    // price of being able to draw with one.
-                    onScaleStart: touch && !drawing ? _onScaleStart : null,
-                    onScaleUpdate: touch && !drawing ? _onScaleUpdate : null,
-                    onPanStart: drawing
-                        ? (details) {
-                            _focus.requestFocus();
-                            if (_tool == CanvasTool.eraser) {
-                              _rub(details.localPosition);
-                              return;
+                  child: MouseRegion(
+                    // Only while an arrow is in hand: nothing else on the
+                    // canvas cares where the pointer is between gestures, and
+                    // a rebuild for every mouse move is not free.
+                    onHover: _tool == CanvasTool.arrow
+                        ? (event) =>
+                              setState(() => _pointer = event.localPosition)
+                        : null,
+                    onExit: _tool == CanvasTool.arrow
+                        ? (_) => setState(() => _pointer = null)
+                        : null,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      // From where the pointer went down, not from where the
+                      // drag was recognised. The default swallows the first
+                      // eighteen pixels as slop, which on a card read as lag
+                      // and here is worse: a shape drawn from a corner
+                      // started short of it, and a frame came out smaller
+                      // than the box that was dragged out for it.
+                      dragStartBehavior: DragStartBehavior.down,
+                      onTapUp: (details) {
+                        _focus.requestFocus();
+                        // A tool that is armed puts its thing down where the
+                        // press landed; select clears the selection, which is
+                        // what a press on empty canvas always did.
+                        if (_tool.places) {
+                          _useTool(details.localPosition);
+                          return;
+                        }
+                        // A drawing tool is worked by dragging; a press with
+                        // one armed is not a mark, so it does nothing rather
+                        // than quietly clearing the selection behind it.
+                        if (_tool != CanvasTool.select) return;
+                        setState(_selection.clear);
+                      },
+                      // Under a finger, a drag pans and two fingers zoom. With a
+                      // mouse, a drag draws a marquee unless space is held, and
+                      // panning is the middle button, space and drag, or the
+                      // wheel.
+                      //
+                      // A drawing tool takes the drag on either, finger or
+                      // mouse, since drawing is what the drag is now for. Two
+                      // fingers stop zooming while one is armed, which is the
+                      // price of being able to draw with one.
+                      onScaleStart: touch && !drawing ? _onScaleStart : null,
+                      onScaleUpdate: touch && !drawing ? _onScaleUpdate : null,
+                      onPanStart: drawing
+                          ? (details) {
+                              _focus.requestFocus();
+                              if (_tool == CanvasTool.eraser) {
+                                _rub(details.localPosition);
+                                return;
+                              }
+                              _drawStart(details.localPosition);
                             }
-                            _drawStart(details.localPosition);
-                          }
-                        : touch
-                        ? null
-                        : (details) {
-                            _focus.requestFocus();
-                            // Space held: this drag pans instead of selecting,
-                            // and leaving the marquee unstarted is what the
-                            // update below reads as "pan".
-                            if (_panning) return;
-                            _marqueeStart(details.localPosition);
-                          },
-                    onPanUpdate: drawing
-                        ? (details) {
-                            if (_tool == CanvasTool.eraser) {
-                              setState(() => _rub(details.localPosition));
-                              return;
+                          : touch
+                          ? null
+                          : (details) {
+                              _focus.requestFocus();
+                              // Space held: this drag pans instead of selecting,
+                              // and leaving the marquee unstarted is what the
+                              // update below reads as "pan".
+                              if (_panning) return;
+                              _marqueeStart(details.localPosition);
+                            },
+                      onPanUpdate: drawing
+                          ? (details) {
+                              if (_tool == CanvasTool.eraser) {
+                                setState(() => _rub(details.localPosition));
+                                return;
+                              }
+                              _drawUpdate(details.localPosition);
                             }
-                            _drawUpdate(details.localPosition);
-                          }
-                        : touch
-                        ? null
-                        : (details) {
-                            if (_marqueeFrom != null) {
-                              _marqueeUpdate(details.localPosition);
-                              return;
+                          : touch
+                          ? null
+                          : (details) {
+                              if (_marqueeFrom != null) {
+                                _marqueeUpdate(details.localPosition);
+                                return;
+                              }
+                              setState(() => _pan += details.delta);
+                            },
+                      onPanEnd: drawing
+                          ? (_) {
+                              if (_tool == CanvasTool.eraser) {
+                                setState(_rubEnd);
+                                return;
+                              }
+                              _drawEnd();
                             }
-                            setState(() => _pan += details.delta);
-                          },
-                    onPanEnd: drawing
-                        ? (_) {
-                            if (_tool == CanvasTool.eraser) {
-                              setState(_rubEnd);
-                              return;
-                            }
-                            _drawEnd();
-                          }
-                        : touch
-                        ? null
-                        : (_) => _marqueeEnd(),
-                    child: CustomPaint(
-                      painter: _GridPainter(
-                        pan: _pan,
-                        scale: _scale,
-                        style: settings.background,
-                        colour: theme.colorScheme.outlineVariant.withValues(
-                          alpha: 0.5,
+                          : touch
+                          ? null
+                          : (_) => _marqueeEnd(),
+                      child: CustomPaint(
+                        painter: _GridPainter(
+                          pan: _pan,
+                          scale: _scale,
+                          style: settings.background,
+                          colour: theme.colorScheme.outlineVariant,
                         ),
                       ),
                     ),
@@ -913,6 +984,7 @@ class CanvasViewState extends State<CanvasView> {
                     ),
                     card: widget.cards[index],
                     spot: _spots[index],
+                    enabled: !drawing,
                     pan: _pan,
                     scale: _scale,
                     slug: widget.slug,
@@ -948,7 +1020,9 @@ class CanvasViewState extends State<CanvasView> {
                       painter: _MarksPainter(
                         shapes: widget.shapes,
                         pending: _drawing,
-                        pendingKind: _tool.draws,
+                        pendingKind: _tool == CanvasTool.frame
+                            ? CanvasShapeKind.rectangle
+                            : _tool.draws,
                         pendingColour: _colour,
                         pendingThickness: _thickness,
                         pan: _pan,
@@ -960,6 +1034,20 @@ class CanvasViewState extends State<CanvasView> {
                     ),
                   ),
                 ),
+                // What an arrow would take hold of, while one is in hand.
+                if (_tool == CanvasTool.arrow && _pointer != null)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(
+                        painter: _HoldsPainter(
+                          hold: _holdNear(_toScene(_pointer!)),
+                          pan: _pan,
+                          scale: _scale,
+                          colour: theme.colorScheme.tertiary,
+                        ),
+                      ),
+                    ),
+                  ),
                 for (final guide in _guides)
                   Positioned.fromRect(
                     rect: _guideRect(guide),
@@ -1737,6 +1825,7 @@ class _CardOnCanvas extends StatelessWidget {
     required this.onRotate,
     required this.onResize,
     required this.onRelease,
+    this.enabled = true,
   });
 
   final CanvasCard card;
@@ -1763,6 +1852,12 @@ class _CardOnCanvas extends StatelessWidget {
   final ValueChanged<Offset> onResize;
   final VoidCallback onRelease;
 
+  /// False while a drawing tool is armed. A card is a thing you pick up, but
+  /// with a pen or an arrow in hand a press on it is a mark being drawn over
+  /// it — otherwise an arrow could never start or finish on a picture, which
+  /// is the one place an arrow most wants to go.
+  final bool enabled;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1779,175 +1874,180 @@ class _CardOnCanvas extends StatelessWidget {
       // Turned and mirrored about its own centre. The box it is positioned in
       // stays square to the canvas, which is what everything else — snapping,
       // the marquee, resizing — goes on reasoning about.
-      child: Transform.rotate(
-        angle: spot.rotation * math.pi / 180,
-        child: Transform(
-          alignment: Alignment.center,
-          transform: Matrix4.diagonal3Values(
-            spot.flipX ? -1 : 1,
-            spot.flipY ? -1 : 1,
-            1,
-          ),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            // From the moment it is touched, not from where the drag was
-            // recognised: the default loses the first eighteen pixels of every
-            // drag to the slop, which on a canvas reads as the card lagging
-            // behind the finger before it catches up.
-            dragStartBehavior: DragStartBehavior.down,
-            onPanStart: (_) => onGrab(),
-            onPanUpdate: (details) => onMove(details.delta),
-            onPanEnd: (_) => onRelease(),
-            onTap: onGrab,
-            // A hold is free on a card — moving one is a drag — so it opens the
-            // menu, which is how a phone reaches what a right-click reaches.
-            onSecondaryTapUp: (details) {
-              onGrab();
-              onMenu(details.globalPosition);
-            },
-            onLongPressStart: (details) {
-              onGrab();
-              onMenu(details.globalPosition);
-            },
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Container(
-                  decoration: BoxDecoration(
-                    color: spot.isFrame
-                        // Barely there: a frame is a boundary, not a panel,
-                        // and what stands on it has to stay readable.
-                        ? theme.colorScheme.surfaceContainerHighest.withValues(
-                            alpha: 0.35,
-                          )
-                        : card.isImage || !spot.hasPaper
-                        // Writing straight on the board, and a picture that
-                        // is its own shape: neither wants a card behind it.
-                        ? Colors.transparent
-                        : canvasColourOf(spot.colour, theme),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: selected
-                          ? theme.colorScheme.primary
-                          : spot.isFrame
-                          ? theme.colorScheme.outline
+      child: IgnorePointer(
+        ignoring: !enabled,
+        child: Transform.rotate(
+          angle: spot.rotation * math.pi / 180,
+          child: Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.diagonal3Values(
+              spot.flipX ? -1 : 1,
+              spot.flipY ? -1 : 1,
+              1,
+            ),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              // From the moment it is touched, not from where the drag was
+              // recognised: the default loses the first eighteen pixels of every
+              // drag to the slop, which on a canvas reads as the card lagging
+              // behind the finger before it catches up.
+              dragStartBehavior: DragStartBehavior.down,
+              onPanStart: (_) => onGrab(),
+              onPanUpdate: (details) => onMove(details.delta),
+              onPanEnd: (_) => onRelease(),
+              onTap: onGrab,
+              // A hold is free on a card — moving one is a drag — so it opens the
+              // menu, which is how a phone reaches what a right-click reaches.
+              onSecondaryTapUp: (details) {
+                onGrab();
+                onMenu(details.globalPosition);
+              },
+              onLongPressStart: (details) {
+                onGrab();
+                onMenu(details.globalPosition);
+              },
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      color: spot.isFrame
+                          // Barely there: a frame is a boundary, not a panel,
+                          // and what stands on it has to stay readable.
+                          ? theme.colorScheme.surfaceContainerHighest
+                                .withValues(alpha: 0.35)
                           : card.isImage || !spot.hasPaper
+                          // Writing straight on the board, and a picture that
+                          // is its own shape: neither wants a card behind it.
                           ? Colors.transparent
-                          : theme.colorScheme.outlineVariant,
-                      width: selected ? 2 : 1,
-                    ),
-                    boxShadow: selected
-                        ? [
-                            BoxShadow(
-                              color: theme.colorScheme.primary.withValues(
-                                alpha: 0.25,
-                              ),
-                              blurRadius: 12,
-                            ),
-                          ]
-                        : null,
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  // The content takes no pointers of its own. Rendered markdown
-                  // carries gesture recognizers for its links and its text, and
-                  // those were winning the arena against the card — so a card
-                  // could be looked at and never moved. On a canvas a card is an
-                  // object you pick up, not a page you interact with.
-                  child: IgnorePointer(
-                    child: spot.isFrame
-                        // A frame shows only its name, at the top left where
-                        // a label goes — the rest of it is the space it
-                        // encloses, and drawing anything there would be
-                        // drawing over what it is holding.
-                        ? Align(
-                            alignment: Alignment.topLeft,
-                            child: Padding(
-                              padding: EdgeInsets.all(
-                                6 * scale.clamp(0.5, 1.5),
-                              ),
-                              child: Text(
-                                card.markdown,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: theme.textTheme.labelLarge
-                                    ?.copyWith(
-                                      color: theme.colorScheme.onSurfaceVariant,
-                                      fontWeight: FontWeight.w600,
-                                    )
-                                    .apply(
-                                      fontSizeFactor: scale.clamp(0.6, 1.4),
-                                    ),
-                              ),
-                            ),
-                          )
-                        : card.isImage
-                        ? _CanvasImage(reference: card.imagePath!)
-                        : Padding(
-                            padding: EdgeInsets.all(8 * scale.clamp(0.5, 1.5)),
-                            child: NoteView(markdown: card.markdown),
-                          ),
-                  ),
-                ),
-                if (selected)
-                  Positioned(
-                    right: -6,
-                    bottom: -6,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      dragStartBehavior: DragStartBehavior.down,
-                      onPanStart: (_) => onGrab(),
-                      onPanUpdate: (details) => onResize(details.delta),
-                      onPanEnd: (_) => onRelease(),
-                      child: Container(
-                        width: 18,
-                        height: 18,
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primary,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: theme.colorScheme.onPrimary,
-                            width: 2,
-                          ),
-                        ),
+                          : canvasColourOf(spot.colour, theme),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(
+                        color: selected
+                            ? theme.colorScheme.primary
+                            : spot.isFrame
+                            ? theme.colorScheme.outline
+                            : card.isImage || !spot.hasPaper
+                            ? Colors.transparent
+                            : theme.colorScheme.outlineVariant,
+                        width: selected ? 2 : 1,
                       ),
+                      boxShadow: selected
+                          ? [
+                              BoxShadow(
+                                color: theme.colorScheme.primary.withValues(
+                                  alpha: 0.25,
+                                ),
+                                blurRadius: 12,
+                              ),
+                            ]
+                          : null,
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    // The content takes no pointers of its own. Rendered markdown
+                    // carries gesture recognizers for its links and its text, and
+                    // those were winning the arena against the card — so a card
+                    // could be looked at and never moved. On a canvas a card is an
+                    // object you pick up, not a page you interact with.
+                    child: IgnorePointer(
+                      child: spot.isFrame
+                          // A frame shows only its name, at the top left where
+                          // a label goes — the rest of it is the space it
+                          // encloses, and drawing anything there would be
+                          // drawing over what it is holding.
+                          ? Align(
+                              alignment: Alignment.topLeft,
+                              child: Padding(
+                                padding: EdgeInsets.all(
+                                  6 * scale.clamp(0.5, 1.5),
+                                ),
+                                child: Text(
+                                  card.markdown,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.labelLarge
+                                      ?.copyWith(
+                                        color:
+                                            theme.colorScheme.onSurfaceVariant,
+                                        fontWeight: FontWeight.w600,
+                                      )
+                                      .apply(
+                                        fontSizeFactor: scale.clamp(0.6, 1.4),
+                                      ),
+                                ),
+                              ),
+                            )
+                          : card.isImage
+                          ? _CanvasImage(reference: card.imagePath!)
+                          : Padding(
+                              padding: EdgeInsets.all(
+                                8 * scale.clamp(0.5, 1.5),
+                              ),
+                              child: NoteView(markdown: card.markdown),
+                            ),
                     ),
                   ),
-                // Turning it: a handle above the card, the way every tool that
-                // rotates puts one. Held with shift it steps in fifteens.
-                if (selected && !spot.locked)
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    top: -28,
-                    child: Center(
+                  if (selected)
+                    Positioned(
+                      right: -6,
+                      bottom: -6,
                       child: GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         dragStartBehavior: DragStartBehavior.down,
                         onPanStart: (_) => onGrab(),
-                        onPanUpdate: (details) =>
-                            onRotate(details.globalPosition),
+                        onPanUpdate: (details) => onResize(details.delta),
                         onPanEnd: (_) => onRelease(),
                         child: Container(
                           width: 18,
                           height: 18,
                           decoration: BoxDecoration(
-                            color: theme.colorScheme.tertiary,
+                            color: theme.colorScheme.primary,
                             shape: BoxShape.circle,
                             border: Border.all(
                               color: theme.colorScheme.onPrimary,
                               width: 2,
                             ),
                           ),
-                          child: Icon(
-                            Icons.rotate_right,
-                            size: 10,
-                            color: theme.colorScheme.onTertiary,
+                        ),
+                      ),
+                    ),
+                  // Turning it: a handle above the card, the way every tool that
+                  // rotates puts one. Held with shift it steps in fifteens.
+                  if (selected && !spot.locked)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: -28,
+                      child: Center(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          dragStartBehavior: DragStartBehavior.down,
+                          onPanStart: (_) => onGrab(),
+                          onPanUpdate: (details) =>
+                              onRotate(details.globalPosition),
+                          onPanEnd: (_) => onRelease(),
+                          child: Container(
+                            width: 18,
+                            height: 18,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.tertiary,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: theme.colorScheme.onPrimary,
+                                width: 2,
+                              ),
+                            ),
+                            child: Icon(
+                              Icons.rotate_right,
+                              size: 10,
+                              color: theme.colorScheme.onTertiary,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -2269,6 +2369,59 @@ class _MarksPainter extends CustomPainter {
   bool shouldRepaint(_MarksPainter old) => true;
 }
 
+/// The places an arrow can take hold, while one is being drawn.
+///
+/// Snapping you cannot see is snapping you find out about afterwards, when
+/// the arrow has landed somewhere you did not ask for. This draws the nine
+/// holds on the card under the pointer and fills in the one that would be
+/// taken, so the snap is something you watch happen.
+class _HoldsPainter extends CustomPainter {
+  _HoldsPainter({
+    required this.hold,
+    required this.pan,
+    required this.scale,
+    required this.colour,
+  });
+
+  final ({Rect card, Offset at})? hold;
+  final Offset pan;
+  final double scale;
+  final Color colour;
+
+  Offset _at(Offset scene) => scene * scale + pan;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final near = hold;
+    if (near == null) return;
+
+    final outline = Paint()
+      ..color = colour.withValues(alpha: 0.7)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    final filled = Paint()..color = colour;
+
+    for (final place in CanvasMarks.holds) {
+      final scene = Offset(
+        near.card.left + near.card.width * place.dx,
+        near.card.top + near.card.height * place.dy,
+      );
+      final point = _at(scene);
+      // Measured on the glass, like the background dots, so the ring is the
+      // same target however far the canvas is zoomed.
+      final taken = (scene - near.at).distance < 0.01;
+      canvas.drawCircle(point, taken ? 6 : 4, taken ? filled : outline);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_HoldsPainter old) =>
+      old.hold != hold ||
+      old.pan != pan ||
+      old.scale != scale ||
+      old.colour != colour;
+}
+
 /// What the next press on the canvas will do.
 enum CanvasTool {
   select,
@@ -2309,10 +2462,13 @@ enum CanvasTool {
   };
 
   /// Placed by pressing once and saying what it says.
-  bool get places =>
-      this == CanvasTool.sticky ||
-      this == CanvasTool.text ||
-      this == CanvasTool.frame;
+  bool get places => this == CanvasTool.sticky || this == CanvasTool.text;
+
+  /// Worked by dragging something out rather than by pressing once. A frame
+  /// is a box you draw, the way it is in every tool that has frames — its
+  /// size is the point of it, so asking for one by a press and then handing
+  /// back a guess was the wrong shape of gesture.
+  bool get drags => draws != null || this == CanvasTool.frame;
 
   /// Drawn by dragging, rather than placed by pressing.
   CanvasShapeKind? get draws => switch (this) {
@@ -2564,20 +2720,19 @@ class _GridPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (style == CanvasBackground.plain) return;
 
-    const spacing = 80.0;
-    final step = spacing * scale;
-    // Zoomed far enough out the marks merge into a wash, which reads as a
-    // tinted canvas rather than as a background. Better to have none.
-    if (step < 8) return;
+    // Measured on the glass rather than in the scene, so the background
+    // stays visible however far out the canvas is zoomed.
+    final step = CanvasMarks.backgroundStep(scale);
+    if (step <= 0) return;
 
     final paint = Paint()
       ..color = colour
       ..strokeWidth = 1;
 
     if (style == CanvasBackground.dots) {
-      // A dot at every crossing, sized so it stays a mark rather than
-      // becoming a blob as the canvas is zoomed in.
-      final radius = math.min(1.6, 0.9 * math.max(scale, 0.6));
+      // Measured on the glass, not in the scene, so a dot is the same mark at
+      // every zoom instead of a speck when you are out and a blob when in.
+      const radius = 1.5;
       for (var x = pan.dx % step; x < size.width; x += step) {
         for (var y = pan.dy % step; y < size.height; y += step) {
           canvas.drawCircle(Offset(x, y), radius, paint);

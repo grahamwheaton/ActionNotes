@@ -10,6 +10,36 @@ CanvasShape mark(CanvasShapeKind kind, List<double> points) =>
 void main() {
   _stickyArrows();
 
+  group('the background spacing', () {
+    test('stays inside a band you can see, at any zoom', () {
+      for (final scale in [0.02, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 16.0]) {
+        final step = CanvasMarks.backgroundStep(scale);
+        expect(
+          step,
+          inInclusiveRange(CanvasMarks.minOnScreen, CanvasMarks.maxOnScreen),
+          reason: 'at zoom $scale',
+        );
+      }
+    });
+
+    test('is the plain spacing while the canvas is at its own size', () {
+      expect(CanvasMarks.backgroundStep(1), CanvasMarks.backgroundSpacing);
+    });
+
+    test('doubles the scene spacing as the canvas shrinks', () {
+      // Zoomed to a quarter, 80 apart would land 20 apart on the glass — too
+      // close to read — so the spacing steps up to 160 in the scene.
+      expect(CanvasMarks.backgroundStep(0.25), 40);
+      expect(CanvasMarks.backgroundStep(0.125), 40);
+    });
+
+    test('a nonsense zoom draws nothing rather than looping', () {
+      expect(CanvasMarks.backgroundStep(0), 0);
+      expect(CanvasMarks.backgroundStep(-1), 0);
+      expect(CanvasMarks.backgroundStep(double.nan), 0);
+    });
+  });
+
   group('what a mark covers', () {
     test('a line is touched along its length, not beside it', () {
       final line = mark(CanvasShapeKind.line, [0, 0, 100, 0]);
