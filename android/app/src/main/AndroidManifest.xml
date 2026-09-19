@@ -2,6 +2,11 @@
     <!-- Sync talks to the GitHub REST API, so release builds need this too;
          Flutter only declares it for debug and profile by default. -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- So the app can hand a downloaded release to Android's package
+         installer itself, rather than handing the URL to the browser and
+         leaving the last two taps to it. Android still asks before replacing
+         the app, and still refuses a build signed with a different key. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
 
     <application
         android:label="ActionNotes"
