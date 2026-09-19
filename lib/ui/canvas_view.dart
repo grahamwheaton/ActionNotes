@@ -36,6 +36,7 @@ class CanvasView extends StatefulWidget {
     this.onRemoveCard,
     this.onDuplicateCard,
     this.onEditCard,
+    this.onPlaceCard,
     this.onOpenFullScreen,
     this.autofocus = false,
   });
@@ -67,6 +68,10 @@ class CanvasView extends StatefulWidget {
   /// Rewrites a card's markdown — renaming a frame, or retyping a note.
   final void Function(int index, String markdown)? onEditCard;
 
+  /// Puts a new card down at a given spot: what the side tools do. Null where
+  /// the canvas is not the viewer's to add to.
+  final void Function(String markdown, CanvasSpot spot)? onPlaceCard;
+
   /// Opens the canvas on a screen of its own. Null when it already is one.
   final VoidCallback? onOpenFullScreen;
 
@@ -80,6 +85,14 @@ class CanvasView extends StatefulWidget {
 }
 
 class CanvasViewState extends State<CanvasView> {
+  /// What the next press on empty canvas will do.
+  ///
+  /// Select is the canvas as it was, and every other tool goes back to it the
+  /// moment it has placed one thing: a tool that stays armed puts a second
+  /// sticky note down the next time you meant to click something.
+  CanvasTool _tool = CanvasTool.select;
+  CanvasColour _colour = CanvasColour.yellow;
+
   /// Where the scene's origin sits in the viewport, and how big it is drawn.
   Offset _pan = Offset.zero;
   double _scale = 1;
@@ -189,6 +202,48 @@ class CanvasViewState extends State<CanvasView> {
 
   /// Scene coordinates for a point in the viewport.
   Offset _toScene(Offset viewportPoint) => (viewportPoint - _pan) / _scale;
+
+  /// A tool's press on empty canvas: put the thing down where it landed.
+  Future<void> _useTool(Offset viewportPoint) async {
+    final tool = _tool;
+    if (tool == CanvasTool.select || widget.onPlaceCard == null) return;
+
+    final scene = _toScene(viewportPoint);
+    final text = await TextPromptDialog.show(
+      context,
+      title: switch (tool) {
+        CanvasTool.sticky => 'What does the note say?',
+        CanvasTool.text => 'What does it say?',
+        _ => 'Name the frame',
+      },
+      initialValue: tool == CanvasTool.frame ? 'Frame' : '',
+      confirmLabel: 'Add',
+      maxLines: tool == CanvasTool.frame ? 1 : 5,
+      minLines: tool == CanvasTool.frame ? null : 2,
+    );
+    if (!mounted) return;
+    setState(() => _tool = CanvasTool.select);
+    if (text == null || text.trim().isEmpty) return;
+
+    widget.onPlaceCard!(
+      text.trim(),
+      CanvasSpot(
+        // Dropped with its top-left where the press was, which is where a
+        // thing you are placing looks like it is going.
+        x: scene.dx,
+        y: scene.dy,
+        width: tool == CanvasTool.frame ? 480 : 220,
+        height: tool == CanvasTool.frame ? 360 : null,
+        kind: switch (tool) {
+          CanvasTool.sticky => CanvasSpotKind.sticky,
+          CanvasTool.text => CanvasSpotKind.text,
+          CanvasTool.frame => CanvasSpotKind.frame,
+          CanvasTool.select => CanvasSpotKind.card,
+        },
+        colour: tool == CanvasTool.sticky ? _colour : CanvasColour.none,
+      ),
+    );
+  }
 
   void _zoomAround(Offset focal, double factor) {
     final next = (_scale * factor).clamp(_minScale, _maxScale);
@@ -628,8 +683,15 @@ class CanvasViewState extends State<CanvasView> {
                 Positioned.fill(
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: () {
+                    onTapUp: (details) {
                       _focus.requestFocus();
+                      // A tool that is armed puts its thing down where the
+                      // press landed; select clears the selection, which is
+                      // what a press on empty canvas always did.
+                      if (_tool != CanvasTool.select) {
+                        _useTool(details.localPosition);
+                        return;
+                      }
                       setState(_selection.clear);
                     },
                     // Under a finger, a drag pans and two fingers zoom. With a
@@ -743,6 +805,30 @@ class CanvasViewState extends State<CanvasView> {
                             style: theme.textTheme.labelMedium,
                           ),
                         ),
+                      ),
+                    ),
+                  ),
+                if (widget.onPlaceCard != null)
+                  Positioned(
+                    left: 8,
+                    top: 0,
+                    bottom: 0,
+                    // Down the middle of the left edge, the way every tool
+                    // that has a tool column puts one — and clear of the top
+                    // left corner, which is where a canvas starts and so
+                    // where its first cards sit.
+                    child: Center(
+                      child: _CanvasTools(
+                        tool: _tool,
+                        colour: _colour,
+                        onTool: (tool) => setState(
+                          () =>
+                              _tool = _tool == tool ? CanvasTool.select : tool,
+                        ),
+                        onColour: (colour) => setState(() {
+                          _colour = colour;
+                          _tool = CanvasTool.sticky;
+                        }),
                       ),
                     ),
                   ),
@@ -1047,6 +1133,27 @@ class CanvasViewState extends State<CanvasView> {
     });
   }
 
+  /// What a card is drawn on. A colour makes it a sticky note; Plain puts it
+  /// back to an ordinary card, which is what it was before anyone chose.
+  void _showColourMenu(Set<int> targets, Offset at) {
+    showItemMenu(context, [
+      for (final option in CanvasColour.values)
+        ContextMenuAction(
+          label: option.label,
+          icon: option == CanvasColour.none ? Icons.hide_source : Icons.circle,
+          onSelected: () => _transform(
+            targets,
+            (spot) => spot.copyWith(
+              colour: option,
+              kind: option == CanvasColour.none
+                  ? CanvasSpotKind.card
+                  : CanvasSpotKind.sticky,
+            ),
+          ),
+        ),
+    ], at);
+  }
+
   void _showAlignMenu(Set<int> targets, Offset at) {
     showItemMenu(context, [
       ContextMenuAction(
@@ -1252,6 +1359,12 @@ class CanvasViewState extends State<CanvasView> {
           icon: Icons.edit_outlined,
           onSelected: () => _editCard(index),
         ),
+      if (!widget.cards[index].isImage && !_spots[index].isFrame)
+        ContextMenuAction(
+          label: 'Colour…',
+          icon: Icons.palette_outlined,
+          onSelected: () => _showColourMenu(targets, at),
+        ),
       ContextMenuAction(
         label: _spots[index].locked ? 'Unlock' : 'Lock in place',
         icon: _spots[index].locked ? Icons.lock_open : Icons.lock_outline,
@@ -1446,16 +1559,18 @@ class _CardOnCanvas extends StatelessWidget {
                         ? theme.colorScheme.surfaceContainerHighest.withValues(
                             alpha: 0.35,
                           )
-                        : card.isImage
+                        : card.isImage || !spot.hasPaper
+                        // Writing straight on the board, and a picture that
+                        // is its own shape: neither wants a card behind it.
                         ? Colors.transparent
-                        : theme.colorScheme.surfaceContainerLowest,
+                        : canvasColourOf(spot.colour, theme),
                     borderRadius: BorderRadius.circular(4),
                     border: Border.all(
                       color: selected
                           ? theme.colorScheme.primary
                           : spot.isFrame
                           ? theme.colorScheme.outline
-                          : card.isImage
+                          : card.isImage || !spot.hasPaper
                           ? Colors.transparent
                           : theme.colorScheme.outlineVariant,
                       width: selected ? 2 : 1,
@@ -1752,6 +1867,131 @@ class _CanvasControls extends StatelessWidget {
       ),
     );
   }
+}
+
+/// What the next press on the canvas will do.
+enum CanvasTool {
+  select,
+  sticky,
+  text,
+  frame;
+
+  String get label => switch (this) {
+    CanvasTool.select => 'Select',
+    CanvasTool.sticky => 'Sticky note',
+    CanvasTool.text => 'Text',
+    CanvasTool.frame => 'Frame',
+  };
+
+  IconData get icon => switch (this) {
+    CanvasTool.select => Icons.near_me_outlined,
+    CanvasTool.sticky => Icons.sticky_note_2_outlined,
+    CanvasTool.text => Icons.title,
+    CanvasTool.frame => Icons.crop_free,
+  };
+}
+
+/// The tools down the side of a canvas.
+///
+/// A column rather than another row along the bottom: the bottom already has
+/// the zoom controls, and a board is usually wider than it is tall, so the
+/// side is the edge with room to spare.
+class _CanvasTools extends StatelessWidget {
+  const _CanvasTools({
+    required this.tool,
+    required this.colour,
+    required this.onTool,
+    required this.onColour,
+  });
+
+  final CanvasTool tool;
+  final CanvasColour colour;
+  final ValueChanged<CanvasTool> onTool;
+  final ValueChanged<CanvasColour> onColour;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Material(
+      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.95),
+      borderRadius: BorderRadius.circular(20),
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 4),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final option in CanvasTool.values)
+              IconButton(
+                tooltip: option.label,
+                visualDensity: VisualDensity.compact,
+                isSelected: tool == option,
+                selectedIcon: Icon(
+                  option.icon,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
+                icon: Icon(option.icon, size: 18),
+                onPressed: () => onTool(option),
+              ),
+            // Only while a note is what is being placed: a row of colours
+            // with nothing to colour is a row of buttons that do nothing.
+            if (tool == CanvasTool.sticky)
+              for (final option in CanvasColour.values.skip(1))
+                Tooltip(
+                  message: option.label,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => onColour(option),
+                    child: Padding(
+                      padding: const EdgeInsets.all(5),
+                      child: Container(
+                        width: 16,
+                        height: 16,
+                        decoration: BoxDecoration(
+                          color: canvasColourOf(option, theme),
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: option == colour
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.outlineVariant,
+                            width: option == colour ? 2 : 1,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// What a named colour actually looks like on the shade in use.
+///
+/// Mixed into the surface in the dark rather than used neat, so a board of
+/// notes reads as paper in the light and as tinted card in the dark, instead
+/// of six shouting squares on either.
+Color canvasColourOf(CanvasColour colour, ThemeData theme) {
+  final base = switch (colour) {
+    CanvasColour.none => theme.colorScheme.surfaceContainerLowest,
+    CanvasColour.yellow => const Color(0xFFFFE082),
+    CanvasColour.pink => const Color(0xFFF8BBD0),
+    CanvasColour.blue => const Color(0xFFB3E5FC),
+    CanvasColour.green => const Color(0xFFC5E1A5),
+    CanvasColour.orange => const Color(0xFFFFCC80),
+    CanvasColour.purple => const Color(0xFFD1C4E9),
+  };
+  if (colour == CanvasColour.none) return base;
+  return theme.brightness == Brightness.dark
+      ? Color.alphaBlend(
+          base.withValues(alpha: 0.35),
+          theme.colorScheme.surface,
+        )
+      : base;
 }
 
 /// What is under the cards, so panning an empty canvas shows that it is

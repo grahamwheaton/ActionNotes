@@ -1557,6 +1557,14 @@ class _SectionCanvasState extends State<_SectionCanvas> {
             onEditCard: (index, markdown) => context
                 .read<AppState>()
                 .setCanvasCard(slug, section, index, markdown),
+            onPlaceCard: (markdown, spot) =>
+                context.read<AppState>().placeCanvasCard(
+                  slug,
+                  section,
+                  markdown: markdown,
+                  spot: spot,
+                  behind: spot.isFrame,
+                ),
             onOpenFullScreen: () =>
                 CanvasScreen.open(context, slug: slug, section: section),
           ),

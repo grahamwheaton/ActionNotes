@@ -56,6 +56,8 @@ Future<void> settle(WidgetTester tester) async {
 }
 
 void main() {
+  _theSideTools();
+
   group('a frame in the layout file', () {
     test('says what it is and how tall, and round-trips', () {
       const layout = CanvasLayout(
@@ -191,6 +193,97 @@ void main() {
       // The position points at the card by what it says, so it followed the
       // rename rather than looking like a card that has never been placed.
       expect(frame.ref, 'Later');
+      await settle(tester);
+    });
+  });
+}
+
+void _theSideTools() {
+  group('the tools down the side', () {
+    testWidgets('a sticky note is placed where it was pressed, coloured', (
+      tester,
+    ) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Sticky note'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Pink'));
+      await tester.pumpAndSettle();
+
+      await tester.tapAt(const Offset(700, 500));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'Ring the agent');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      expect(
+        state.projects.single.blocks.single.body,
+        contains('- Ring the agent'),
+      );
+      final spot = spotsOf(state).last;
+      expect(spot.kind, CanvasSpotKind.sticky);
+      expect(spot.colour, CanvasColour.pink);
+      await settle(tester);
+    });
+
+    testWidgets('a tool goes back to Select once it has placed one thing', (
+      tester,
+    ) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Text'));
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(700, 500));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).last, 'A caption');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      expect(spotsOf(state).last.kind, CanvasSpotKind.text);
+
+      // A second press adds nothing, because the tool disarmed itself.
+      final before = spotsOf(state).length;
+      await tester.tapAt(const Offset(760, 560));
+      await tester.pumpAndSettle();
+      expect(find.byType(TextField), findsNothing);
+      expect(spotsOf(state).length, before);
+      await settle(tester);
+    });
+
+    testWidgets('cancelling places nothing', (tester) async {
+      final state = await pumpBoard(tester);
+      final before = spotsOf(state).length;
+
+      await tester.tap(find.byTooltip('Sticky note'));
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(700, 500));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(spotsOf(state).length, before);
+      await settle(tester);
+    });
+
+    testWidgets('a card can be coloured after the fact, and put back', (
+      tester,
+    ) async {
+      final state = await pumpBoard(tester);
+
+      await tester.longPress(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('One'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Colour…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Green'));
+      await tester.pumpAndSettle();
+
+      expect(spotsOf(state).first.colour, CanvasColour.green);
+      expect(spotsOf(state).first.kind, CanvasSpotKind.sticky);
       await settle(tester);
     });
   });

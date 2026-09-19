@@ -6,13 +6,51 @@ enum CanvasSpotKind {
   /// in it.
   card,
 
-  /// A labelled rectangle drawn behind the cards that grouping them together
-  /// — moving it takes everything standing on it along.
-  frame;
+  /// A labelled rectangle drawn behind the cards, grouping them together —
+  /// moving it takes everything standing on it along.
+  frame,
+
+  /// A coloured note, the way a sticky note is coloured. The same card; only
+  /// what it is drawn on is different.
+  sticky,
+
+  /// Writing with nothing drawn behind it — a caption on the board rather
+  /// than a card on it.
+  text;
 
   static CanvasSpotKind byName(String? name) => values.firstWhere(
     (value) => value.name == name,
     orElse: () => CanvasSpotKind.card,
+  );
+}
+
+/// What a card is drawn on.
+///
+/// A short list of names rather than a colour value, so that the layout file
+/// stays readable, the colours follow the app's light and dark, and nobody
+/// ends up with a note nobody can read on the shade they are using.
+enum CanvasColour {
+  none,
+  yellow,
+  pink,
+  blue,
+  green,
+  orange,
+  purple;
+
+  String get label => switch (this) {
+    CanvasColour.none => 'Plain',
+    CanvasColour.yellow => 'Yellow',
+    CanvasColour.pink => 'Pink',
+    CanvasColour.blue => 'Blue',
+    CanvasColour.green => 'Green',
+    CanvasColour.orange => 'Orange',
+    CanvasColour.purple => 'Purple',
+  };
+
+  static CanvasColour byName(String? name) => values.firstWhere(
+    (value) => value.name == name,
+    orElse: () => CanvasColour.none,
   );
 }
 
@@ -30,6 +68,7 @@ class CanvasSpot {
     this.locked = false,
     this.kind = CanvasSpotKind.card,
     this.height,
+    this.colour = CanvasColour.none,
   });
 
   final double x;
@@ -64,7 +103,16 @@ class CanvasSpot {
   /// its text; set for a frame, which is a rectangle someone drew.
   final double? height;
 
+  /// What it is drawn on. Named rather than stored as a number so the layout
+  /// file stays something a person can read and edit, and so the colours
+  /// follow the app's light and dark instead of being fixed.
+  final CanvasColour colour;
+
   bool get isFrame => kind == CanvasSpotKind.frame;
+
+  /// Whether the card is drawn on something, as opposed to sitting straight
+  /// on the canvas.
+  bool get hasPaper => kind != CanvasSpotKind.text;
 
   CanvasSpot copyWith({
     double? x,
@@ -78,6 +126,7 @@ class CanvasSpot {
     bool? locked,
     CanvasSpotKind? kind,
     double? height,
+    CanvasColour? colour,
   }) => CanvasSpot(
     x: x ?? this.x,
     y: y ?? this.y,
@@ -90,6 +139,7 @@ class CanvasSpot {
     locked: locked ?? this.locked,
     kind: kind ?? this.kind,
     height: height ?? this.height,
+    colour: colour ?? this.colour,
   );
 
   // Written only when it is not the default, so a card nobody has turned or
@@ -106,6 +156,7 @@ class CanvasSpot {
     if (locked) 'lock': true,
     if (kind != CanvasSpotKind.card) 'kind': kind.name,
     if (height != null) 'h': height,
+    if (colour != CanvasColour.none) 'colour': colour.name,
   };
 
   static CanvasSpot fromJson(Map<String, dynamic> json) => CanvasSpot(
@@ -120,6 +171,7 @@ class CanvasSpot {
     locked: json['lock'] == true,
     kind: CanvasSpotKind.byName(json['kind'] as String?),
     height: json.containsKey('h') ? _number(json['h']) : null,
+    colour: CanvasColour.byName(json['colour'] as String?),
   );
 
   static double _number(Object? value) => switch (value) {
@@ -141,7 +193,8 @@ class CanvasSpot {
       other.flipY == flipY &&
       other.locked == locked &&
       other.kind == kind &&
-      other.height == height;
+      other.height == height &&
+      other.colour == colour;
 
   @override
   int get hashCode => Object.hash(
@@ -156,6 +209,7 @@ class CanvasSpot {
     locked,
     kind,
     height,
+    colour,
   );
 }
 
