@@ -11,6 +11,7 @@ import '../models/canvas_layout.dart';
 import '../state/app_state.dart';
 import '../storage/attachment_store.dart';
 import 'image_viewer.dart';
+import 'canvas_marks.dart';
 import 'canvas_snap.dart';
 import 'context_menu.dart';
 import 'note_view.dart';
@@ -37,6 +38,9 @@ class CanvasView extends StatefulWidget {
     this.onDuplicateCard,
     this.onEditCard,
     this.onPlaceCard,
+    this.shapes = const [],
+    this.onDrawShape,
+    this.onEraseShapes,
     this.onOpenFullScreen,
     this.autofocus = false,
   });
@@ -72,6 +76,15 @@ class CanvasView extends StatefulWidget {
   /// the canvas is not the viewer's to add to.
   final void Function(String markdown, CanvasSpot spot)? onPlaceCard;
 
+  /// What has been drawn on the board, oldest first.
+  final List<CanvasShape> shapes;
+
+  /// A new mark, once it has been drawn.
+  final ValueChanged<CanvasShape>? onDrawShape;
+
+  /// Marks to rub out, by their index in [shapes].
+  final ValueChanged<Set<int>>? onEraseShapes;
+
   /// Opens the canvas on a screen of its own. Null when it already is one.
   final VoidCallback? onOpenFullScreen;
 
@@ -92,6 +105,12 @@ class CanvasViewState extends State<CanvasView> {
   /// sticky note down the next time you meant to click something.
   CanvasTool _tool = CanvasTool.select;
   CanvasColour _colour = CanvasColour.yellow;
+
+  /// The mark being drawn, in scene coordinates, before it is committed.
+  List<double>? _drawing;
+
+  /// What the eraser has passed over during this stroke.
+  final Set<int> _rubbed = {};
 
   /// Where the scene's origin sits in the viewport, and how big it is drawn.
   Offset _pan = Offset.zero;
@@ -203,6 +222,76 @@ class CanvasViewState extends State<CanvasView> {
   /// Scene coordinates for a point in the viewport.
   Offset _toScene(Offset viewportPoint) => (viewportPoint - _pan) / _scale;
 
+  void _drawStart(Offset viewportPoint) {
+    final scene = _toScene(viewportPoint);
+    setState(() => _drawing = [scene.dx, scene.dy, scene.dx, scene.dy]);
+  }
+
+  void _drawUpdate(Offset viewportPoint) {
+    final drawing = _drawing;
+    if (drawing == null) return;
+    final scene = _toScene(viewportPoint);
+
+    setState(() {
+      if (_tool == CanvasTool.pen) {
+        // Every wobble of a freehand line would be a hundred numbers in the
+        // file, so a point is kept only once the pen has actually gone
+        // somewhere.
+        final lastX = drawing[drawing.length - 2];
+        final lastY = drawing[drawing.length - 1];
+        if ((scene.dx - lastX).abs() + (scene.dy - lastY).abs() < 3 / _scale) {
+          return;
+        }
+        drawing.addAll([scene.dx, scene.dy]);
+        return;
+      }
+      // Everything else is two points: where it started and where it is now.
+      drawing[2] = scene.dx;
+      drawing[3] = scene.dy;
+    });
+  }
+
+  void _drawEnd() {
+    final drawing = _drawing;
+    final kind = _tool.draws;
+    setState(() {
+      _drawing = null;
+      // The pen keeps going, because a drawing is many strokes; a single
+      // shape is one thing, so its tool disarms like the rest.
+      if (_tool != CanvasTool.pen) _tool = CanvasTool.select;
+    });
+    if (drawing == null || kind == null) return;
+
+    // A press that went nowhere is a press, not a mark.
+    final from = Offset(drawing[0], drawing[1]);
+    final to = Offset(drawing[drawing.length - 2], drawing[drawing.length - 1]);
+    if (drawing.length == 4 && (to - from).distance < 4) return;
+
+    widget.onDrawShape?.call(
+      CanvasShape(
+        kind: kind,
+        points: List.unmodifiable(drawing),
+        colour: _colour,
+      ),
+    );
+  }
+
+  /// Rubs out whatever the eraser is dragged over.
+  void _rub(Offset viewportPoint) {
+    final scene = _toScene(viewportPoint);
+    final reach = 10 / _scale;
+    for (var i = 0; i < widget.shapes.length; i++) {
+      if (_rubbed.contains(i)) continue;
+      if (CanvasMarks.touches(widget.shapes[i], scene, reach)) _rubbed.add(i);
+    }
+  }
+
+  void _rubEnd() {
+    if (_rubbed.isEmpty) return;
+    widget.onEraseShapes?.call({..._rubbed});
+    _rubbed.clear();
+  }
+
   /// A tool's press on empty canvas: put the thing down where it landed.
   Future<void> _useTool(Offset viewportPoint) async {
     final tool = _tool;
@@ -238,7 +327,7 @@ class CanvasViewState extends State<CanvasView> {
           CanvasTool.sticky => CanvasSpotKind.sticky,
           CanvasTool.text => CanvasSpotKind.text,
           CanvasTool.frame => CanvasSpotKind.frame,
-          CanvasTool.select => CanvasSpotKind.card,
+          _ => CanvasSpotKind.card,
         },
         colour: tool == CanvasTool.sticky ? _colour : CanvasColour.none,
       ),
@@ -623,6 +712,11 @@ class CanvasViewState extends State<CanvasView> {
         ? Theme.of(context)
         : (settings.dark! ? AppTheme.dark() : AppTheme.light());
     final touch = TouchInput.isPrimary;
+    // Whether the drag on empty canvas is drawing rather than selecting,
+    // panning or zooming.
+    final drawing =
+        widget.onDrawShape != null &&
+        (_tool.draws != null || _tool == CanvasTool.eraser);
 
     _cardKeys.removeWhere((index, _) => index >= widget.cards.length);
     _selection.removeWhere(
@@ -688,19 +782,37 @@ class CanvasViewState extends State<CanvasView> {
                       // A tool that is armed puts its thing down where the
                       // press landed; select clears the selection, which is
                       // what a press on empty canvas always did.
-                      if (_tool != CanvasTool.select) {
+                      if (_tool.places) {
                         _useTool(details.localPosition);
                         return;
                       }
+                      // A drawing tool is worked by dragging; a press with
+                      // one armed is not a mark, so it does nothing rather
+                      // than quietly clearing the selection behind it.
+                      if (_tool != CanvasTool.select) return;
                       setState(_selection.clear);
                     },
                     // Under a finger, a drag pans and two fingers zoom. With a
                     // mouse, a drag draws a marquee unless space is held, and
                     // panning is the middle button, space and drag, or the
                     // wheel.
-                    onScaleStart: touch ? _onScaleStart : null,
-                    onScaleUpdate: touch ? _onScaleUpdate : null,
-                    onPanStart: touch
+                    //
+                    // A drawing tool takes the drag on either, finger or
+                    // mouse, since drawing is what the drag is now for. Two
+                    // fingers stop zooming while one is armed, which is the
+                    // price of being able to draw with one.
+                    onScaleStart: touch && !drawing ? _onScaleStart : null,
+                    onScaleUpdate: touch && !drawing ? _onScaleUpdate : null,
+                    onPanStart: drawing
+                        ? (details) {
+                            _focus.requestFocus();
+                            if (_tool == CanvasTool.eraser) {
+                              _rub(details.localPosition);
+                              return;
+                            }
+                            _drawStart(details.localPosition);
+                          }
+                        : touch
                         ? null
                         : (details) {
                             _focus.requestFocus();
@@ -710,7 +822,15 @@ class CanvasViewState extends State<CanvasView> {
                             if (_panning) return;
                             _marqueeStart(details.localPosition);
                           },
-                    onPanUpdate: touch
+                    onPanUpdate: drawing
+                        ? (details) {
+                            if (_tool == CanvasTool.eraser) {
+                              setState(() => _rub(details.localPosition));
+                              return;
+                            }
+                            _drawUpdate(details.localPosition);
+                          }
+                        : touch
                         ? null
                         : (details) {
                             if (_marqueeFrom != null) {
@@ -719,7 +839,17 @@ class CanvasViewState extends State<CanvasView> {
                             }
                             setState(() => _pan += details.delta);
                           },
-                    onPanEnd: touch ? null : (_) => _marqueeEnd(),
+                    onPanEnd: drawing
+                        ? (_) {
+                            if (_tool == CanvasTool.eraser) {
+                              setState(_rubEnd);
+                              return;
+                            }
+                            _drawEnd();
+                          }
+                        : touch
+                        ? null
+                        : (_) => _marqueeEnd(),
                     child: CustomPaint(
                       painter: _GridPainter(
                         pan: _pan,
@@ -766,6 +896,25 @@ class CanvasViewState extends State<CanvasView> {
                       _commit();
                     },
                   ),
+                // Over the cards: an arrow pointing at a reference has to be
+                // on top of it to mean anything. It takes no pointers, so a
+                // card under a stroke is still a card you can pick up.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: CustomPaint(
+                      painter: _MarksPainter(
+                        shapes: widget.shapes,
+                        pending: _drawing,
+                        pendingKind: _tool.draws,
+                        pendingColour: _colour,
+                        pan: _pan,
+                        scale: _scale,
+                        theme: theme,
+                        rubbed: _rubbed,
+                      ),
+                    ),
+                  ),
+                ),
                 for (final guide in _guides)
                   Positioned.fromRect(
                     rect: _guideRect(guide),
@@ -825,10 +974,7 @@ class CanvasViewState extends State<CanvasView> {
                           () =>
                               _tool = _tool == tool ? CanvasTool.select : tool,
                         ),
-                        onColour: (colour) => setState(() {
-                          _colour = colour;
-                          _tool = CanvasTool.sticky;
-                        }),
+                        onColour: (colour) => setState(() => _colour = colour),
                       ),
                     ),
                   ),
@@ -1869,18 +2015,155 @@ class _CanvasControls extends StatelessWidget {
   }
 }
 
+/// The marks drawn on a canvas, painted over the cards.
+///
+/// Over rather than under, because an arrow pointing at a reference has to be
+/// on top of the thing it points at to mean anything. It takes no pointers,
+/// so a card under a stroke is still a card that can be picked up.
+class _MarksPainter extends CustomPainter {
+  _MarksPainter({
+    required this.shapes,
+    required this.pending,
+    required this.pendingKind,
+    required this.pendingColour,
+    required this.pan,
+    required this.scale,
+    required this.theme,
+    required this.rubbed,
+  });
+
+  final List<CanvasShape> shapes;
+
+  /// The mark being drawn this moment, which is not in [shapes] yet.
+  final List<double>? pending;
+  final CanvasShapeKind? pendingKind;
+  final CanvasColour pendingColour;
+
+  final Offset pan;
+  final double scale;
+  final ThemeData theme;
+
+  /// What the eraser has passed over, drawn faintly so that letting go is not
+  /// a surprise.
+  final Set<int> rubbed;
+
+  Offset _at(List<double> points, int index) =>
+      Offset(points[index * 2], points[index * 2 + 1]) * scale + pan;
+
+  Color _colourOf(CanvasColour colour) => colour == CanvasColour.none
+      ? theme.colorScheme.onSurface
+      : canvasColourOf(colour, theme);
+
+  void _draw(
+    Canvas canvas,
+    CanvasShapeKind kind,
+    List<double> points,
+    CanvasColour colour,
+    double thickness,
+    double opacity,
+  ) {
+    if (points.length < 4) return;
+
+    final paint = Paint()
+      ..color = _colourOf(colour).withValues(alpha: opacity)
+      ..strokeWidth = math.max(1, thickness * scale)
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+
+    switch (kind) {
+      case CanvasShapeKind.line:
+        canvas.drawLine(_at(points, 0), _at(points, 1), paint);
+      case CanvasShapeKind.arrow:
+        final from = _at(points, 0);
+        final to = _at(points, 1);
+        canvas.drawLine(from, to, paint);
+        _head(canvas, from, to, paint);
+      case CanvasShapeKind.rectangle:
+        canvas.drawRect(Rect.fromPoints(_at(points, 0), _at(points, 1)), paint);
+      case CanvasShapeKind.oval:
+        canvas.drawOval(Rect.fromPoints(_at(points, 0), _at(points, 1)), paint);
+      case CanvasShapeKind.stroke:
+        final path = Path()..moveTo(_at(points, 0).dx, _at(points, 0).dy);
+        for (var i = 1; i < points.length ~/ 2; i++) {
+          final point = _at(points, i);
+          path.lineTo(point.dx, point.dy);
+        }
+        canvas.drawPath(path, paint);
+    }
+  }
+
+  /// A plain two-stroke head, sized with the zoom so an arrow does not grow a
+  /// spearhead when the board is zoomed in.
+  void _head(Canvas canvas, Offset from, Offset to, Paint paint) {
+    final along = to - from;
+    if (along.distance < 1) return;
+
+    final angle = math.atan2(along.dy, along.dx);
+    final length = math.min(18 * scale, along.distance / 2);
+    const spread = 0.5;
+
+    for (final side in [-spread, spread]) {
+      canvas.drawLine(
+        to,
+        to -
+            Offset(
+              math.cos(angle + side) * length,
+              math.sin(angle + side) * length,
+            ),
+        paint,
+      );
+    }
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var i = 0; i < shapes.length; i++) {
+      final shape = shapes[i];
+      _draw(
+        canvas,
+        shape.kind,
+        shape.points,
+        shape.colour,
+        shape.thickness,
+        rubbed.contains(i) ? 0.2 : 1,
+      );
+    }
+
+    final drawing = pending;
+    if (drawing != null && pendingKind != null) {
+      _draw(canvas, pendingKind!, drawing, pendingColour, 2, 0.7);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_MarksPainter old) => true;
+}
+
 /// What the next press on the canvas will do.
 enum CanvasTool {
   select,
   sticky,
   text,
-  frame;
+  frame,
+  line,
+  arrow,
+  rectangle,
+  oval,
+  pen,
+  eraser;
 
   String get label => switch (this) {
     CanvasTool.select => 'Select',
     CanvasTool.sticky => 'Sticky note',
     CanvasTool.text => 'Text',
     CanvasTool.frame => 'Frame',
+    CanvasTool.line => 'Line',
+    CanvasTool.arrow => 'Arrow',
+    CanvasTool.rectangle => 'Rectangle',
+    CanvasTool.oval => 'Oval',
+    CanvasTool.pen => 'Pen',
+    CanvasTool.eraser => 'Eraser',
   };
 
   IconData get icon => switch (this) {
@@ -1888,6 +2171,28 @@ enum CanvasTool {
     CanvasTool.sticky => Icons.sticky_note_2_outlined,
     CanvasTool.text => Icons.title,
     CanvasTool.frame => Icons.crop_free,
+    CanvasTool.line => Icons.horizontal_rule,
+    CanvasTool.arrow => Icons.north_east,
+    CanvasTool.rectangle => Icons.crop_square,
+    CanvasTool.oval => Icons.circle_outlined,
+    CanvasTool.pen => Icons.draw_outlined,
+    CanvasTool.eraser => Icons.auto_fix_normal,
+  };
+
+  /// Placed by pressing once and saying what it says.
+  bool get places =>
+      this == CanvasTool.sticky ||
+      this == CanvasTool.text ||
+      this == CanvasTool.frame;
+
+  /// Drawn by dragging, rather than placed by pressing.
+  CanvasShapeKind? get draws => switch (this) {
+    CanvasTool.line => CanvasShapeKind.line,
+    CanvasTool.arrow => CanvasShapeKind.arrow,
+    CanvasTool.rectangle => CanvasShapeKind.rectangle,
+    CanvasTool.oval => CanvasShapeKind.oval,
+    CanvasTool.pen => CanvasShapeKind.stroke,
+    _ => null,
   };
 }
 
@@ -1896,6 +2201,10 @@ enum CanvasTool {
 /// A column rather than another row along the bottom: the bottom already has
 /// the zoom controls, and a board is usually wider than it is tall, so the
 /// side is the edge with room to spare.
+///
+/// The four shapes share one button. Ten buttons in a column is taller than a
+/// phone, and a shape is picked rarely enough that one more press to reach it
+/// is a fair trade for the column fitting on the screen at all.
 class _CanvasTools extends StatelessWidget {
   const _CanvasTools({
     required this.tool,
@@ -1909,9 +2218,28 @@ class _CanvasTools extends StatelessWidget {
   final ValueChanged<CanvasTool> onTool;
   final ValueChanged<CanvasColour> onColour;
 
+  static const _shapes = [
+    CanvasTool.line,
+    CanvasTool.arrow,
+    CanvasTool.rectangle,
+    CanvasTool.oval,
+  ];
+
+  static const _own = [
+    CanvasTool.select,
+    CanvasTool.sticky,
+    CanvasTool.text,
+    CanvasTool.frame,
+  ];
+
+  /// Whether what is armed is coloured by the swatches: a note is drawn on a
+  /// colour, and a mark is drawn in one.
+  bool get _colouring => tool == CanvasTool.sticky || tool.draws != null;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final shape = _shapes.contains(tool) ? tool : CanvasTool.arrow;
 
     return Material(
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.95),
@@ -1922,7 +2250,7 @@ class _CanvasTools extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            for (final option in CanvasTool.values)
+            for (final option in _own)
               IconButton(
                 tooltip: option.label,
                 visualDensity: VisualDensity.compact,
@@ -1935,34 +2263,85 @@ class _CanvasTools extends StatelessWidget {
                 icon: Icon(option.icon, size: 18),
                 onPressed: () => onTool(option),
               ),
-            // Only while a note is what is being placed: a row of colours
-            // with nothing to colour is a row of buttons that do nothing.
-            if (tool == CanvasTool.sticky)
-              for (final option in CanvasColour.values.skip(1))
-                Tooltip(
-                  message: option.label,
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: () => onColour(option),
-                    child: Padding(
-                      padding: const EdgeInsets.all(5),
-                      child: Container(
-                        width: 16,
-                        height: 16,
-                        decoration: BoxDecoration(
-                          color: canvasColourOf(option, theme),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: option == colour
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.outlineVariant,
-                            width: option == colour ? 2 : 1,
+            // The button both arms the shape last used and, held or
+            // right-clicked, offers the others — so the common case is one
+            // press and the rest is one more.
+            PopupMenuButton<CanvasTool>(
+              tooltip: 'Shapes',
+              position: PopupMenuPosition.under,
+              iconSize: 18,
+              icon: Icon(
+                shape.icon,
+                size: 18,
+                color: _shapes.contains(tool)
+                    ? theme.colorScheme.primary
+                    : null,
+              ),
+              onSelected: onTool,
+              itemBuilder: (_) => [
+                for (final option in _shapes)
+                  PopupMenuItem(
+                    value: option,
+                    child: Row(
+                      children: [
+                        Icon(option.icon, size: 18),
+                        const SizedBox(width: 10),
+                        Text(option.label),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            for (final option in [CanvasTool.pen, CanvasTool.eraser])
+              IconButton(
+                tooltip: option.label,
+                visualDensity: VisualDensity.compact,
+                isSelected: tool == option,
+                selectedIcon: Icon(
+                  option.icon,
+                  size: 18,
+                  color: theme.colorScheme.primary,
+                ),
+                icon: Icon(option.icon, size: 18),
+                onPressed: () => onTool(option),
+              ),
+            // Only while something is armed that a colour would apply to: a
+            // row of swatches with nothing to colour is a row of buttons that
+            // do nothing.
+            if (_colouring) ...[
+              const Divider(height: 8, indent: 6, endIndent: 6),
+              for (final option in CanvasColour.values)
+                // Plain means "no colour", which for a note is the card it
+                // always was and for a mark is ordinary ink. Nothing to offer
+                // for a note, since that is just not making it a note.
+                if (option != CanvasColour.none || tool.draws != null)
+                  Tooltip(
+                    message: option == CanvasColour.none ? 'Ink' : option.label,
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: () => onColour(option),
+                      child: Padding(
+                        padding: const EdgeInsets.all(5),
+                        child: Container(
+                          width: 16,
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: option == CanvasColour.none
+                                ? theme.colorScheme.onSurface
+                                : canvasColourOf(option, theme),
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                              color: option == colour
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.outlineVariant,
+                              width: option == colour ? 2 : 1,
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
+            ],
           ],
         ),
       ),

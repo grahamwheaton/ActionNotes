@@ -303,6 +303,90 @@ enum CanvasBackground {
   );
 }
 
+/// A mark drawn on a canvas: a line, an arrow, a box, an ellipse, or a stroke
+/// of the pen.
+///
+/// Unlike a card, a shape has no markdown behind it. It is not something
+/// written on the board, it is something drawn *on* the board — an arrow
+/// pointing at a reference, a box round three of them. So it lives only in
+/// the layout file, and losing that file loses the drawing along with the
+/// arrangement. That is the same bargain the arrangement has always been on:
+/// what was written is in the markdown and cannot be lost this way.
+class CanvasShape {
+  const CanvasShape({
+    required this.kind,
+    required this.points,
+    this.colour = CanvasColour.none,
+    this.thickness = 2,
+  });
+
+  final CanvasShapeKind kind;
+
+  /// Scene coordinates, flattened: x, y, x, y. A line or an arrow has two
+  /// points; a box or an ellipse has two opposite corners; a stroke of the
+  /// pen has as many as it took to draw.
+  final List<double> points;
+
+  final CanvasColour colour;
+  final double thickness;
+
+  bool get isDrawable => points.length >= 4;
+
+  Map<String, dynamic> toJson() => {
+    'k': kind.name,
+    'p': points,
+    if (colour != CanvasColour.none) 'c': colour.name,
+    if (thickness != 2) 'w': thickness,
+  };
+
+  static CanvasShape? fromJson(Map<String, dynamic> json) {
+    final raw = json['p'];
+    if (raw is! List) return null;
+    final points = [for (final value in raw) CanvasSpot._number(value)];
+    if (points.length < 4 || points.length.isOdd) return null;
+
+    return CanvasShape(
+      kind: CanvasShapeKind.byName(json['k'] as String?),
+      points: List.unmodifiable(points),
+      colour: CanvasColour.byName(json['c'] as String?),
+      thickness: json.containsKey('w') ? CanvasSpot._number(json['w']) : 2,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! CanvasShape ||
+        other.kind != kind ||
+        other.colour != colour ||
+        other.thickness != thickness ||
+        other.points.length != points.length) {
+      return false;
+    }
+    for (var i = 0; i < points.length; i++) {
+      if (other.points[i] != points[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(kind, colour, thickness, Object.hashAll(points));
+}
+
+/// What sort of mark a shape is.
+enum CanvasShapeKind {
+  line,
+  arrow,
+  rectangle,
+  oval,
+  stroke;
+
+  static CanvasShapeKind byName(String? name) => values.firstWhere(
+    (value) => value.name == name,
+    orElse: () => CanvasShapeKind.line,
+  );
+}
+
 /// Where everything on one project's canvases sits.
 ///
 /// Kept beside the project rather than in it, in `canvas/<slug>.json`. A
@@ -323,6 +407,7 @@ class CanvasLayout {
   const CanvasLayout({
     this.sections = const {},
     this.settings = const {},
+    this.drawings = const {},
     this.sha,
   });
 
@@ -334,6 +419,9 @@ class CanvasLayout {
   /// is drawn the standard way, so a layout file written before this existed
   /// reads back unchanged.
   final Map<String, CanvasSettings> settings;
+
+  /// Section title to the marks drawn on that canvas, oldest first.
+  final Map<String, List<CanvasShape>> drawings;
 
   /// The blob SHA GitHub last gave us for the layout file.
   final String? sha;
@@ -349,13 +437,26 @@ class CanvasLayout {
   CanvasSettings settingsFor(String section) =>
       settings[section] ?? CanvasSettings.standard;
 
+  List<CanvasShape> drawingFor(String section) => drawings[section] ?? const [];
+
+  CanvasLayout withDrawing(String section, List<CanvasShape> shapes) =>
+      copyWith(
+        drawings: {
+          for (final entry in drawings.entries)
+            if (entry.key != section) entry.key: entry.value,
+          if (shapes.isNotEmpty) section: shapes,
+        },
+      );
+
   CanvasLayout copyWith({
     Map<String, List<CanvasSpot>>? sections,
     Map<String, CanvasSettings>? settings,
+    Map<String, List<CanvasShape>>? drawings,
     String? sha,
   }) => CanvasLayout(
     sections: sections ?? this.sections,
     settings: settings ?? this.settings,
+    drawings: drawings ?? this.drawings,
     sha: sha ?? this.sha,
   );
 
@@ -381,6 +482,10 @@ class CanvasLayout {
       for (final entry in settings.entries)
         if (entry.key != section) entry.key: entry.value,
     },
+    drawings: {
+      for (final entry in drawings.entries)
+        if (entry.key != section) entry.key: entry.value,
+    },
   );
 
   /// Follows a section being renamed, so its canvas does not stay behind
@@ -394,6 +499,10 @@ class CanvasLayout {
       },
       settings: {
         for (final entry in settings.entries)
+          if (entry.key == from) to: entry.value else entry.key: entry.value,
+      },
+      drawings: {
+        for (final entry in drawings.entries)
           if (entry.key == from) to: entry.value else entry.key: entry.value,
       },
     );
@@ -413,6 +522,12 @@ class CanvasLayout {
       'settings': {
         for (final entry in settings.entries)
           if (!entry.value.isStandard) entry.key: entry.value.toJson(),
+      },
+    if (drawings.values.any((value) => value.isNotEmpty))
+      'drawings': {
+        for (final entry in drawings.entries)
+          if (entry.value.isNotEmpty)
+            entry.key: [for (final shape in entry.value) shape.toJson()],
       },
   });
 
@@ -447,7 +562,28 @@ class CanvasLayout {
         }
       }
 
-      return CanvasLayout(sections: sections, settings: settings, sha: sha);
+      final drawings = <String, List<CanvasShape>>{};
+      final rawDrawings = json['drawings'];
+      if (rawDrawings is Map<String, dynamic>) {
+        for (final entry in rawDrawings.entries) {
+          final value = entry.value;
+          if (value is! List) continue;
+          final shapes = <CanvasShape>[];
+          for (final shape in value) {
+            if (shape is! Map<String, dynamic>) continue;
+            final read = CanvasShape.fromJson(shape);
+            if (read != null) shapes.add(read);
+          }
+          if (shapes.isNotEmpty) drawings[entry.key] = shapes;
+        }
+      }
+
+      return CanvasLayout(
+        sections: sections,
+        settings: settings,
+        drawings: drawings,
+        sha: sha,
+      );
     } on FormatException {
       return CanvasLayout(sha: sha);
     }
@@ -460,21 +596,34 @@ class CanvasLayout {
 /// markdown, and putting its position back would put back a position with
 /// nothing under it.
 class CanvasStep {
-  const CanvasStep({required this.body, required this.spots});
+  const CanvasStep({
+    required this.body,
+    required this.spots,
+    this.shapes = const [],
+  });
 
   final String body;
   final List<CanvasSpot> spots;
+
+  /// What was drawn on the board at that moment, so undo reaches the pen as
+  /// well as the cards.
+  final List<CanvasShape> shapes;
 
   @override
   bool operator ==(Object other) {
     if (other is! CanvasStep || other.body != body) return false;
     if (other.spots.length != spots.length) return false;
+    if (other.shapes.length != shapes.length) return false;
     for (var i = 0; i < spots.length; i++) {
       if (other.spots[i] != spots[i]) return false;
+    }
+    for (var i = 0; i < shapes.length; i++) {
+      if (other.shapes[i] != shapes[i]) return false;
     }
     return true;
   }
 
   @override
-  int get hashCode => Object.hash(body, Object.hashAll(spots));
+  int get hashCode =>
+      Object.hash(body, Object.hashAll(spots), Object.hashAll(shapes));
 }

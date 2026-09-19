@@ -1557,6 +1557,12 @@ class _SectionCanvasState extends State<_SectionCanvas> {
             onEditCard: (index, markdown) => context
                 .read<AppState>()
                 .setCanvasCard(slug, section, index, markdown),
+            shapes: state.canvasDrawing(slug, section),
+            onDrawShape: (shape) =>
+                context.read<AppState>().addCanvasShape(slug, section, shape),
+            onEraseShapes: (indices) => context
+                .read<AppState>()
+                .removeCanvasShapes(slug, section, indices),
             onPlaceCard: (markdown, spot) =>
                 context.read<AppState>().placeCanvasCard(
                   slug,

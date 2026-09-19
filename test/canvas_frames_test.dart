@@ -57,6 +57,7 @@ Future<void> settle(WidgetTester tester) async {
 
 void main() {
   _theSideTools();
+  _drawingOnTheBoard();
 
   group('a frame in the layout file', () {
     test('says what it is and how tall, and round-trips', () {
@@ -284,6 +285,127 @@ void _theSideTools() {
 
       expect(spotsOf(state).first.colour, CanvasColour.green);
       expect(spotsOf(state).first.kind, CanvasSpotKind.sticky);
+      await settle(tester);
+    });
+  });
+}
+
+void _drawingOnTheBoard() {
+  group('drawing on the board', () {
+    testWidgets('dragging with a shape armed leaves a mark', (tester) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Shapes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rectangle').last);
+      await tester.pumpAndSettle();
+
+      await tester.dragFrom(const Offset(600, 400), const Offset(120, 90));
+      await tester.pumpAndSettle();
+
+      final shapes = state.canvasDrawing('list', 'Board');
+      expect(shapes, hasLength(1));
+      expect(shapes.single.kind, CanvasShapeKind.rectangle);
+      // A shape is one thing, so its tool disarms once it is drawn.
+      await tester.dragFrom(const Offset(600, 600), const Offset(80, 60));
+      await tester.pumpAndSettle();
+      expect(state.canvasDrawing('list', 'Board'), hasLength(1));
+      await settle(tester);
+    });
+
+    testWidgets('a press that goes nowhere is not a mark', (tester) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Shapes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Line').last);
+      await tester.pumpAndSettle();
+
+      await tester.dragFrom(const Offset(600, 400), const Offset(1, 1));
+      await tester.pumpAndSettle();
+
+      expect(state.canvasDrawing('list', 'Board'), isEmpty);
+      await settle(tester);
+    });
+
+    testWidgets('the pen stays armed, because a drawing is many strokes', (
+      tester,
+    ) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Pen'));
+      await tester.pumpAndSettle();
+
+      await tester.dragFrom(const Offset(600, 400), const Offset(60, 60));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(600, 500), const Offset(60, 60));
+      await tester.pumpAndSettle();
+
+      final shapes = state.canvasDrawing('list', 'Board');
+      expect(shapes, hasLength(2));
+      expect(shapes.first.kind, CanvasShapeKind.stroke);
+      await settle(tester);
+    });
+
+    testWidgets('a mark is drawn in the colour that was chosen', (
+      tester,
+    ) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Pen'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Blue'));
+      await tester.pumpAndSettle();
+
+      await tester.dragFrom(const Offset(600, 400), const Offset(60, 60));
+      await tester.pumpAndSettle();
+
+      expect(
+        state.canvasDrawing('list', 'Board').single.colour,
+        CanvasColour.blue,
+      );
+      await settle(tester);
+    });
+
+    testWidgets('the eraser takes what it is dragged over, and undo brings '
+        'it back', (tester) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Pen'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(600, 400), const Offset(80, 0));
+      await tester.pumpAndSettle();
+      expect(state.canvasDrawing('list', 'Board'), hasLength(1));
+
+      await tester.tap(find.byTooltip('Eraser'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(600, 400), const Offset(80, 0));
+      await tester.pumpAndSettle();
+
+      expect(state.canvasDrawing('list', 'Board'), isEmpty);
+
+      await state.undoCanvas('list', 'Board');
+      await tester.pumpAndSettle();
+      expect(state.canvasDrawing('list', 'Board'), hasLength(1));
+      await settle(tester);
+    });
+
+    testWidgets('the eraser leaves alone what it never touched', (
+      tester,
+    ) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Pen'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(600, 400), const Offset(80, 0));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Eraser'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(600, 700), const Offset(80, 0));
+      await tester.pumpAndSettle();
+
+      expect(state.canvasDrawing('list', 'Board'), hasLength(1));
       await settle(tester);
     });
   });

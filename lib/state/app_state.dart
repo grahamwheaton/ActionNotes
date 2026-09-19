@@ -851,6 +851,7 @@ class AppState extends ChangeNotifier {
     return CanvasStep(
       body: block.body,
       spots: List.unmodifiable(layoutFor(slug).spotsFor(section)),
+      shapes: List.unmodifiable(layoutFor(slug).drawingFor(section)),
     );
   }
 
@@ -893,7 +894,9 @@ class AppState extends ChangeNotifier {
       (to.putIfAbsent(key, () => [])).add(now);
     }
 
-    _layouts[slug] = layoutFor(slug).withSection(section, step.spots);
+    _layouts[slug] = layoutFor(
+      slug,
+    ).withSection(section, step.spots).withDrawing(section, step.shapes);
     unawaited(_pushLayout(slug));
     await setBlockBody(slug, section, step.body);
   }
@@ -974,6 +977,47 @@ class AppState extends ChangeNotifier {
       CanvasCards.text(markdown),
     ];
     await setBlockBody(slug, section, CanvasCards.serialize(cards));
+  }
+
+  /// What has been drawn on a canvas: the arrows, boxes and pen strokes that
+  /// are marks on the board rather than things written on it.
+  List<CanvasShape> canvasDrawing(String slug, String section) =>
+      layoutFor(slug).drawingFor(section);
+
+  /// Adds one mark to a canvas.
+  Future<void> addCanvasShape(
+    String slug,
+    String section,
+    CanvasShape shape,
+  ) async {
+    if (!shape.isDrawable) return;
+    _rememberCanvas(slug, section);
+
+    _layouts[slug] = layoutFor(
+      slug,
+    ).withDrawing(section, [...layoutFor(slug).drawingFor(section), shape]);
+    notifyListeners();
+    await _pushLayout(slug);
+  }
+
+  /// Rubs marks out. Nothing to rub out is not a change, so it does not make
+  /// a step for undo to come back to.
+  Future<void> removeCanvasShapes(
+    String slug,
+    String section,
+    Set<int> indices,
+  ) async {
+    final shapes = layoutFor(slug).drawingFor(section);
+    final going = indices.where((at) => at >= 0 && at < shapes.length).toSet();
+    if (going.isEmpty) return;
+
+    _rememberCanvas(slug, section);
+    _layouts[slug] = layoutFor(slug).withDrawing(section, [
+      for (var i = 0; i < shapes.length; i++)
+        if (!going.contains(i)) shapes[i],
+    ]);
+    notifyListeners();
+    await _pushLayout(slug);
   }
 
   /// Puts a card on a canvas at a given spot, rather than wherever there was
