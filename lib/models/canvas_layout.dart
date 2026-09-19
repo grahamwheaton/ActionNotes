@@ -358,6 +358,7 @@ class CanvasShape {
     this.thickness = 2,
     this.from,
     this.to,
+    this.curved = false,
   });
 
   final CanvasShapeKind kind;
@@ -376,17 +377,32 @@ class CanvasShape {
   final CanvasAnchor? from;
   final CanvasAnchor? to;
 
+  /// Drawn as a smooth curve through its points rather than as straight
+  /// segments — the way a node editor draws a connection.
+  final bool curved;
+
   bool get isStuck => from != null || to != null;
 
   bool get isDrawable => points.length >= 4;
 
-  CanvasShape copyWith({CanvasAnchor? from, CanvasAnchor? to}) => CanvasShape(
-    kind: kind,
-    points: points,
-    colour: colour,
-    thickness: thickness,
-    from: from ?? this.from,
-    to: to ?? this.to,
+  CanvasShape copyWith({
+    CanvasShapeKind? kind,
+    List<double>? points,
+    CanvasColour? colour,
+    double? thickness,
+    CanvasAnchor? from,
+    CanvasAnchor? to,
+    bool clearFrom = false,
+    bool clearTo = false,
+    bool? curved,
+  }) => CanvasShape(
+    kind: kind ?? this.kind,
+    points: points ?? this.points,
+    colour: colour ?? this.colour,
+    thickness: thickness ?? this.thickness,
+    from: clearFrom ? null : (from ?? this.from),
+    to: clearTo ? null : (to ?? this.to),
+    curved: curved ?? this.curved,
   );
 
   Map<String, dynamic> toJson() => {
@@ -396,6 +412,7 @@ class CanvasShape {
     if (thickness != 2) 'w': thickness,
     if (from != null) 'from': from!.toJson(),
     if (to != null) 'to': to!.toJson(),
+    if (curved) 'curve': true,
   };
 
   static CanvasShape? fromJson(Map<String, dynamic> json) {
@@ -411,6 +428,7 @@ class CanvasShape {
       thickness: json.containsKey('w') ? CanvasSpot._number(json['w']) : 2,
       from: CanvasAnchor.fromJson(json['from']),
       to: CanvasAnchor.fromJson(json['to']),
+      curved: json['curve'] == true,
     );
   }
 
@@ -422,6 +440,7 @@ class CanvasShape {
         other.thickness != thickness ||
         other.from != from ||
         other.to != to ||
+        other.curved != curved ||
         other.points.length != points.length) {
       return false;
     }
@@ -432,8 +451,15 @@ class CanvasShape {
   }
 
   @override
-  int get hashCode =>
-      Object.hash(kind, colour, thickness, from, to, Object.hashAll(points));
+  int get hashCode => Object.hash(
+    kind,
+    colour,
+    thickness,
+    from,
+    to,
+    curved,
+    Object.hashAll(points),
+  );
 }
 
 /// What sort of mark a shape is.

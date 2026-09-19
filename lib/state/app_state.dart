@@ -1000,6 +1000,26 @@ class AppState extends ChangeNotifier {
     await _pushLayout(slug);
   }
 
+  /// Replaces one mark — a node added, moved or taken out, or a line bent.
+  Future<void> setCanvasShape(
+    String slug,
+    String section,
+    int index,
+    CanvasShape shape,
+  ) async {
+    final shapes = layoutFor(slug).drawingFor(section);
+    if (index < 0 || index >= shapes.length) return;
+    if (shapes[index] == shape || !shape.isDrawable) return;
+
+    _rememberCanvas(slug, section);
+    _layouts[slug] = layoutFor(slug).withDrawing(section, [
+      for (var i = 0; i < shapes.length; i++)
+        if (i == index) shape else shapes[i],
+    ]);
+    notifyListeners();
+    await _pushLayout(slug);
+  }
+
   /// Rubs marks out. Nothing to rub out is not a change, so it does not make
   /// a step for undo to come back to.
   Future<void> removeCanvasShapes(

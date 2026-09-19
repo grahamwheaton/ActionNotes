@@ -41,6 +41,7 @@ class CanvasView extends StatefulWidget {
     this.shapes = const [],
     this.onDrawShape,
     this.onEraseShapes,
+    this.onEditShape,
     this.onOpenFullScreen,
     this.autofocus = false,
   });
@@ -85,6 +86,9 @@ class CanvasView extends StatefulWidget {
   /// Marks to rub out, by their index in [shapes].
   final ValueChanged<Set<int>>? onEraseShapes;
 
+  /// One mark, changed — a node added, moved or taken out, or a line bent.
+  final void Function(int index, CanvasShape shape)? onEditShape;
+
   /// Opens the canvas on a screen of its own. Null when it already is one.
   final VoidCallback? onOpenFullScreen;
 
@@ -111,6 +115,14 @@ class CanvasViewState extends State<CanvasView> {
 
   /// The mark being drawn, in scene coordinates, before it is committed.
   List<double>? _drawing;
+
+  /// The mark whose nodes are on show, by its index in the drawing.
+  ///
+  /// Picked by right-clicking it, and let go by pressing empty canvas or
+  /// Escape. Marks are not part of the card selection: they are drawn on the
+  /// board rather than standing on it, so lining them up, stacking them and
+  /// moving them in a group would all mean something else.
+  int? _picked;
 
   /// Where the pointer is on the canvas, while a tool that snaps is armed.
   /// Only used to show what an arrow would hold on to, so it is not tracked
@@ -353,6 +365,85 @@ class CanvasViewState extends State<CanvasView> {
         width: math.max(80, box.width),
         height: math.max(80, box.height),
         kind: CanvasSpotKind.frame,
+      ),
+    );
+  }
+
+  /// The topmost mark near [scene], or null — newest first, so the one drawn
+  /// last is the one you reach, which is what is on top.
+  int? _markNear(Offset scene) {
+    final reach = 12 / _scale;
+    for (var i = widget.shapes.length - 1; i >= 0; i--) {
+      if (CanvasMarks.touches(
+        widget.shapes[i],
+        scene,
+        reach,
+        cards: _cardRects,
+      )) {
+        return i;
+      }
+    }
+    return null;
+  }
+
+  /// What can be done to one mark.
+  void _showMarkMenu(int index, Offset scene, Offset at) {
+    final shape = widget.shapes[index];
+    final bendable =
+        shape.kind == CanvasShapeKind.arrow ||
+        shape.kind == CanvasShapeKind.line;
+
+    setState(() => _picked = index);
+
+    showItemMenu(context, [
+      if (bendable)
+        ContextMenuAction(
+          label: 'Add a node here',
+          icon: Icons.add_circle_outline,
+          onSelected: () => widget.onEditShape?.call(
+            index,
+            shape.copyWith(
+              points: CanvasMarks.withNodeAt(
+                CanvasMarks.pointsOf(shape, _cardRects),
+                scene,
+              ),
+            ),
+          ),
+        ),
+      if (bendable)
+        ContextMenuAction(
+          label: shape.curved ? 'Make it straight' : 'Make it bendy',
+          icon: shape.curved ? Icons.show_chart : Icons.gesture,
+          onSelected: () => widget.onEditShape?.call(
+            index,
+            shape.copyWith(curved: !shape.curved),
+          ),
+        ),
+      ContextMenuAction(
+        label: 'Rub it out',
+        icon: Icons.auto_fix_normal,
+        onSelected: () {
+          setState(() => _picked = null);
+          widget.onEraseShapes?.call({index});
+        },
+      ),
+    ], at);
+  }
+
+  /// Drags one node of the picked mark.
+  void _moveNode(int index, int node, Offset delta) {
+    final shape = widget.shapes[index];
+    final points = CanvasMarks.pointsOf(shape, _cardRects);
+    final was = Offset(points[node * 2], points[node * 2 + 1]);
+
+    widget.onEditShape?.call(
+      index,
+      shape.copyWith(
+        points: CanvasMarks.withNodeAtIndex(points, node, was + delta / _scale),
+        // A node dragged by hand is where it was put, so an end that was
+        // holding on to a card lets go rather than snapping back to it.
+        clearFrom: node == 0,
+        clearTo: node == points.length ~/ 2 - 1,
       ),
     );
   }
@@ -742,8 +833,13 @@ class CanvasViewState extends State<CanvasView> {
         zoomToSelection();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
-        if (_selection.isEmpty) return KeyEventResult.ignored;
-        setState(_selection.clear);
+        if (_selection.isEmpty && _picked == null) {
+          return KeyEventResult.ignored;
+        }
+        setState(() {
+          _selection.clear();
+          _picked = null;
+        });
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyI:
         if (!HardwareKeyboard.instance.isControlPressed &&
@@ -811,6 +907,15 @@ class CanvasViewState extends State<CanvasView> {
     final touch = TouchInput.isPrimary;
     // Whether the drag on empty canvas is drawing rather than selecting,
     // panning or zooming.
+    // The picked mark's nodes, worked out once: the handles are drawn from
+    // them and there can be a dozen.
+    final picked = _picked != null && _picked! < widget.shapes.length
+        ? _picked
+        : null;
+    final nodes = picked == null
+        ? const <double>[]
+        : CanvasMarks.pointsOf(widget.shapes[picked], _cardRects);
+
     final drawing =
         widget.onDrawShape != null &&
         (_tool.drags || _tool == CanvasTool.eraser);
@@ -905,7 +1010,25 @@ class CanvasViewState extends State<CanvasView> {
                         // one armed is not a mark, so it does nothing rather
                         // than quietly clearing the selection behind it.
                         if (_tool != CanvasTool.select) return;
-                        setState(_selection.clear);
+                        setState(() {
+                          _selection.clear();
+                          _picked = null;
+                        });
+                      },
+                      // A mark is not a card, so it has no box to press on:
+                      // the press lands on the canvas and the mark under it
+                      // has to be looked for.
+                      onSecondaryTapUp: (details) {
+                        final scene = _toScene(details.localPosition);
+                        final mark = _markNear(scene);
+                        if (mark == null) return;
+                        _showMarkMenu(mark, scene, details.globalPosition);
+                      },
+                      onLongPressStart: (details) {
+                        final scene = _toScene(details.localPosition);
+                        final mark = _markNear(scene);
+                        if (mark == null) return;
+                        _showMarkMenu(mark, scene, details.globalPosition);
                       },
                       // Under a finger, a drag pans and two fingers zoom. With a
                       // mouse, a drag draws a marquee unless space is held, and
@@ -1034,6 +1157,26 @@ class CanvasViewState extends State<CanvasView> {
                     ),
                   ),
                 ),
+                // The nodes of the picked mark, each one a handle you can
+                // drag. Real widgets rather than paint, because a node is
+                // something you take hold of.
+                if (picked != null)
+                  for (var node = 0; node < nodes.length ~/ 2; node++)
+                    _NodeHandle(
+                      key: ValueKey('node-${widget.section}-$picked-$node'),
+                      at:
+                          Offset(nodes[node * 2], nodes[node * 2 + 1]) *
+                              _scale +
+                          _pan,
+                      colour: theme.colorScheme.tertiary,
+                      onMove: (delta) => _moveNode(picked, node, delta),
+                      onRemove: () => widget.onEditShape?.call(
+                        picked,
+                        widget.shapes[picked].copyWith(
+                          points: CanvasMarks.withoutNode(nodes, node),
+                        ),
+                      ),
+                    ),
                 // What an arrow would take hold of, while one is in hand.
                 if (_tool == CanvasTool.arrow && _pointer != null)
                   Positioned.fill(
@@ -2282,8 +2425,9 @@ class _MarksPainter extends CustomPainter {
     List<double> points,
     CanvasColour colour,
     double thickness,
-    double opacity,
-  ) {
+    double opacity, {
+    bool curved = false,
+  }) {
     if (points.length < 4) return;
 
     final paint = Paint()
@@ -2293,26 +2437,59 @@ class _MarksPainter extends CustomPainter {
       ..strokeJoin = StrokeJoin.round
       ..style = PaintingStyle.stroke;
 
+    // In viewport coordinates, so the curve is fitted to what is on screen
+    // and its bow does not grow with the zoom.
+    final onGlass = [
+      for (var i = 0; i < points.length ~/ 2; i++) ...[
+        _at(points, i).dx,
+        _at(points, i).dy,
+      ],
+    ];
+    final last = points.length ~/ 2 - 1;
+
     switch (kind) {
       case CanvasShapeKind.line:
-        canvas.drawLine(_at(points, 0), _at(points, 1), paint);
+        canvas.drawPath(
+          CanvasMarks.pathThrough(onGlass, curved: curved),
+          paint,
+        );
       case CanvasShapeKind.arrow:
-        final from = _at(points, 0);
-        final to = _at(points, 1);
-        canvas.drawLine(from, to, paint);
-        _head(canvas, from, to, paint);
+        canvas.drawPath(
+          CanvasMarks.pathThrough(onGlass, curved: curved),
+          paint,
+        );
+        // Pointed along the last stretch of the line, which for a curve is
+        // the tangent it arrives on rather than the straight line from where
+        // it started.
+        _head(canvas, _headFrom(onGlass, curved), _at(points, last), paint);
       case CanvasShapeKind.rectangle:
-        canvas.drawRect(Rect.fromPoints(_at(points, 0), _at(points, 1)), paint);
+        canvas.drawRect(
+          Rect.fromPoints(_at(points, 0), _at(points, last)),
+          paint,
+        );
       case CanvasShapeKind.oval:
-        canvas.drawOval(Rect.fromPoints(_at(points, 0), _at(points, 1)), paint);
+        canvas.drawOval(
+          Rect.fromPoints(_at(points, 0), _at(points, last)),
+          paint,
+        );
       case CanvasShapeKind.stroke:
-        final path = Path()..moveTo(_at(points, 0).dx, _at(points, 0).dy);
-        for (var i = 1; i < points.length ~/ 2; i++) {
-          final point = _at(points, i);
-          path.lineTo(point.dx, point.dy);
-        }
-        canvas.drawPath(path, paint);
+        canvas.drawPath(
+          CanvasMarks.pathThrough(onGlass, curved: curved),
+          paint,
+        );
     }
+  }
+
+  /// The point an arrow's head should be aimed away from.
+  Offset _headFrom(List<double> onGlass, bool curved) {
+    final path = CanvasMarks.pathThrough(onGlass, curved: curved);
+    for (final metric in path.computeMetrics()) {
+      if (metric.length <= 0) continue;
+      final back = metric.getTangentForOffset(math.max(0, metric.length - 1));
+      if (back != null) return back.position;
+    }
+    final count = onGlass.length ~/ 2;
+    return Offset(onGlass[(count - 2) * 2], onGlass[(count - 2) * 2 + 1]);
   }
 
   /// A plain two-stroke head, sized with the zoom so an arrow does not grow a
@@ -2349,6 +2526,7 @@ class _MarksPainter extends CustomPainter {
         shape.colour,
         shape.thickness,
         rubbed.contains(i) ? 0.2 : 1,
+        curved: shape.curved,
       );
     }
 
@@ -2367,6 +2545,56 @@ class _MarksPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_MarksPainter old) => true;
+}
+
+/// One node of a mark, as something you can take hold of.
+///
+/// Drawn where the node is and dragged from where it is pressed, so a node
+/// does not jump eighteen pixels before it starts to follow. Double-tapping
+/// takes it out, which is the other half of adding one.
+class _NodeHandle extends StatelessWidget {
+  const _NodeHandle({
+    super.key,
+    required this.at,
+    required this.colour,
+    required this.onMove,
+    required this.onRemove,
+  });
+
+  final Offset at;
+  final Color colour;
+  final ValueChanged<Offset> onMove;
+  final VoidCallback onRemove;
+
+  static const _size = 14.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Positioned(
+      left: at.dx - _size / 2,
+      top: at.dy - _size / 2,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.grab,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          dragStartBehavior: DragStartBehavior.down,
+          onPanUpdate: (details) => onMove(details.delta),
+          onDoubleTap: onRemove,
+          child: Container(
+            width: _size,
+            height: _size,
+            decoration: BoxDecoration(
+              color: colour,
+              shape: BoxShape.circle,
+              border: Border.all(color: theme.colorScheme.onPrimary, width: 2),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// The places an arrow can take hold, while one is being drawn.

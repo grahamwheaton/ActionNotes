@@ -9,6 +9,7 @@ CanvasShape mark(CanvasShapeKind kind, List<double> points) =>
 
 void main() {
   _stickyArrows();
+  _nodes();
 
   group('the background spacing', () {
     test('stays inside a band you can see, at any zoom', () {
@@ -235,6 +236,126 @@ void _stickyArrows() {
       expect(again.from?.ay, 1);
       expect(again.to?.ref, 'b');
       expect(again.to?.ax, 0);
+    });
+  });
+}
+
+/// Where a path has got to, a fraction of the way along it.
+Offset _atFraction(Path path, double fraction) {
+  final metric = path.computeMetrics().first;
+  return metric.getTangentForOffset(metric.length * fraction)!.position;
+}
+
+void _nodes() {
+  group('nodes along a mark', () {
+    test('a new one lands where it was asked for, not at the middle', () {
+      final points = [0.0, 0.0, 100.0, 0.0];
+      final with_ = CanvasMarks.withNodeAt(points, const Offset(70, 6));
+
+      // On the line at x=70, because a node that appears somewhere other than
+      // where you clicked moves the line as you add it.
+      expect(with_, [0, 0, 70, 0, 100, 0]);
+    });
+
+    test('goes into the segment it is nearest, keeping the order', () {
+      final points = [0.0, 0.0, 100.0, 0.0, 100.0, 100.0];
+      final with_ = CanvasMarks.withNodeAt(points, const Offset(104, 60));
+
+      expect(with_, [0, 0, 100, 0, 100, 60, 100, 100]);
+    });
+
+    test('one can be taken out, but never the last two', () {
+      final points = [0.0, 0.0, 50.0, 10.0, 100.0, 0.0];
+
+      expect(CanvasMarks.withoutNode(points, 1), [0, 0, 100, 0]);
+      // A mark needs two ends; one point is not a mark.
+      expect(CanvasMarks.withoutNode([0.0, 0.0, 10.0, 10.0], 0), [
+        0,
+        0,
+        10,
+        10,
+      ]);
+      // And an index that is not there changes nothing.
+      expect(CanvasMarks.withoutNode(points, 9), points);
+    });
+
+    test('one can be moved without disturbing the others', () {
+      final points = [0.0, 0.0, 50.0, 0.0, 100.0, 0.0];
+      expect(CanvasMarks.withNodeAtIndex(points, 1, const Offset(50, 40)), [
+        0,
+        0,
+        50,
+        40,
+        100,
+        0,
+      ]);
+      expect(CanvasMarks.withNodeAtIndex(points, 7, Offset.zero), points);
+    });
+
+    test('a mark with nowhere to put one is handed back unchanged', () {
+      expect(CanvasMarks.withNodeAt([1.0, 2.0], Offset.zero), [1.0, 2.0]);
+    });
+  });
+
+  group('a bendy mark', () {
+    test('a straight one goes corner to corner and no further', () {
+      final path = CanvasMarks.pathThrough([
+        0.0,
+        0.0,
+        50.0,
+        40.0,
+        100.0,
+        0.0,
+      ], curved: false);
+
+      expect(path.getBounds(), const Rect.fromLTRB(0, 0, 100, 40));
+    });
+
+    test('a bendy one with two ends leaves sideways, like a cable', () {
+      const points = [0.0, 0.0, 200.0, 100.0];
+
+      // A quarter of the way along, a straight line is already a quarter of
+      // the way down. The noodle leaves its end horizontally, so at the same
+      // point it has hardly dropped at all — that flat start is what makes it
+      // read as a cable rather than a bent wire.
+      expect(
+        _atFraction(CanvasMarks.pathThrough(points, curved: true), 0.25).dy,
+        lessThan(
+          _atFraction(CanvasMarks.pathThrough(points, curved: false), 0.25).dy,
+        ),
+      );
+      // And it stays within the span of its own ends, the way a node editor
+      // draws one.
+      expect(
+        CanvasMarks.pathThrough(points, curved: true).getBounds().width,
+        closeTo(200, 1),
+      );
+    });
+
+    test('a bendy one still passes through every node it was given', () {
+      final bendy = CanvasMarks.pathThrough([
+        0.0,
+        0.0,
+        50.0,
+        80.0,
+        100.0,
+        0.0,
+      ], curved: true);
+
+      // Its bounds reach the middle node, so the curve goes through it rather
+      // than cutting the corner off.
+      expect(bendy.getBounds().bottom, greaterThanOrEqualTo(80));
+    });
+
+    test('nothing to draw is an empty path rather than a crash', () {
+      expect(
+        CanvasMarks.pathThrough(const [], curved: true).getBounds(),
+        Rect.zero,
+      );
+      expect(
+        CanvasMarks.pathThrough([1.0, 2.0], curved: false).getBounds(),
+        Rect.zero,
+      );
     });
   });
 }

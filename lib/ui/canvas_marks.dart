@@ -162,6 +162,130 @@ class CanvasMarks {
     }
   }
 
+  /// Where along a line a point sits, as the index of the segment it is
+  /// nearest and how far along that segment it falls.
+  ///
+  /// Used to put a new node exactly where it was asked for, rather than at
+  /// the middle of the nearest segment: a node added somewhere other than
+  /// where you clicked moves the line as you add it.
+  static ({int segment, Offset at})? nearestOn(
+    List<double> points,
+    Offset point,
+  ) {
+    if (points.length < 4) return null;
+
+    ({int segment, Offset at})? best;
+    var bestDistance = double.infinity;
+
+    for (var i = 0; i < points.length ~/ 2 - 1; i++) {
+      final a = Offset(points[i * 2], points[i * 2 + 1]);
+      final b = Offset(points[i * 2 + 2], points[i * 2 + 3]);
+      final along = b - a;
+      final lengthSquared = along.dx * along.dx + along.dy * along.dy;
+
+      final t = lengthSquared == 0
+          ? 0.0
+          : (((point.dx - a.dx) * along.dx + (point.dy - a.dy) * along.dy) /
+                    lengthSquared)
+                .clamp(0.0, 1.0);
+      final on = a + along * t;
+      final distance = (point - on).distanceSquared;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = (segment: i, at: on);
+      }
+    }
+    return best;
+  }
+
+  /// The points with a new node put in where [point] falls.
+  ///
+  /// Returns them unchanged when there is nowhere sensible to put one, so a
+  /// caller can hand the result straight back without checking.
+  static List<double> withNodeAt(List<double> points, Offset point) {
+    final found = nearestOn(points, point);
+    if (found == null) return points;
+
+    return [
+      ...points.take((found.segment + 1) * 2),
+      found.at.dx,
+      found.at.dy,
+      ...points.skip((found.segment + 1) * 2),
+    ];
+  }
+
+  /// The points with one node taken out.
+  ///
+  /// A line needs two ends, so the last two are never removed — a mark with
+  /// one point is not a mark.
+  static List<double> withoutNode(List<double> points, int node) {
+    if (points.length <= 4) return points;
+    if (node < 0 || node >= points.length ~/ 2) return points;
+    return [...points.take(node * 2), ...points.skip(node * 2 + 2)];
+  }
+
+  /// The points with one node moved to [to].
+  static List<double> withNodeAtIndex(
+    List<double> points,
+    int node,
+    Offset to,
+  ) {
+    if (node < 0 || node >= points.length ~/ 2) return points;
+    final moved = [...points];
+    moved[node * 2] = to.dx;
+    moved[node * 2 + 1] = to.dy;
+    return moved;
+  }
+
+  /// The path a mark is drawn along, straight or smoothed.
+  ///
+  /// A smoothed line is a Catmull-Rom spline through its own points,
+  /// converted to the cubics a path is made of. Two points with nothing
+  /// between them have no curve to describe, so they are bowed the way a node
+  /// editor bows a connection: the tangents leave sideways, which is what
+  /// makes a noodle read as a cable rather than as a bent wire.
+  static Path pathThrough(List<double> points, {required bool curved}) {
+    final path = Path();
+    final count = points.length ~/ 2;
+    if (count < 2) return path;
+
+    Offset at(int i) => Offset(points[i * 2], points[i * 2 + 1]);
+
+    path.moveTo(at(0).dx, at(0).dy);
+
+    if (!curved) {
+      for (var i = 1; i < count; i++) {
+        path.lineTo(at(i).dx, at(i).dy);
+      }
+      return path;
+    }
+
+    if (count == 2) {
+      final a = at(0);
+      final b = at(1);
+      final reach = ((b.dx - a.dx).abs() / 2).clamp(40.0, 260.0);
+      path.cubicTo(a.dx + reach, a.dy, b.dx - reach, b.dy, b.dx, b.dy);
+      return path;
+    }
+
+    for (var i = 0; i < count - 1; i++) {
+      final p0 = at(i == 0 ? 0 : i - 1);
+      final p1 = at(i);
+      final p2 = at(i + 1);
+      final p3 = at(i + 2 >= count ? count - 1 : i + 2);
+
+      path.cubicTo(
+        p1.dx + (p2.dx - p0.dx) / 6,
+        p1.dy + (p2.dy - p0.dy) / 6,
+        p2.dx - (p3.dx - p1.dx) / 6,
+        p2.dy - (p3.dy - p1.dy) / 6,
+        p2.dx,
+        p2.dy,
+      );
+    }
+    return path;
+  }
+
   static bool _nearSegment(Offset point, Offset a, Offset b, double reach) {
     final along = b - a;
     final lengthSquared = along.dx * along.dx + along.dy * along.dy;

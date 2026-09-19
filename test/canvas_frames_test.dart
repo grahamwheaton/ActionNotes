@@ -506,6 +506,92 @@ void _drawingOnTheBoard() {
       await settle(tester);
     });
 
+    testWidgets('an arrow can be given a node, bent, and rubbed out from '
+        'its own menu', (tester) async {
+      final state = await pumpBoard(tester);
+
+      await tester.tap(find.byTooltip('Shapes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Arrow').last);
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(400, 600), const Offset(300, 0));
+      await tester.pumpAndSettle();
+      expect(state.canvasDrawing('list', 'Board'), hasLength(1));
+
+      // A mark has no box of its own, so the press lands on the canvas and
+      // the mark under it is looked for.
+      await tester.longPressAt(const Offset(550, 600));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Add a node here'));
+      await tester.pumpAndSettle();
+
+      final withNode = state.canvasDrawing('list', 'Board').single;
+      expect(withNode.points, hasLength(6));
+
+      await tester.longPressAt(const Offset(500, 600));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Make it bendy'));
+      await tester.pumpAndSettle();
+
+      expect(state.canvasDrawing('list', 'Board').single.curved, isTrue);
+
+      await tester.longPressAt(const Offset(500, 600));
+      await tester.pumpAndSettle();
+      // And it says so, so the same entry takes it back.
+      expect(find.text('Make it straight'), findsOneWidget);
+      await tester.tap(find.text('Rub it out'));
+      await tester.pumpAndSettle();
+
+      expect(state.canvasDrawing('list', 'Board'), isEmpty);
+      await settle(tester);
+    });
+
+    testWidgets('a node can be dragged, and the end it moves lets go of its '
+        'card', (tester) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- One',
+        spots: const [CanvasSpot(x: 300, y: 200, width: 200, ref: 'One')],
+      );
+
+      await tester.tap(find.byTooltip('Shapes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Arrow').last);
+      await tester.pumpAndSettle();
+
+      final card = tester.getRect(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('One'),
+        ),
+      );
+      await tester.dragFrom(
+        const Offset(300, 700),
+        card.center - const Offset(300, 700),
+      );
+      await tester.pumpAndSettle();
+      expect(state.canvasDrawing('list', 'Board').single.to, isNotNull);
+
+      // Pick the mark, which is what puts its nodes on show.
+      await tester.longPressAt(const Offset(300, 700));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Make it bendy'));
+      await tester.pumpAndSettle();
+
+      final handles = find.byWidgetPredicate(
+        (widget) => widget.runtimeType.toString() == '_NodeHandle',
+      );
+      expect(handles, findsNWidgets(2));
+
+      await tester.drag(handles.last, const Offset(0, 120));
+      await tester.pumpAndSettle();
+
+      // Dragged by hand is where it was put, so the hold is given up rather
+      // than snapping the node back to the card.
+      expect(state.canvasDrawing('list', 'Board').single.to, isNull);
+      await settle(tester);
+    });
+
     testWidgets('the eraser takes what it is dragged over, and undo brings '
         'it back', (tester) async {
       final state = await pumpBoard(tester);
