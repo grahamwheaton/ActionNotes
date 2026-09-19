@@ -5,6 +5,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../markdown/project_markdown.dart';
 import '../models/canvas_layout.dart';
+import '../models/notes_source.dart';
 import '../models/project.dart';
 
 /// The on-device copy of the notes.
@@ -12,14 +13,34 @@ import '../models/project.dart';
 /// Every edit lands here first, so an edit made with no signal is never lost —
 /// it just sits with `dirty: true` until a sync can push it.
 class LocalStore {
-  Directory? _root;
+  final Map<String, Directory> _roots = {};
 
-  Future<Directory> _ensureRoot() async {
-    if (_root != null) return _root!;
+  /// Each notebook gets its own folder, so two of them can hold a project of
+  /// the same name without one writing over the other.
+  ///
+  /// Yours stays exactly where it has always been. Sharing is additive: a
+  /// device that has been using this app for months has nothing to move, and
+  /// a shared notebook that is later let go of is one folder to delete.
+  Future<Directory> _ensureRoot([String sourceId = NotesSource.mineId]) async {
+    final known = _roots[sourceId];
+    if (known != null) return known;
+
     final base = await getApplicationDocumentsDirectory();
-    final dir = Directory('${base.path}/actionnotes/projects');
+    final dir = Directory(
+      sourceId == NotesSource.mineId
+          ? '${base.path}/actionnotes/projects'
+          : '${base.path}/actionnotes/shared/$sourceId',
+    );
     if (!await dir.exists()) await dir.create(recursive: true);
-    return _root = dir;
+    return _roots[sourceId] = dir;
+  }
+
+  /// Throws away a whole notebook's local copy, for when one is let go of.
+  Future<void> forget(String sourceId) async {
+    if (sourceId == NotesSource.mineId) return;
+    final directory = await _ensureRoot(sourceId);
+    _roots.remove(sourceId);
+    if (await directory.exists()) await directory.delete(recursive: true);
   }
 
   File _metaFile(Directory root, String slug) =>
@@ -32,8 +53,8 @@ class LocalStore {
   File _layoutFile(Directory root, String slug) =>
       File('${root.path}/$slug.canvas.json');
 
-  Future<List<Project>> loadAll() async {
-    final root = await _ensureRoot();
+  Future<List<Project>> loadAll({String sourceId = NotesSource.mineId}) async {
+    final root = await _ensureRoot(sourceId);
     final projects = <Project>[];
 
     await for (final entity in root.list()) {
@@ -59,8 +80,11 @@ class LocalStore {
     return projects;
   }
 
-  Future<void> save(Project project) async {
-    final root = await _ensureRoot();
+  Future<void> save(
+    Project project, {
+    String sourceId = NotesSource.mineId,
+  }) async {
+    final root = await _ensureRoot(sourceId);
     await _markdownFile(
       root,
       project.slug,
@@ -75,8 +99,11 @@ class LocalStore {
 
   /// Where this project's canvases put things, or an empty layout when it has
   /// none — which is every project until one is made.
-  Future<CanvasLayout> loadLayout(String slug) async {
-    final root = await _ensureRoot();
+  Future<CanvasLayout> loadLayout(
+    String slug, {
+    String sourceId = NotesSource.mineId,
+  }) async {
+    final root = await _ensureRoot(sourceId);
     final file = _layoutFile(root, slug);
     if (!await file.exists()) return CanvasLayout.empty;
 
@@ -87,8 +114,12 @@ class LocalStore {
     );
   }
 
-  Future<void> saveLayout(String slug, CanvasLayout layout) async {
-    final root = await _ensureRoot();
+  Future<void> saveLayout(
+    String slug,
+    CanvasLayout layout, {
+    String sourceId = NotesSource.mineId,
+  }) async {
+    final root = await _ensureRoot(sourceId);
     final file = _layoutFile(root, slug);
 
     if (layout.isEmpty) {
@@ -102,8 +133,11 @@ class LocalStore {
     await _metaFile(root, slug).writeAsString(jsonEncode(meta));
   }
 
-  Future<void> delete(String slug) async {
-    final root = await _ensureRoot();
+  Future<void> delete(
+    String slug, {
+    String sourceId = NotesSource.mineId,
+  }) async {
+    final root = await _ensureRoot(sourceId);
     for (final file in [
       _markdownFile(root, slug),
       _metaFile(root, slug),

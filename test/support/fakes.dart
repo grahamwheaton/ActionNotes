@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'dart:io';
 
 import 'package:actionnotes/models/canvas_layout.dart';
+import 'package:actionnotes/models/notes_source.dart';
 import 'package:actionnotes/models/project.dart';
 import 'package:actionnotes/storage/attachment_store.dart';
 import 'package:actionnotes/state/app_state.dart';
@@ -15,32 +16,61 @@ import 'package:http/testing.dart';
 
 /// Keeps projects in memory so the UI can be driven without a filesystem.
 class FakeLocalStore implements LocalStore {
-  /// Canvas layouts, kept in memory the way the projects are.
-  final Map<String, CanvasLayout> layouts = {};
+  /// Keyed by notebook and then by project, the way the real store keeps a
+  /// folder per notebook — so a test can have the same project name in two.
+  final Map<String, Map<String, CanvasLayout>> layoutsBySource = {};
+  final Map<String, Map<String, Project>> savedBySource = {};
+
+  Map<String, CanvasLayout> _layouts(String sourceId) =>
+      layoutsBySource.putIfAbsent(sourceId, () => {});
+
+  Map<String, Project> _saved(String sourceId) =>
+      savedBySource.putIfAbsent(sourceId, () => {});
+
+  /// What the tests that predate sharing mean by "the projects".
+  Map<String, Project> get saved => _saved(NotesSource.mineId);
+  Map<String, CanvasLayout> get layouts => _layouts(NotesSource.mineId);
 
   @override
-  Future<CanvasLayout> loadLayout(String slug) async =>
-      layouts[slug] ?? CanvasLayout.empty;
+  Future<CanvasLayout> loadLayout(
+    String slug, {
+    String sourceId = NotesSource.mineId,
+  }) async => _layouts(sourceId)[slug] ?? CanvasLayout.empty;
 
   @override
-  Future<void> saveLayout(String slug, CanvasLayout layout) async {
+  Future<void> saveLayout(
+    String slug,
+    CanvasLayout layout, {
+    String sourceId = NotesSource.mineId,
+  }) async {
     if (layout.isEmpty) {
-      layouts.remove(slug);
+      _layouts(sourceId).remove(slug);
     } else {
-      layouts[slug] = layout;
+      _layouts(sourceId)[slug] = layout;
     }
   }
 
-  final Map<String, Project> saved = {};
+  @override
+  Future<List<Project>> loadAll({String sourceId = NotesSource.mineId}) async =>
+      _saved(sourceId).values.toList();
 
   @override
-  Future<List<Project>> loadAll() async => saved.values.toList();
+  Future<void> save(
+    Project project, {
+    String sourceId = NotesSource.mineId,
+  }) async => _saved(sourceId)[project.slug] = project;
 
   @override
-  Future<void> save(Project project) async => saved[project.slug] = project;
+  Future<void> delete(
+    String slug, {
+    String sourceId = NotesSource.mineId,
+  }) async => _saved(sourceId).remove(slug);
 
   @override
-  Future<void> delete(String slug) async => saved.remove(slug);
+  Future<void> forget(String sourceId) async {
+    savedBySource.remove(sourceId);
+    layoutsBySource.remove(sourceId);
+  }
 }
 
 /// Keeps attachments in memory, in a temporary directory: the real store
@@ -103,6 +133,26 @@ class FakeSettingsStore implements SettingsStore {
 
   @override
   Future<void> saveLogin(String? value) async => login = value;
+
+  /// The shared notebooks a test has added, in memory.
+  final List<NotesSource> shared = [];
+
+  @override
+  Future<List<NotesSource>> loadSources() async => [
+    NotesSource.ownedBy(config),
+    ...shared,
+  ];
+
+  @override
+  Future<void> saveSharedSources(List<NotesSource> sources) async {
+    shared
+      ..clear()
+      ..addAll(sources.where((source) => !source.isMine));
+  }
+
+  @override
+  Future<void> forgetSharedSource(String id) async =>
+      shared.removeWhere((source) => source.id == id);
 
   @override
   Future<ThemeMode> loadThemeMode() async => themeMode;
