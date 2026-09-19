@@ -25,8 +25,16 @@ env:
 # And a run that has been superseded stops, rather than finishing a build of
 # a commit nobody is waiting for any more.
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  # A push supersedes the check running for the push before it, which is what
+  # keeps the free minutes down.
+  #
+  # A release is not a check. It gets a group of its own, named for the
+  # version rather than the branch, so an ordinary push to main cannot cancel
+  # one half way through — which is exactly what happened to the first run of
+  # v0.14.0, at the point where it was about to publish.
+  group: build-${{ inputs.version || github.ref }}
+  cancel-in-progress: >-
+    ${{ inputs.version == '' && !startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
   check:
