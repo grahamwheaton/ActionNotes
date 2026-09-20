@@ -6,7 +6,10 @@ import '../models/canvas_layout.dart';
 import '../models/notes_source.dart';
 import '../models/project.dart';
 import 'github_client.dart';
+import 'notebook_index.dart';
 import 'local_store.dart';
+
+final _md = RegExp(r'\.md$');
 
 class SyncResult {
   const SyncResult({
@@ -92,8 +95,16 @@ class SyncService {
       // errors: something to mention, not something to answer.
       final merged = <String>[];
 
+      // Pushed during this sync, and so certainly on GitHub whatever the
+      // listing that follows happens to say. GitHub serves listings through a
+      // cache that can be a moment behind a write, and treating "not in the
+      // listing" as "deleted" for a file written seconds ago would delete
+      // exactly the work somebody just did.
+      final justPushed = <String>{};
+
       // Push anything edited offline first, so a pull cannot clobber it.
       for (final project in local.where((p) => p.dirty)) {
+        justPushed.add(project.fileSlug);
         final outcome = await _pushMerging(client, project, sourceId: sourceId);
         if (outcome.project != null) {
           byslug[project.fileSlug] = outcome.project!;
@@ -106,7 +117,30 @@ class SyncService {
       // that has not moved is skipped without being fetched — which is what
       // makes checking every few seconds affordable rather than a download of
       // every list, every time.
-      for (final entry in await client.listProjects()) {
+      final listing = await client.listProjects();
+      final present = listing
+          .map((entry) => entry.path.split('/').last.replaceAll(_md, ''))
+          .toSet();
+
+      // A project that has gone from the repo goes from here too. It is how
+      // a project deleted, or shared into another notebook, stops haunting
+      // the other device: without this the desktop keeps a copy of a file
+      // that no longer exists, which can never sync again and is not a copy
+      // of anything.
+      //
+      // Only one that was known to be there: a project made here and not yet
+      // pushed has never been in a listing, and dropping it would delete
+      // somebody's work for the crime of being new.
+      for (final slug in byslug.keys.toList()) {
+        final project = byslug[slug]!;
+        if (project.dirty || project.sha == null) continue;
+        if (present.contains(slug) || justPushed.contains(slug)) continue;
+
+        byslug.remove(slug);
+        await localStore.delete(slug, sourceId: sourceId);
+      }
+
+      for (final entry in listing) {
         final slug = entry.path
             .split('/')
             .last
@@ -253,6 +287,69 @@ class SyncService {
     // and stays dirty, so the next sync carries it rather than it being lost.
     await localStore.save(toPush, sourceId: sourceId);
     return _PushOutcome(project: toPush, merged: combined);
+  }
+
+  /// Reads the shared notebooks your own repo knows about.
+  ///
+  /// Missing is not an error: it only means no device has written one yet.
+  Future<NotebookIndex> readNotebooks(GitHubConfig config) async {
+    if (!config.isComplete) return NotebookIndex.empty;
+
+    final client = _clientFactory(config);
+    try {
+      final file = await client.readFile(NotebookIndex.path);
+      if (file == null) return NotebookIndex.empty;
+      return NotebookIndex.parse(file.content, sha: file.sha);
+    } catch (_) {
+      // Being offline, or anything else at all. This is a convenience — your
+      // devices finding each other's notebooks — and it is never a reason to
+      // fail the sync it happens inside.
+      return NotebookIndex.empty;
+    } finally {
+      client.dispose();
+    }
+  }
+
+  /// Writes the shared notebooks into your own repo, so your other devices
+  /// find them — but only into a private one.
+  ///
+  /// A share code carries a token. Writing one into a public repo would hand
+  /// the notebook to anybody who wandered past, and it is the kind of mistake
+  /// that cannot be taken back once a crawler has seen it, so the repo is
+  /// asked every time rather than remembered. Refusing returns a sentence for
+  /// the person, not an exception: nothing is broken, one convenience is off.
+  ///
+  /// Returns null when it was written, or why it was not.
+  Future<String?> writeNotebooks(
+    GitHubConfig config,
+    NotebookIndex index,
+  ) async {
+    if (!config.isComplete) return null;
+
+    final client = _clientFactory(config);
+    try {
+      if (!await client.repoIsPrivate()) {
+        return 'Your notes repo is public, so the shared notebooks are kept '
+            'on this device only — the code that reaches one is a key, and a '
+            'public repo would publish it. Paste the code on your other '
+            'devices, or make the repo private.';
+      }
+
+      await client.writeFile(
+        path: NotebookIndex.path,
+        content: index.serialize(),
+        message: 'Update shared notebooks',
+        sha: index.sha,
+      );
+      return null;
+    } on GitHubException catch (error) {
+      return 'The shared notebooks could not be saved to your repo: '
+          '${error.message}';
+    } catch (_) {
+      return 'The shared notebooks could not be saved to your repo.';
+    } finally {
+      client.dispose();
+    }
   }
 
   /// Appends items to a project's archive file, creating it if need be.

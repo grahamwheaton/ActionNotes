@@ -77,9 +77,31 @@ class FakeRepo {
         }
       }
 
-      // Nothing else matters here: an empty projects listing and no
-      // attachments keep the pull and the prune quiet.
-      return stubResponse('[]', 200);
+      // A repo that accepted a write and then lists nothing is not a repo
+      // anybody has: it would look exactly like every project having been
+      // deleted. Listing what it holds keeps the fake honest.
+      if (path == 'projects') {
+        return stubResponse(
+          jsonEncode([
+            for (final entry in contents.keys)
+              if (entry.startsWith('projects/'))
+                {'type': 'file', 'path': entry, 'sha': shaOf(entry)},
+          ]),
+          200,
+        );
+      }
+
+      final held = contents[path];
+      if (held == null) return stubResponse('[]', 200);
+      return stubResponse(
+        jsonEncode({
+          'path': path,
+          'sha': shaOf(path),
+          'content': base64.encode(utf8.encode(held)),
+          'encoding': 'base64',
+        }),
+        200,
+      );
     });
   }
 }

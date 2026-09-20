@@ -15,6 +15,7 @@ import '../storage/github_client.dart';
 import '../storage/share_code.dart';
 import '../storage/image_encoder.dart';
 import '../storage/local_store.dart';
+import '../storage/notebook_index.dart';
 import '../storage/settings_store.dart';
 import '../storage/sync_service.dart';
 import '../storage/update_check.dart';
@@ -413,10 +414,68 @@ class AppState extends ChangeNotifier {
     return _syncChain;
   }
 
+  /// Brings this device's shared notebooks into step with the list kept in
+  /// your own repo, in both directions.
+  ///
+  /// One added anywhere appears everywhere, and one given up anywhere goes
+  /// everywhere — because "my devices" is one thing to the person holding
+  /// them, and a notebook that exists on the phone but not the desktop is
+  /// only ever experienced as the desktop having lost a list.
+  ///
+  /// Returns a sentence worth showing, or null.
+  Future<String?> _catchUpOnNotebooks() async {
+    if (!_config.isComplete) return null;
+
+    final stored = await _syncService.readNotebooks(_config);
+    if (stored.isEmpty && sharedSources.isEmpty) return null;
+    final here = NotebookIndex.of(sharedSources);
+
+    // Anything this device has not got yet. Its token comes with it, so there
+    // is nothing to paste and nothing to sign in to.
+    final known = sharedSources.map((source) => source.id).toSet();
+    final arrived = stored.sources
+        .where((source) => !known.contains(source.id))
+        .toList();
+
+    if (arrived.isNotEmpty) {
+      _sources = [..._sources, ...arrived];
+      for (final source in arrived) {
+        await _settingsStore.saveSharedSources(_sources);
+        _projects = [
+          ..._projects,
+          ...await _localStore.loadAll(sourceId: source.id),
+        ];
+      }
+      _sharedActivity();
+      notifyListeners();
+      return null;
+    }
+
+    // Nothing arrived, so this device is the one with something to say — but
+    // only if it actually differs, or every sync would write a commit.
+    if (stored.sameAs(here)) return null;
+    return _syncService.writeNotebooks(
+      _config,
+      NotebookIndex.of(sharedSources, sha: stored.sha),
+    );
+  }
+
   Future<void> _runSync() async {
     _syncing = true;
     notifyListeners();
+    try {
+      await _syncOnce();
+    } finally {
+      // Whatever went wrong, the app is not syncing any more. Leaving this
+      // set meant every later push saw a sync in flight and waited for it
+      // forever: one unexpected answer from GitHub and nothing saved again
+      // until the app was restarted.
+      _syncing = false;
+      notifyListeners();
+    }
+  }
 
+  Future<void> _syncOnce() async {
     // A push already in flight holds the SHA this sync would write against,
     // so let it land first rather than racing it into a conflict.
     for (var waited = 0; _pushing.isNotEmpty && waited < 30; waited++) {
@@ -427,6 +486,11 @@ class AppState extends ChangeNotifier {
     // copies it loaded then, so this is how a project edited while it ran can
     // be told from one it left alone.
     final before = {for (final project in _projects) project.slug: project};
+
+    // Notebooks your other devices know about, before anything is fetched:
+    // one added on the phone should be here on the desktop, with its
+    // projects, rather than the desktop quietly missing a list.
+    final notebookProblem = await _catchUpOnNotebooks();
 
     // Each notebook is its own repo, so each is its own sync. One that fails
     // says so without stopping the others: a shared notebook whose token has
@@ -475,6 +539,7 @@ class AppState extends ChangeNotifier {
     // decide anything about it.
     _message = [
       ...problems,
+      if (notebookProblem != null) notebookProblem,
       if (combined.isNotEmpty) _mergeNotice(combined),
     ].join('\n');
     if (_message!.isEmpty) _message = null;
@@ -483,8 +548,6 @@ class AppState extends ChangeNotifier {
     // it: saying "synced a minute ago" after a failed attempt would be worse
     // than saying nothing.
     if (result.error == null) _lastSynced = DateTime.now();
-    _syncing = false;
-    notifyListeners();
   }
 
   /// Folds a sync's answer into what is on screen, keeping anything edited
@@ -521,9 +584,15 @@ class AppState extends ChangeNotifier {
       );
     }
 
-    // A project created while the sync was running is not in its answer at
-    // all, and must not be dropped for it.
-    reconciled.addAll(live.values);
+    // What is left is in hand but not in the sync's answer, which is two
+    // different things. One made while the sync was running was never in its
+    // question either, and must not be dropped for it. One that was there
+    // when the sync started and is not in its answer has gone from the repo —
+    // deleted, or moved into another notebook — and putting it back here
+    // would resurrect it every time.
+    for (final project in live.values) {
+      if (!before.containsKey(project.slug)) reconciled.add(project);
+    }
 
     return reconciled
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
@@ -588,9 +657,15 @@ class AppState extends ChangeNotifier {
 
   /// Gives a shared notebook up: its projects, its local copy and its token.
   ///
-  /// What is in the repo is untouched — this is one device letting go, not a
-  /// deletion. The token goes, so the notebook is no longer reachable from
-  /// here without the code again.
+  /// What is in the repo is untouched — this is letting go, not a deletion,
+  /// and the other people keep it exactly as it was. The token goes, so the
+  /// notebook is no longer reachable without the code again.
+  ///
+  /// Taken out of the list in your own repo at the same time, so it goes from
+  /// your other devices too and does not come back on the next sync. That is
+  /// the behaviour to want: "my devices" is one thing, and a notebook that
+  /// reappeared on the desktop after being given up on the phone would be
+  /// indistinguishable from a bug.
   Future<void> forgetSharedNotebook(String id) async {
     if (id == NotesSource.mineId) return;
 
@@ -601,6 +676,16 @@ class AppState extends ChangeNotifier {
     await _settingsStore.forgetSharedSource(id);
     await _localStore.forget(id);
     notifyListeners();
+
+    if (_config.isComplete) {
+      final stored = await _syncService.readNotebooks(_config);
+      if (!stored.isEmpty) {
+        await _syncService.writeNotebooks(
+          _config,
+          NotebookIndex.of(sharedSources, sha: stored.sha),
+        );
+      }
+    }
   }
 
   /// The code to hand someone so they can reach a shared notebook.

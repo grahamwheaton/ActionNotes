@@ -132,7 +132,7 @@ class _NotebookRow extends StatelessWidget {
         // Said plainly, because the difference between this and deleting is
         // the whole of what someone is worried about when they press it.
         content: const Text(
-          'It disappears from this device. Nothing in it is deleted, and the '
+          'It disappears from your devices. Nothing in it is deleted, and the '
           'other people keep it exactly as it is. You can paste the code '
           'again later to get it back.',
         ),

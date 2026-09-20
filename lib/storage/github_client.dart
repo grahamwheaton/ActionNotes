@@ -99,6 +99,23 @@ class GitHubClient {
     }
   }
 
+  /// Whether the repo is private, which decides whether anything sensitive
+  /// may be written into it.
+  Future<bool> repoIsPrivate() async {
+    final response = await _client.get(
+      Uri.parse('$_base/repos/${config.owner}/${config.repo}'),
+      headers: _headers,
+    );
+    if (response.statusCode != 200) {
+      throw GitHubException(response.statusCode, _errorMessage(response));
+    }
+    final decoded = jsonDecode(response.body);
+    // Absent or unreadable counts as public. Guessing wrong in this
+    // direction costs a feature; guessing wrong the other way writes a key
+    // somewhere the world can read it.
+    return decoded is Map<String, dynamic> && decoded['private'] == true;
+  }
+
   /// Lists a directory's files, with their SHAs, which a delete needs.
   /// An absent directory is not an error.
   Future<Map<String, String>> listDirectory(String path) async {
@@ -178,11 +195,18 @@ class GitHubClient {
       throw GitHubException(response.statusCode, _errorMessage(response));
     }
 
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final raw = (json['content'] as String? ?? '').replaceAll('\n', '');
+    // Anything that is not a file's own JSON counts as not being there. A
+    // path that happens to be a directory answers with a list, and a cast
+    // straight to a map threw a type error that no caller was expecting —
+    // which wedged the sync it happened inside.
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) return null;
+    if (decoded['path'] is! String || decoded['sha'] is! String) return null;
+
+    final raw = (decoded['content'] as String? ?? '').replaceAll('\n', '');
     return RemoteFile(
-      path: json['path'] as String,
-      sha: json['sha'] as String,
+      path: decoded['path'] as String,
+      sha: decoded['sha'] as String,
       content: utf8.decode(base64.decode(raw)),
     );
   }

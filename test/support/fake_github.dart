@@ -34,6 +34,10 @@ class FakeGitHub {
   /// a list that had not changed.
   final List<String> reads = [];
 
+  /// Repos anybody can read, which is what decides whether a share code —
+  /// which carries a token — may be written into one.
+  final Set<String> public = {};
+
   Map<String, String> repo(String name) => files.putIfAbsent(name, () => {});
 
   /// A SHA that follows the content, the way a real one does — so a file that
@@ -51,9 +55,13 @@ class FakeGitHub {
       }
 
       // "Is this repo there?", which is what a share code is checked with
-      // before it is kept.
+      // before it is kept — and what says whether anything sensitive may be
+      // written into it.
       if (!request.url.path.contains('/contents/')) {
-        return stubResponse(jsonEncode({'name': name}), 200);
+        return stubResponse(
+          jsonEncode({'name': name, 'private': !public.contains(name)}),
+          200,
+        );
       }
 
       final path = Uri.decodeFull(request.url.path).split('/contents/').last;
@@ -66,14 +74,9 @@ class FakeGitHub {
         // people writing at once would quietly let one overwrite the other
         // and call it a pass.
         final sent = body['sha'] as String?;
-        final current = repo(name).containsKey(path)
-            ? shaOf(name, path)
-            : null;
+        final current = repo(name).containsKey(path) ? shaOf(name, path) : null;
         if (sent != current) {
-          return stubResponse(
-            jsonEncode({'message': 'does not match'}),
-            409,
-          );
+          return stubResponse(jsonEncode({'message': 'does not match'}), 409);
         }
 
         repo(name)[path] = utf8.decode(
