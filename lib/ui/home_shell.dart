@@ -11,6 +11,7 @@ import 'conflict_dialog.dart';
 import 'context_menu.dart';
 import 'note_editor.dart';
 import 'search_screen.dart';
+import 'shared_notebooks.dart';
 import 'starred_screen.dart';
 import 'sync_status.dart';
 import 'update_banner.dart';
@@ -40,8 +41,8 @@ class HomeShell extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) =>
             constraints.maxWidth >= sidebarBreakpoint
-                ? const _TwoPaneLayout()
-                : const _SinglePaneLayout(),
+            ? const _TwoPaneLayout()
+            : const _SinglePaneLayout(),
       ),
     );
   }
@@ -57,7 +58,8 @@ class _TwoPaneLayout extends StatelessWidget {
 
     // Fall back to the first project so the detail pane is never blank when
     // there is something to show.
-    final selected = state.projectBySlug(state.selectedSlug ?? '') ??
+    final selected =
+        state.projectBySlug(state.selectedSlug ?? '') ??
         (state.projects.isEmpty ? null : state.projects.first);
 
     return Scaffold(
@@ -157,8 +159,9 @@ class _DetailHeader extends StatelessWidget {
               children: [
                 Text(
                   project.title,
-                  style: theme.textTheme.headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w600),
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -176,11 +179,13 @@ class _DetailHeader extends StatelessWidget {
             tooltip: 'Archive completed',
             icon: const Icon(Icons.inventory_2_outlined),
             onPressed: () async {
-              final problem =
-                  await context.read<AppState>().archiveCompleted(project.slug);
+              final problem = await context.read<AppState>().archiveCompleted(
+                project.slug,
+              );
               if (problem == null || !context.mounted) return;
-              ScaffoldMessenger.of(context)
-                  .showSnackBar(SnackBar(content: Text(problem)));
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(problem)));
             },
           ),
         ],
@@ -201,11 +206,7 @@ class _SinglePaneLayout extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [Text('ActionNotes'), AppVersionLabel()],
         ),
-        actions: const [
-          _SearchAction(),
-          _SyncAction(),
-          _SettingsAction(),
-        ],
+        actions: const [_SearchAction(), _SyncAction(), _SettingsAction()],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => createProject(context, openAfter: true),
@@ -286,20 +287,21 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
           child: state.projects.isEmpty
               ? const _NoProjects()
               : projects.isEmpty
-                  ? const _NoMatches()
-                  : RefreshIndicator(
-                      onRefresh: state.sync,
-                      child: ListView.builder(
-                        padding:
-                            EdgeInsets.only(bottom: widget.pushOnTap ? 96 : 12),
-                        itemCount: projects.length,
-                        itemBuilder: (context, index) => _ProjectTile(
-                          project: projects[index],
-                          selected: projects[index].slug == widget.selectedSlug,
-                          pushOnTap: widget.pushOnTap,
-                        ),
-                      ),
+              ? const _NoMatches()
+              : RefreshIndicator(
+                  onRefresh: state.sync,
+                  child: ListView.builder(
+                    padding: EdgeInsets.only(
+                      bottom: widget.pushOnTap ? 96 : 12,
                     ),
+                    itemCount: projects.length,
+                    itemBuilder: (context, index) => _ProjectTile(
+                      project: projects[index],
+                      selected: projects[index].slug == widget.selectedSlug,
+                      pushOnTap: widget.pushOnTap,
+                    ),
+                  ),
+                ),
         ),
         if (!widget.pushOnTap) const _SidebarFooter(),
       ],
@@ -377,25 +379,27 @@ class _SidebarSearch extends StatelessWidget {
             child: Tooltip(
               message: 'Search',
               child: GestureDetector(
-              onTap: () => SearchScreen.open(context),
-              child: Center(
-                widthFactor: 1,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surface,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    'Ctrl K',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+                onTap: () => SearchScreen.open(context),
+                child: Center(
+                  widthFactor: 1,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      'Ctrl K',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
             ),
           ),
         ),
@@ -520,10 +524,8 @@ class _SidebarFooter extends StatelessWidget {
               style: TextButton.styleFrom(
                 alignment: Alignment.centerLeft,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
-                backgroundColor:
-                    theme.colorScheme.surfaceContainerHighest.withValues(
-                  alpha: 0.5,
-                ),
+                backgroundColor: theme.colorScheme.surfaceContainerHighest
+                    .withValues(alpha: 0.5),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8),
                 ),
@@ -540,9 +542,9 @@ class _SidebarFooter extends StatelessWidget {
         // Settings sits at the foot of the sidebar rather than among the
         // icons at the top: it is the thing you open least.
         InkWell(
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
-          ),
+          onTap: () => Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(20, 12, 16, 14),
             child: Row(
@@ -616,6 +618,18 @@ class _ProjectTile extends StatelessWidget {
             if (title != null) await state.renameProject(project.slug, title);
           },
         ),
+        if (project.isShared)
+          ContextMenuAction(
+            label: 'Stop sharing',
+            icon: Icons.folder_off_outlined,
+            onSelected: () => ShareProjectDialog.stopSharing(context, project),
+          )
+        else
+          ContextMenuAction(
+            label: 'Share\u2026',
+            icon: Icons.folder_shared_outlined,
+            onSelected: () => ShareProjectDialog.show(context, project),
+          ),
         ContextMenuAction(
           label: 'Delete',
           icon: Icons.delete_outline,
@@ -668,6 +682,23 @@ class _ProjectTile extends StatelessWidget {
                     ),
                     child: Row(
                       children: [
+                        // Which notebook a shared project is in, beside its
+                        // name: two people's lists sitting in one sidebar
+                        // need to be told apart at a glance, or somebody
+                        // writes the shopping into the wrong one.
+                        if (project.isShared)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: Tooltip(
+                              message:
+                                  'In ${state.sourceOf(project.slug).name}',
+                              child: Icon(
+                                Icons.folder_shared_outlined,
+                                size: 14,
+                                color: theme.colorScheme.primary,
+                              ),
+                            ),
+                          ),
                         Expanded(
                           child: Text(
                             project.title,
@@ -691,8 +722,7 @@ class _ProjectTile extends StatelessWidget {
                               vertical: 1,
                             ),
                             decoration: BoxDecoration(
-                              color: theme
-                                  .colorScheme.surfaceContainerHighest
+                              color: theme.colorScheme.surfaceContainerHighest
                                   .withValues(alpha: 0.7),
                               borderRadius: BorderRadius.circular(4),
                             ),
@@ -788,9 +818,9 @@ class _SettingsAction extends StatelessWidget {
     return IconButton(
       tooltip: 'Settings',
       icon: const Icon(Icons.settings_outlined),
-      onPressed: () => Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const SettingsScreen()),
-      ),
+      onPressed: () => Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
     );
   }
 }
@@ -878,13 +908,16 @@ class _SetupPrompt extends StatelessWidget {
           Expanded(
             child: Text(
               'This device only. Connect a GitHub repo to sync.',
-              style: TextStyle(color: scheme.onSecondaryContainer, fontSize: 13),
+              style: TextStyle(
+                color: scheme.onSecondaryContainer,
+                fontSize: 13,
+              ),
             ),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
-            ),
+            onPressed: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const SettingsScreen())),
             child: const Text('Connect'),
           ),
         ],
@@ -946,7 +979,10 @@ class _NoProjectSelected extends StatelessWidget {
   }
 }
 
-Future<void> createProject(BuildContext context, {bool openAfter = false}) async {
+Future<void> createProject(
+  BuildContext context, {
+  bool openAfter = false,
+}) async {
   final title = await TextPromptDialog.show(
     context,
     title: 'New project',
@@ -959,9 +995,9 @@ Future<void> createProject(BuildContext context, {bool openAfter = false}) async
   state.select(project.slug);
   if (!openAfter || !context.mounted) return;
 
-  await Navigator.of(context).push(
-    MaterialPageRoute(builder: (_) => ChecklistView(slug: project.slug)),
-  );
+  await Navigator.of(
+    context,
+  ).push(MaterialPageRoute(builder: (_) => ChecklistView(slug: project.slug)));
 }
 
 Future<void> confirmDeleteProject(BuildContext context, Project project) async {

@@ -27,6 +27,7 @@ import 'note_images.dart';
 import 'note_view.dart';
 import 'project_notes_view.dart';
 import 'project_picker.dart';
+import 'shared_notebooks.dart';
 import 'tag_pill.dart';
 import 'text_prompt.dart';
 import 'touch_input.dart';
@@ -1976,6 +1977,10 @@ class _ProjectMenu extends StatelessWidget {
               allowEmpty: true,
             );
             if (notes != null) await state.setNotes(project.slug, notes);
+          case 'share':
+            await ShareProjectDialog.show(context, project);
+          case 'unshare':
+            await ShareProjectDialog.stopSharing(context, project);
         }
       },
       itemBuilder: (_) => [
@@ -1999,6 +2004,10 @@ class _ProjectMenu extends StatelessWidget {
           PopupMenuItem(value: 'archive', child: Text('Archive completed')),
           PopupMenuItem(value: 'notes', child: Text('Project notes')),
         ],
+        if (project.isShared)
+          const PopupMenuItem(value: 'unshare', child: Text('Stop sharing'))
+        else
+          const PopupMenuItem(value: 'share', child: Text('Share\u2026')),
       ],
     );
   }

@@ -5,6 +5,7 @@ import '../state/app_state.dart';
 import '../storage/github_account.dart';
 import '../storage/github_client.dart';
 import 'repo_picker.dart';
+import 'shared_notebooks.dart';
 import 'sign_in_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -256,6 +257,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 4),
           _TokenFallback(controller: _token, onChanged: () => setState(() {})),
+          const SizedBox(height: 24),
+          const SharedNotebooksCard(),
           const SizedBox(height: 20),
           Text(
             'Appearance',
