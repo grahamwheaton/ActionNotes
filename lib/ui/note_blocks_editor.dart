@@ -48,6 +48,7 @@ class NoteBlocksEditor extends StatefulWidget {
     required this.onChanged,
     this.onOpenProject,
     this.onRequestLink,
+    this.onRequestImage,
     this.onPaste,
     this.shrinkWrap = false,
     this.placeholder,
@@ -69,6 +70,10 @@ class NoteBlocksEditor extends StatefulWidget {
   /// Asked for markdown to insert when `[[` is typed, as Obsidian does.
   /// Returning null leaves the line as it was, minus the brackets.
   final Future<String?> Function()? onRequestLink;
+
+  /// Asked for a picture, from the markup menu. Null when the note has
+  /// nowhere to put one.
+  final Future<void> Function()? onRequestImage;
 
   final void Function(String slug)? onOpenProject;
 
@@ -778,6 +783,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
                       final snippet = await widget.onRequestLink!();
                       if (snippet != null) insertInline(snippet);
                     },
+              onRequestImage: widget.onRequestImage,
             )
           : _ImageBlock(
               key: ValueKey(row.id),
@@ -810,6 +816,7 @@ class _TextBlock extends StatelessWidget {
     required this.onDeleteSelection,
     required this.onSelectAllRows,
     this.onRequestLink,
+    this.onRequestImage,
     this.onPaste,
     this.placeholder,
   });
@@ -844,6 +851,7 @@ class _TextBlock extends StatelessWidget {
   /// own select-all is left to happen.
   final bool Function() onSelectAllRows;
   final Future<void> Function()? onRequestLink;
+  final Future<void> Function()? onRequestImage;
 
   /// Replaces the menu's own Paste when the note can take an image.
   final Future<void> Function()? onPaste;
@@ -1147,6 +1155,18 @@ class _TextBlock extends StatelessWidget {
                           onPressed: () {
                             ContextMenuController.removeAny();
                             onRequestLink!();
+                          },
+                        ),
+                      // Beside Link, because attaching a picture is the same
+                      // kind of thing as attaching a link and was reachable
+                      // only from the full editor's toolbar — which on a
+                      // phone means opening the note properly first.
+                      if (onRequestImage != null)
+                        ContextMenuButtonItem(
+                          label: 'Image',
+                          onPressed: () {
+                            ContextMenuController.removeAny();
+                            onRequestImage!();
                           },
                         ),
                       ContextMenuButtonItem(

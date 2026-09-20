@@ -813,6 +813,11 @@ class _ItemTile extends StatelessWidget {
             context,
             title: 'Edit item',
             initialValue: item.text,
+            // Room to see the whole line. A single-line box scrolled to the
+            // end of the text, so editing anything longer than the box meant
+            // reading its last few words and guessing at the rest.
+            minLines: 3,
+            maxLines: 8,
           );
           if (text != null) await state.editItem(slug, index, text);
         },
@@ -1138,23 +1143,41 @@ class _InlineNotesState extends State<_InlineNotes> {
                 widget.onChanged(markdown);
               },
               onPaste: () async => _images.currentState?.paste(),
+              onRequestImage: () async => _images.currentState?.pickImage(),
               onOpenProject: (slug) => context.read<AppState>().select(slug),
             ),
           ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            style: TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              textStyle: theme.textTheme.labelSmall,
+        Row(
+          children: [
+            // A picture could only be attached from the full editor's
+            // toolbar, which on a phone means opening the note properly
+            // first — several taps to do the thing the note is open for.
+            if (!_asConversation)
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  textStyle: theme.textTheme.labelSmall,
+                ),
+                icon: const Icon(Icons.image_outlined, size: 16),
+                label: const Text('Image'),
+                onPressed: () => _images.currentState?.pickImage(),
+              ),
+            TextButton.icon(
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                textStyle: theme.textTheme.labelSmall,
+              ),
+              icon: Icon(
+                _asConversation ? Icons.edit_note : Icons.forum_outlined,
+                size: 16,
+              ),
+              label: Text(
+                _asConversation ? 'Edit as markdown' : 'Conversation',
+              ),
+              onPressed: () =>
+                  setState(() => _asConversation = !_asConversation),
             ),
-            icon: Icon(
-              _asConversation ? Icons.edit_note : Icons.forum_outlined,
-              size: 16,
-            ),
-            label: Text(_asConversation ? 'Edit as markdown' : 'Conversation'),
-            onPressed: () => setState(() => _asConversation = !_asConversation),
-          ),
+          ],
         ),
       ],
     );

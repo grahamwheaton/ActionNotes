@@ -351,6 +351,7 @@ class _NoteEditorState extends State<NoteEditor> {
           if (mounted) setState(() {});
         },
         onRequestLink: _pickLink,
+        onRequestImage: () async => _images.currentState?.pickImage(),
         onPaste: () async => _images.currentState?.paste(),
         onOpenProject: (slug) async {
           // Leave the note before switching, so the editor is not left
