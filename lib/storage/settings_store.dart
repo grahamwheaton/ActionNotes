@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/notes_source.dart';
+import '../models/sidebar_layout.dart';
 import 'github_client.dart';
 
 /// Repo coordinates go in preferences; the token goes in the platform keystore.
@@ -17,6 +18,7 @@ class SettingsStore {
   static const _loginKey = 'github_login';
   static const _sharedKey = 'shared_sources';
   static const _nameKey = 'display_name';
+  static const _sidebarKey = 'sidebar_layout';
 
   /// A shared repo's token, kept in the keystore beside your own.
   static String _sharedTokenKey(String id) => 'shared_token_$id';
@@ -74,6 +76,25 @@ class SettingsStore {
       await prefs.remove(_nameKey);
     } else {
       await prefs.setString(_nameKey, name.trim());
+    }
+  }
+
+  /// How the project list is arranged, on this device. Kept here as well as
+  /// in the repo so it survives being offline, and so a device with no repo
+  /// of its own still has an arrangement.
+  Future<SidebarLayout> loadSidebar() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString(_sidebarKey);
+    if (raw == null || raw.isEmpty) return SidebarLayout.empty;
+    return SidebarLayout.parse(raw);
+  }
+
+  Future<void> saveSidebar(SidebarLayout layout) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (layout.isEmpty) {
+      await prefs.remove(_sidebarKey);
+    } else {
+      await prefs.setString(_sidebarKey, layout.serialize());
     }
   }
 

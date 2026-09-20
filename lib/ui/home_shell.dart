@@ -4,6 +4,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../models/project.dart';
+import '../models/sidebar_layout.dart';
 import '../state/app_state.dart';
 import 'checklist_view.dart';
 import 'context_menu.dart';
@@ -264,6 +265,7 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final filtering = _filter.text.trim().isNotEmpty;
     final projects = _visible(state.projects);
 
     return Column(
@@ -275,7 +277,7 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
             focusNode: _filterFocus,
             onChanged: () => setState(() {}),
           ),
-          const _SidebarLabel('Projects'),
+          const _ProjectsLabel(),
         ],
         if (state.message != null) _MessageBar(message: state.message!),
         if (!state.isConfigured) const _SetupPrompt(),
@@ -286,20 +288,450 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
               ? const _NoMatches()
               : RefreshIndicator(
                   onRefresh: state.sync,
-                  child: ListView.builder(
-                    padding: EdgeInsets.only(
-                      bottom: widget.pushOnTap ? 96 : 12,
-                    ),
-                    itemCount: projects.length,
-                    itemBuilder: (context, index) => _ProjectTile(
-                      project: projects[index],
-                      selected: projects[index].slug == widget.selectedSlug,
-                      pushOnTap: widget.pushOnTap,
-                    ),
+                  child: _ProjectList(
+                    // While something is typed, the groups are set aside and
+                    // every match is shown together: you are looking for a
+                    // project, not for where you filed it.
+                    filtered: filtering ? projects : null,
+                    selectedSlug: widget.selectedSlug,
+                    pushOnTap: widget.pushOnTap,
                   ),
                 ),
         ),
         if (!widget.pushOnTap) const _SidebarFooter(),
+      ],
+    );
+  }
+}
+
+/// The project list: the ones in no group first, then each group under its
+/// own heading.
+///
+/// Ungrouped first because a list you have not filed is one you are still
+/// using, and burying it under the headings of things you have finished
+/// organising would be the wrong way round.
+class _ProjectList extends StatelessWidget {
+  const _ProjectList({
+    required this.filtered,
+    required this.selectedSlug,
+    required this.pushOnTap,
+  });
+
+  /// The matches, when something is typed in the box — in which case the
+  /// groups are set aside entirely. Null when nothing is being searched for.
+  final List<Project>? filtered;
+  final String? selectedSlug;
+  final bool pushOnTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final padding = EdgeInsets.only(bottom: pushOnTap ? 96 : 12);
+
+    final matches = filtered;
+    if (matches != null) {
+      return ListView.builder(
+        padding: padding,
+        itemCount: matches.length,
+        itemBuilder: (context, index) => _ProjectTile(
+          project: matches[index],
+          selected: matches[index].slug == selectedSlug,
+          pushOnTap: pushOnTap,
+        ),
+      );
+    }
+
+    final loose = state.looseProjects;
+
+    return ListView(
+      padding: padding,
+      children: [
+        for (var index = 0; index < loose.length; index++)
+          _DropBefore(
+            group: null,
+            at: index,
+            child: _ProjectTile(
+              project: loose[index],
+              selected: loose[index].slug == selectedSlug,
+              pushOnTap: pushOnTap,
+            ),
+          ),
+        // The end of the ungrouped run, so something can be dragged out of a
+        // group and dropped below everything rather than only above
+        // something.
+        _DropBefore(group: null, at: loose.length, tall: loose.isEmpty),
+        for (final group in state.sidebar.groups) ...[
+          _GroupHeading(group: group),
+          if (!group.collapsed)
+            for (var index = 0; index < state.projectsIn(group).length; index++)
+              _DropBefore(
+                group: group.name,
+                at: index,
+                child: _ProjectTile(
+                  project: state.projectsIn(group)[index],
+                  selected: state.projectsIn(group)[index].slug == selectedSlug,
+                  pushOnTap: pushOnTap,
+                ),
+              ),
+          if (!group.collapsed)
+            _DropBefore(
+              group: group.name,
+              at: state.projectsIn(group).length,
+              tall: state.projectsIn(group).isEmpty,
+            ),
+        ],
+      ],
+    );
+  }
+}
+
+/// Puts a project in a group from the menu, for a phone and for anybody who
+/// would rather not drag things about.
+Future<void> _moveToGroup(BuildContext context, Project project) async {
+  final state = context.read<AppState>();
+  final groups = state.sidebar.groups;
+  final current = state.groupOf(project.slug)?.name;
+
+  final chosen = await showDialog<String>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: Text('Where does "${project.title}" go?'),
+      children: [
+        SimpleDialogOption(
+          onPressed: () => Navigator.of(context).pop('~none'),
+          child: ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.list),
+            title: const Text('No group'),
+            trailing: current == null ? const Icon(Icons.check) : null,
+          ),
+        ),
+        for (final group in groups)
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop(group.name),
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.folder_outlined,
+                color: groupColours[group.colour],
+              ),
+              title: Text(group.name),
+              trailing: current == group.name ? const Icon(Icons.check) : null,
+            ),
+          ),
+        SimpleDialogOption(
+          onPressed: () => Navigator.of(context).pop('~new'),
+          child: const ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.create_new_folder_outlined),
+            title: Text('New group…'),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  if (chosen == null || !context.mounted) return;
+
+  if (chosen == '~new') {
+    final made = await newGroup(context);
+    if (made == null) return;
+    await state.placeProject(project.slug, group: made);
+    return;
+  }
+
+  await state.placeProject(
+    project.slug,
+    group: chosen == '~none' ? null : chosen,
+  );
+}
+
+/// "Projects", with a way to make a group beside it.
+class _ProjectsLabel extends StatelessWidget {
+  const _ProjectsLabel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Expanded(child: _SidebarLabel('Projects')),
+        IconButton(
+          tooltip: 'New group',
+          icon: const Icon(Icons.create_new_folder_outlined, size: 16),
+          visualDensity: VisualDensity.compact,
+          onPressed: () => newGroup(context),
+        ),
+        const SizedBox(width: 4),
+      ],
+    );
+  }
+}
+
+/// Asks for a name and makes a group. Shared by the sidebar's own button and
+/// by a project's "Move to group" when there is nowhere to move it yet.
+Future<String?> newGroup(BuildContext context) async {
+  final state = context.read<AppState>();
+  final name = await TextPromptDialog.show(
+    context,
+    title: 'New group',
+    hintText: 'Work, Home, Someday…',
+    confirmLabel: 'Make it',
+  );
+  if (name == null) return null;
+
+  if (!await state.addGroup(name)) {
+    if (!context.mounted) return null;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('There is already a group called that.')),
+    );
+    return null;
+  }
+  return name.trim();
+}
+
+/// The colours a group can be given.
+///
+/// Named rather than hex, so a group keeps its colour when the theme changes
+/// and reads as something in the file. Drawn from the scheme, so they sit
+/// together in light and dark alike.
+const groupColours = <String, Color>{
+  '': Color(0x00000000),
+  'red': Color(0xFFE57373),
+  'orange': Color(0xFFFFB74D),
+  'green': Color(0xFF81C784),
+  'blue': Color(0xFF64B5F6),
+  'purple': Color(0xFFBA68C8),
+  'pink': Color(0xFFF06292),
+};
+
+/// A group's heading: its name, how many are in it, and a colour down the
+/// side so two groups can be told apart without reading.
+class _GroupHeading extends StatefulWidget {
+  const _GroupHeading({required this.group});
+
+  final ProjectGroup group;
+
+  @override
+  State<_GroupHeading> createState() => _GroupHeadingState();
+}
+
+class _GroupHeadingState extends State<_GroupHeading> {
+  bool _over = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final state = context.read<AppState>();
+    final colour = groupColours[widget.group.colour] ?? Colors.transparent;
+    final count = state.projectsIn(widget.group).length;
+
+    return DragTarget<String>(
+      // Dropping on the heading puts it in the group, wherever in the group
+      // it lands — which is what aiming at a name rather than a gap means.
+      onWillAcceptWithDetails: (_) {
+        setState(() => _over = true);
+        return true;
+      },
+      onLeave: (_) => setState(() => _over = false),
+      onAcceptWithDetails: (details) {
+        setState(() => _over = false);
+        state.placeProject(details.data, group: widget.group.name);
+      },
+      builder: (context, candidate, rejected) => Padding(
+        padding: const EdgeInsets.fromLTRB(8, 10, 8, 2),
+        child: Material(
+          color: _over
+              ? theme.colorScheme.primary.withValues(alpha: 0.15)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(6),
+            onTap: () => state.toggleGroup(widget.group.name),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+              child: Row(
+                children: [
+                  Icon(
+                    widget.group.collapsed
+                        ? Icons.chevron_right
+                        : Icons.expand_more,
+                    size: 16,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  if (widget.group.colour.isNotEmpty) ...[
+                    const SizedBox(width: 4),
+                    Container(width: 3, height: 14, color: colour),
+                  ],
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      widget.group.name,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    '$count',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.outline,
+                    ),
+                  ),
+                  _GroupMenu(group: widget.group),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GroupMenu extends StatelessWidget {
+  const _GroupMenu({required this.group});
+
+  final ProjectGroup group;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.read<AppState>();
+
+    return PopupMenuButton<String>(
+      tooltip: 'Group actions',
+      icon: const Icon(Icons.more_horiz, size: 16),
+      padding: EdgeInsets.zero,
+      iconSize: 16,
+      onSelected: (value) async {
+        switch (value) {
+          case 'rename':
+            final name = await TextPromptDialog.show(
+              context,
+              title: 'Rename group',
+              initialValue: group.name,
+            );
+            if (name == null || !context.mounted) return;
+            if (!await state.renameGroup(group.name, name) && context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('There is already a group called that.'),
+                ),
+              );
+            }
+          case 'remove':
+            await state.removeGroup(group.name);
+          default:
+            await state.setGroupColour(group.name, value);
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'rename', child: Text('Rename')),
+        // Said as what it does. Nothing in it is deleted — a group is a way
+        // of looking at a list, not a place the lists are kept.
+        const PopupMenuItem(value: 'remove', child: Text('Ungroup these')),
+        const PopupMenuDivider(),
+        for (final entry in groupColours.entries)
+          PopupMenuItem(
+            value: entry.key,
+            child: Row(
+              children: [
+                Container(
+                  width: 12,
+                  height: 12,
+                  decoration: BoxDecoration(
+                    color: entry.key.isEmpty ? Colors.transparent : entry.value,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(entry.key.isEmpty ? 'No colour' : entry.key),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// A place a dragged project can be let go of: the gap above a row.
+///
+/// A thin line rather than a whole row, so the list does not jump about while
+/// something is being carried over it — the line lighting up is enough to say
+/// where it would land.
+class _DropBefore extends StatefulWidget {
+  const _DropBefore({
+    required this.group,
+    required this.at,
+    this.child,
+    this.tall = false,
+  });
+
+  final String? group;
+  final int at;
+  final Widget? child;
+
+  /// An empty group, or an empty ungrouped run, needs something big enough to
+  /// aim at.
+  final bool tall;
+
+  @override
+  State<_DropBefore> createState() => _DropBeforeState();
+}
+
+class _DropBeforeState extends State<_DropBefore> {
+  bool _over = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        DragTarget<String>(
+          onWillAcceptWithDetails: (_) {
+            setState(() => _over = true);
+            return true;
+          },
+          onLeave: (_) => setState(() => _over = false),
+          onAcceptWithDetails: (details) {
+            setState(() => _over = false);
+            context.read<AppState>().placeProject(
+              details.data,
+              group: widget.group,
+              at: widget.at,
+            );
+          },
+          builder: (context, candidate, rejected) => Container(
+            height: _over ? 10 : (widget.tall ? 28 : 6),
+            margin: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: _over
+                  ? theme.colorScheme.primary
+                  : (widget.tall
+                        ? theme.colorScheme.outlineVariant.withValues(
+                            alpha: 0.25,
+                          )
+                        : Colors.transparent),
+              borderRadius: BorderRadius.circular(3),
+            ),
+            alignment: Alignment.center,
+            child: widget.tall && !_over
+                ? Text(
+                    'Drop a project here',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  )
+                : null,
+          ),
+        ),
+        if (widget.child != null) widget.child!,
       ],
     );
   }
@@ -599,142 +1031,186 @@ class _ProjectTile extends StatelessWidget {
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
           );
 
+    final actions = [
+      ContextMenuAction(
+        label: 'Rename',
+        icon: Icons.drive_file_rename_outline,
+        onSelected: () async {
+          final title = await TextPromptDialog.show(
+            context,
+            title: 'Rename project',
+            initialValue: project.title,
+            hintText: 'Project name',
+          );
+          if (title != null) await state.renameProject(project.slug, title);
+        },
+      ),
+      if (project.isShared)
+        ContextMenuAction(
+          label: 'Stop sharing',
+          icon: Icons.folder_off_outlined,
+          onSelected: () => ShareProjectDialog.stopSharing(context, project),
+        )
+      else
+        ContextMenuAction(
+          label: 'Share\u2026',
+          icon: Icons.folder_shared_outlined,
+          onSelected: () => ShareProjectDialog.show(context, project),
+        ),
+      ContextMenuAction(
+        label: 'Move to group…',
+        icon: Icons.folder_outlined,
+        onSelected: () => _moveToGroup(context, project),
+      ),
+      ContextMenuAction(
+        label: 'Delete',
+        icon: Icons.delete_outline,
+        destructive: true,
+        onSelected: () => confirmDeleteProject(context, project),
+      ),
+    ];
+
     return ItemContextMenu(
-      actions: [
-        ContextMenuAction(
-          label: 'Rename',
-          icon: Icons.drive_file_rename_outline,
-          onSelected: () async {
-            final title = await TextPromptDialog.show(
-              context,
-              title: 'Rename project',
-              initialValue: project.title,
-              hintText: 'Project name',
-            );
-            if (title != null) await state.renameProject(project.slug, title);
-          },
-        ),
-        if (project.isShared)
-          ContextMenuAction(
-            label: 'Stop sharing',
-            icon: Icons.folder_off_outlined,
-            onSelected: () => ShareProjectDialog.stopSharing(context, project),
-          )
-        else
-          ContextMenuAction(
-            label: 'Share\u2026',
-            icon: Icons.folder_shared_outlined,
-            onSelected: () => ShareProjectDialog.show(context, project),
-          ),
-        ContextMenuAction(
-          label: 'Delete',
-          icon: Icons.delete_outline,
-          destructive: true,
-          onSelected: () => confirmDeleteProject(context, project),
-        ),
-      ],
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-        child: Material(
-          color: selected
-              ? theme.colorScheme.primary.withValues(alpha: 0.13)
-              : Colors.transparent,
+      actions: actions,
+      // A long press picks the row up to move it, so it cannot also open the
+      // menu — one gesture cannot do both. The menu is on a button, which is
+      // the same bargain the checklist rows made.
+      longPress: false,
+      child: LongPressDraggable<String>(
+        data: project.slug,
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        // What is being carried, small and under the finger, rather than a
+        // full-width row covering the list it is being dropped into.
+        feedback: Material(
+          elevation: 4,
           borderRadius: BorderRadius.circular(6),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(6),
-            onTap: () {
-              if (pushOnTap) {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => ChecklistView(slug: project.slug),
-                  ),
-                );
-              } else {
-                state.select(project.slug);
-              }
-            },
-            child: Row(
-              children: [
-                // A bar down the selected row, the way a vault's file list
-                // marks the open note. Always laid out, so the titles line up
-                // whether or not a row is selected.
-                Container(
-                  width: 2,
-                  height: pushOnTap ? 40 : 30,
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? theme.colorScheme.primary
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Text(project.title, style: theme.textTheme.bodyMedium),
+          ),
+        ),
+        childWhenDragging: Opacity(
+          opacity: 0.35,
+          child: _tile(context, theme, titleStyle, open, actions),
+        ),
+        child: _tile(context, theme, titleStyle, open, actions),
+      ),
+    );
+  }
+
+  Widget _tile(
+    BuildContext context,
+    ThemeData theme,
+    TextStyle? titleStyle,
+    int open,
+    List<ContextMenuAction> actions,
+  ) {
+    final state = context.read<AppState>();
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      child: Material(
+        color: selected
+            ? theme.colorScheme.primary.withValues(alpha: 0.13)
+            : Colors.transparent,
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () {
+            if (pushOnTap) {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ChecklistView(slug: project.slug),
                 ),
-                Expanded(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(
-                      12,
-                      pushOnTap ? 14 : 7,
-                      10,
-                      pushOnTap ? 14 : 7,
-                    ),
-                    child: Row(
-                      children: [
-                        // Which notebook a shared project is in, beside its
-                        // name: two people's lists sitting in one sidebar
-                        // need to be told apart at a glance, or somebody
-                        // writes the shopping into the wrong one.
-                        if (project.isShared)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: Tooltip(
-                              message:
-                                  'In ${state.sourceOf(project.slug).name}',
-                              child: Icon(
-                                Icons.folder_shared_outlined,
-                                size: 14,
-                                color: theme.colorScheme.primary,
-                              ),
+              );
+            } else {
+              state.select(project.slug);
+            }
+          },
+          child: Row(
+            children: [
+              // A bar down the selected row, the way a vault's file list
+              // marks the open note. Always laid out, so the titles line up
+              // whether or not a row is selected.
+              Container(
+                width: 2,
+                height: pushOnTap ? 40 : 30,
+                decoration: BoxDecoration(
+                  color: selected
+                      ? theme.colorScheme.primary
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    12,
+                    pushOnTap ? 14 : 7,
+                    10,
+                    pushOnTap ? 14 : 7,
+                  ),
+                  child: Row(
+                    children: [
+                      // Which notebook a shared project is in, beside its
+                      // name: two people's lists sitting in one sidebar
+                      // need to be told apart at a glance, or somebody
+                      // writes the shopping into the wrong one.
+                      if (project.isShared)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Tooltip(
+                            message: 'In ${state.sourceOf(project.slug).name}',
+                            child: Icon(
+                              Icons.folder_shared_outlined,
+                              size: 14,
+                              color: theme.colorScheme.primary,
                             ),
-                          ),
-                        Expanded(
-                          child: Text(
-                            project.title,
-                            overflow: TextOverflow.ellipsis,
-                            style: titleStyle,
                           ),
                         ),
-                        if (project.dirty)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 4),
-                            child: Icon(
-                              Icons.cloud_upload_outlined,
-                              size: 14,
-                              color: theme.colorScheme.outline,
-                            ),
-                          )
-                        else if (open > 0)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.surfaceContainerHighest
-                                  .withValues(alpha: 0.7),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              '$open',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
+                      Expanded(
+                        child: Text(
+                          project.title,
+                          overflow: TextOverflow.ellipsis,
+                          style: titleStyle,
+                        ),
+                      ),
+                      if (project.dirty)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4),
+                          child: Icon(
+                            Icons.cloud_upload_outlined,
+                            size: 14,
+                            color: theme.colorScheme.outline,
+                          ),
+                        )
+                      else if (open > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.surfaceContainerHighest
+                                .withValues(alpha: 0.7),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '$open',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
                             ),
                           ),
-                      ],
-                    ),
+                        ),
+                      ItemMenuButton(
+                        actions: actions,
+                        tooltip: 'Project actions',
+                      ),
+                    ],
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

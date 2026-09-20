@@ -5,6 +5,7 @@ import '../models/checklist_item.dart';
 import '../models/canvas_layout.dart';
 import '../models/notes_source.dart';
 import '../models/project.dart';
+import '../models/sidebar_layout.dart';
 import 'github_client.dart';
 import 'notebook_index.dart';
 import 'local_store.dart';
@@ -295,6 +296,53 @@ class SyncService {
     // and stays dirty, so the next sync carries it rather than it being lost.
     await localStore.save(toPush, sourceId: sourceId);
     return _PushOutcome(project: toPush, merged: combined);
+  }
+
+  /// Reads how the sidebar is arranged, from your own repo.
+  Future<SidebarLayout> readSidebar(GitHubConfig config) async {
+    if (!config.isComplete) return SidebarLayout.empty;
+
+    final client = _clientFactory(config);
+    try {
+      final file = await client.readFile(SidebarLayout.path);
+      if (file == null) return SidebarLayout.empty;
+      return SidebarLayout.parse(file.content, sha: file.sha);
+    } catch (_) {
+      return SidebarLayout.empty;
+    } finally {
+      client.dispose();
+    }
+  }
+
+  /// Writes it back, so your other devices show the same arrangement.
+  ///
+  /// Nothing sensitive in it — the names of your own groups and the order of
+  /// your own lists — so unlike the notebooks it does not care whether the
+  /// repo is private.
+  /// Returns the SHA it now has, which the next write has to be sent
+  /// against — without keeping it, every write after the first is refused
+  /// and only the first rearrangement of a session ever left the device.
+  Future<String?> writeSidebar(
+    GitHubConfig config,
+    SidebarLayout layout,
+  ) async {
+    if (!config.isComplete) return null;
+
+    final client = _clientFactory(config);
+    try {
+      return await client.writeFile(
+        path: SidebarLayout.path,
+        content: layout.serialize(),
+        message: 'Update the project list',
+        sha: layout.sha,
+      );
+    } catch (_) {
+      // The arrangement is kept on the device either way; it is not worth
+      // interrupting anybody over.
+      return null;
+    } finally {
+      client.dispose();
+    }
   }
 
   /// Reads the shared notebooks your own repo knows about.

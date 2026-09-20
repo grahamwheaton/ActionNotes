@@ -11,6 +11,7 @@ import '../models/canvas_layout.dart';
 import '../models/checklist_item.dart';
 import '../models/notes_source.dart';
 import '../models/project.dart';
+import '../models/sidebar_layout.dart';
 import '../storage/attachment_store.dart';
 import '../storage/github_client.dart';
 import '../storage/share_code.dart';
@@ -155,6 +156,98 @@ class AppState extends ChangeNotifier {
       orElse: () => NotesSource.ownedBy(_config),
     );
   }
+
+  SidebarLayout _sidebar = SidebarLayout.empty;
+
+  /// How the project list is arranged, with anything it has never heard of
+  /// added at the end so a new project is never invisible.
+  SidebarLayout get sidebar => _sidebar;
+
+  /// The projects in no group, in order, followed by any the arrangement has
+  /// not placed yet.
+  List<Project> get looseProjects {
+    final placed = _sidebar.known;
+    return [
+      for (final slug in _sidebar.loose)
+        if (projectBySlug(slug) case final project?) project,
+      for (final project in _projects)
+        if (!placed.contains(project.slug)) project,
+    ];
+  }
+
+  /// The projects in one group, in the order it holds them.
+  List<Project> projectsIn(ProjectGroup group) => [
+    for (final slug in group.slugs)
+      if (projectBySlug(slug) case final project?) project,
+  ];
+
+  /// The group a project belongs to, or null.
+  ProjectGroup? groupOf(String slug) => _sidebar.groupOf(slug);
+
+  Future<void> _saveSidebar(SidebarLayout next) async {
+    _sidebar = next;
+    notifyListeners();
+    await _settingsStore.saveSidebar(next);
+
+    // Written to your own repo as well, so the arrangement follows you from
+    // the phone to the desktop the way the notebooks do. A device with no
+    // repo of its own keeps it locally and nowhere else, which is the most
+    // it can do.
+    //
+    // The SHA it comes back with is kept: GitHub accepts a write only
+    // against the one the file has now, so without it every rearrangement
+    // after the first would be refused and never leave the device.
+    final sha = await _syncService.writeSidebar(_config, next);
+    if (sha == null || _sidebar != next) return;
+    _sidebar = next.copyWith(sha: sha);
+  }
+
+  /// Moves a project within the list, or into or out of a group.
+  ///
+  /// [group] null means loose. [at] null means the end.
+  Future<void> placeProject(String slug, {String? group, int? at}) =>
+      _saveSidebar(_sidebar.place(slug, group: group, at: at));
+
+  /// Makes a group. Returns false when one is already called that, since two
+  /// groups with the same name could not be told apart afterwards.
+  Future<bool> addGroup(String name, {String colour = ''}) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return false;
+    if (_sidebar.groups.any((group) => group.name == trimmed)) return false;
+
+    await _saveSidebar(
+      _sidebar.withGroup(ProjectGroup(name: trimmed, colour: colour)),
+    );
+    return true;
+  }
+
+  /// Puts a group away. What was in it goes loose rather than being deleted:
+  /// a group is a way of looking at a list, and putting one away should
+  /// never lose what it held.
+  Future<void> removeGroup(String name) =>
+      _saveSidebar(_sidebar.withoutGroup(name));
+
+  Future<bool> renameGroup(String from, String to) async {
+    final trimmed = to.trim();
+    if (trimmed.isEmpty || trimmed == from) return false;
+    if (_sidebar.groups.any((group) => group.name == trimmed)) return false;
+
+    await _saveSidebar(_sidebar.renameGroup(from, trimmed));
+    return true;
+  }
+
+  Future<void> setGroupColour(String name, String colour) =>
+      _saveSidebar(_sidebar.withGroupChanged(name, colour: colour));
+
+  Future<void> toggleGroup(String name) {
+    final group = _sidebar.groups.firstWhere((one) => one.name == name);
+    return _saveSidebar(
+      _sidebar.withGroupChanged(name, collapsed: !group.collapsed),
+    );
+  }
+
+  Future<void> moveGroup(String name, int to) =>
+      _saveSidebar(_sidebar.withGroupAt(name, to));
 
   /// The file behind a picture in a note or on a canvas, fetched from
   /// whichever notebook the picture belongs to.
@@ -376,6 +469,7 @@ class AppState extends ChangeNotifier {
     _themeMode = await _settingsStore.loadThemeMode();
     _login = await _settingsStore.loadLogin();
     _displayName = await _settingsStore.loadName();
+    _sidebar = await _settingsStore.loadSidebar();
     _sources = await _settingsStore.loadSources();
     _config = _sources.first.config;
 
@@ -500,6 +594,34 @@ class AppState extends ChangeNotifier {
     return _syncChain;
   }
 
+  /// Takes the arrangement your other devices agreed on.
+  ///
+  /// The repo wins when it says something different, because the alternative
+  /// is two devices each insisting on their own order for ever. Rearranging
+  /// writes immediately, so the repo is almost always the newer of the two;
+  /// the case this loses is reordering on a device that was offline, which
+  /// costs a drag and is obvious when it happens.
+  Future<void> _catchUpOnSidebar() async {
+    final stored = await _syncService.readSidebar(_config);
+    if (stored.isEmpty && _sidebar.isEmpty) return;
+    if (stored.isEmpty) {
+      // Nothing there yet: this device's arrangement becomes the shared one.
+      unawaited(_syncService.writeSidebar(_config, _sidebar));
+      return;
+    }
+
+    if (stored.sameAs(_sidebar)) {
+      // Same arrangement, but the SHA may be newer, and a write without the
+      // current one is refused.
+      _sidebar = _sidebar.copyWith(sha: stored.sha);
+      return;
+    }
+
+    _sidebar = stored;
+    await _settingsStore.saveSidebar(stored);
+    notifyListeners();
+  }
+
   /// Brings this device's shared notebooks into step with the list kept in
   /// your own repo, in both directions.
   ///
@@ -511,6 +633,8 @@ class AppState extends ChangeNotifier {
   /// Returns a sentence worth showing, or null.
   Future<String?> _catchUpOnNotebooks() async {
     if (!_config.isComplete) return null;
+
+    await _catchUpOnSidebar();
 
     final stored = await _syncService.readNotebooks(_config);
     if (stored.isEmpty && sharedSources.isEmpty) return null;

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:actionnotes/models/canvas_layout.dart';
 import 'package:actionnotes/models/notes_source.dart';
 import 'package:actionnotes/models/project.dart';
+import 'package:actionnotes/models/sidebar_layout.dart';
 import 'package:actionnotes/storage/attachment_store.dart';
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/storage/github_client.dart';
@@ -152,6 +153,14 @@ class FakeSettingsStore implements SettingsStore {
   Future<void> saveLogin(String? value) async => login = value;
 
   String? name;
+
+  SidebarLayout sidebar = SidebarLayout.empty;
+
+  @override
+  Future<SidebarLayout> loadSidebar() async => sidebar;
+
+  @override
+  Future<void> saveSidebar(SidebarLayout layout) async => sidebar = layout;
 
   @override
   Future<String?> loadName() async => name;
