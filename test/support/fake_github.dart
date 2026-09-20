@@ -30,7 +30,16 @@ class FakeGitHub {
   /// Repos that refuse everything, for a token that has been revoked.
   final Set<String> closed = {};
 
+  /// Files actually fetched, so a test can show that a sync did not download
+  /// a list that had not changed.
+  final List<String> reads = [];
+
   Map<String, String> repo(String name) => files.putIfAbsent(name, () => {});
+
+  /// A SHA that follows the content, the way a real one does — so a file that
+  /// has not been written keeps its SHA and a listing can be trusted.
+  String shaOf(String name, String path) =>
+      'sha-$name-$path-${(repo(name)[path] ?? '').hashCode}';
 
   http.Client clientFor(GitHubConfig config) {
     return MockClient((request) async {
@@ -51,12 +60,28 @@ class FakeGitHub {
 
       if (request.method == 'PUT') {
         final body = jsonDecode(request.body) as Map<String, dynamic>;
+
+        // GitHub accepts a write only against the SHA the file has now, and
+        // refuses anything else with a 409. Without that here, a test of two
+        // people writing at once would quietly let one overwrite the other
+        // and call it a pass.
+        final sent = body['sha'] as String?;
+        final current = repo(name).containsKey(path)
+            ? shaOf(name, path)
+            : null;
+        if (sent != current) {
+          return stubResponse(
+            jsonEncode({'message': 'does not match'}),
+            409,
+          );
+        }
+
         repo(name)[path] = utf8.decode(
           base64.decode(body['content'] as String),
         );
         return stubResponse(
           jsonEncode({
-            'content': {'sha': 'sha-$name-$path'},
+            'content': {'sha': shaOf(name, path)},
           }),
           200,
         );
@@ -72,7 +97,7 @@ class FakeGitHub {
           jsonEncode([
             for (final entry in repo(name).keys)
               if (entry.startsWith('projects/'))
-                {'type': 'file', 'path': entry, 'sha': 'sha-$name-$entry'},
+                {'type': 'file', 'path': entry, 'sha': shaOf(name, entry)},
           ]),
           200,
         );
@@ -80,10 +105,11 @@ class FakeGitHub {
 
       final content = repo(name)[path];
       if (content == null) return stubResponse('Not found', 404);
+      reads.add(path);
       return stubResponse(
         jsonEncode({
           'path': path,
-          'sha': 'sha-$name-$path',
+          'sha': shaOf(name, path),
           'content': base64.encode(utf8.encode(content)),
           'encoding': 'base64',
         }),
@@ -107,6 +133,24 @@ AppState stateWith(FakeGitHub github, FakeLocalStore store) {
   return AppState(
     localStore: store,
     settingsStore: FakeSettingsStore(config: mine),
+    syncService: SyncService(
+      localStore: store,
+      clientFactory: (config) =>
+          GitHubClient(config, client: github.clientFor(config)),
+    ),
+    pushDelay: const Duration(milliseconds: 10),
+  );
+}
+
+/// Somebody who has never signed in to GitHub and never will: the only
+/// notebook they have is the shared one whose code they pasted.
+///
+/// This is the common case for everyone after the first person, so almost
+/// nothing should depend on their own repo being set up.
+AppState guestWith(FakeGitHub github, FakeLocalStore store) {
+  return AppState(
+    localStore: store,
+    settingsStore: FakeSettingsStore(),
     syncService: SyncService(
       localStore: store,
       clientFactory: (config) =>

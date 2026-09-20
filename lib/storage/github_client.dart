@@ -17,16 +17,32 @@ class GitHubConfig {
   final String token;
 
   bool get isComplete =>
-      owner.isNotEmpty && repo.isNotEmpty && branch.isNotEmpty && token.isNotEmpty;
+      owner.isNotEmpty &&
+      repo.isNotEmpty &&
+      branch.isNotEmpty &&
+      token.isNotEmpty;
 }
 
 /// A file as GitHub reports it.
 class RemoteFile {
-  const RemoteFile({required this.path, required this.sha, required this.content});
+  const RemoteFile({
+    required this.path,
+    required this.sha,
+    required this.content,
+  });
 
   final String path;
   final String sha;
   final String content;
+}
+
+/// One file in a listing: where it is and what it currently says, without
+/// its contents.
+class RemoteEntry {
+  const RemoteEntry({required this.path, required this.sha});
+
+  final String path;
+  final String sha;
 }
 
 class GitHubException implements Exception {
@@ -36,7 +52,8 @@ class GitHubException implements Exception {
   final String message;
 
   /// True when retrying will not help — bad token, missing repo, and so on.
-  bool get isFatal => statusCode == 401 || statusCode == 403 || statusCode == 404;
+  bool get isFatal =>
+      statusCode == 401 || statusCode == 403 || statusCode == 404;
 
   @override
   String toString() => 'GitHub $statusCode: $message';
@@ -45,7 +62,7 @@ class GitHubException implements Exception {
 /// Thin wrapper over the handful of GitHub REST endpoints the app needs.
 class GitHubClient {
   GitHubClient(this.config, {http.Client? client})
-      : _client = client ?? http.Client();
+    : _client = client ?? http.Client();
 
   static const _base = 'https://api.github.com';
   static const projectsDir = 'projects';
@@ -59,15 +76,16 @@ class GitHubClient {
   final http.Client _client;
 
   Map<String, String> get _headers => {
-        'Authorization': 'Bearer ${config.token}',
-        'Accept': 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
-      };
+    'Authorization': 'Bearer ${config.token}',
+    'Accept': 'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28',
+  };
 
   Uri _contentsUri(String path, {bool withRef = true}) {
     final encoded = path.split('/').map(Uri.encodeComponent).join('/');
-    return Uri.parse('$_base/repos/${config.owner}/${config.repo}/contents/$encoded')
-        .replace(queryParameters: withRef ? {'ref': config.branch} : null);
+    return Uri.parse(
+      '$_base/repos/${config.owner}/${config.repo}/contents/$encoded',
+    ).replace(queryParameters: withRef ? {'ref': config.branch} : null);
   }
 
   /// Verifies the token can reach the repo. Throws [GitHubException] if not.
@@ -100,10 +118,43 @@ class GitHubClient {
     };
   }
 
+  /// Lists the markdown files in `projects/` with the SHA each one currently
+  /// has, which is what makes a poll cheap: one request says which files have
+  /// moved on, so only those have to be fetched. Reading every file on every
+  /// sync is what made checking often too expensive to do.
+  Future<List<RemoteEntry>> listProjects() async {
+    final response = await _client.get(
+      _contentsUri(projectsDir),
+      headers: _headers,
+    );
+    if (response.statusCode == 404) return const [];
+    if (response.statusCode != 200) {
+      throw GitHubException(response.statusCode, _errorMessage(response));
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! List) return const [];
+
+    return decoded
+        .whereType<Map<String, dynamic>>()
+        .where((entry) => entry['type'] == 'file')
+        .where((entry) => (entry['path'] as String?)?.endsWith('.md') ?? false)
+        .map(
+          (entry) => RemoteEntry(
+            path: entry['path'] as String,
+            sha: entry['sha'] as String? ?? '',
+          ),
+        )
+        .toList();
+  }
+
   /// Lists the markdown files in `projects/`. An absent directory is not an
   /// error — it just means nothing has been saved yet.
   Future<List<String>> listProjectPaths() async {
-    final response = await _client.get(_contentsUri(projectsDir), headers: _headers);
+    final response = await _client.get(
+      _contentsUri(projectsDir),
+      headers: _headers,
+    );
     if (response.statusCode == 404) return const [];
     if (response.statusCode != 200) {
       throw GitHubException(response.statusCode, _errorMessage(response));
@@ -217,7 +268,9 @@ class GitHubClient {
         'branch': config.branch,
       });
 
-    final response = await http.Response.fromStream(await _client.send(request));
+    final response = await http.Response.fromStream(
+      await _client.send(request),
+    );
     if (response.statusCode != 200) {
       throw GitHubException(response.statusCode, _errorMessage(response));
     }

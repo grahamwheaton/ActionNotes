@@ -54,16 +54,24 @@ class FakeRepo {
           if (_shas[path] != with_) {
             rejected++;
             return stubResponse(
-              jsonEncode({'message': 'is at ${_shas[path]} but expected $with_'}),
+              jsonEncode({
+                'message': 'is at ${_shas[path]} but expected $with_',
+              }),
               409,
             );
           }
 
           final next = 'sha-${++_counter}';
           _shas[path] = next;
-          contents[path] =
-              utf8.decode(base64.decode((body['content'] as String)));
-          return stubResponse(jsonEncode({'content': {'sha': next}}), 200);
+          contents[path] = utf8.decode(
+            base64.decode((body['content'] as String)),
+          );
+          return stubResponse(
+            jsonEncode({
+              'content': {'sha': next},
+            }),
+            200,
+          );
         } finally {
           inFlight--;
         }
@@ -79,35 +87,37 @@ class FakeRepo {
 /// A state whose edits settle almost at once, so a test is not two seconds
 /// per keystroke.
 AppState stateFor(FakeRepo repo, FakeLocalStore store) => AppState(
-      localStore: store,
-      settingsStore: FakeSettingsStore(config: testConfig),
-      syncService: SyncService(
-        localStore: store,
-        clientFactory: (config) => GitHubClient(config, client: repo.client()),
-      ),
-      pushDelay: const Duration(milliseconds: 20),
-    );
+  localStore: store,
+  settingsStore: FakeSettingsStore(config: testConfig),
+  syncService: SyncService(
+    localStore: store,
+    clientFactory: (config) => GitHubClient(config, client: repo.client()),
+  ),
+  pushDelay: const Duration(milliseconds: 20),
+);
 
 /// Lets the debounce fire and the push finish.
 Future<void> settle([int ms = 120]) =>
     Future<void>.delayed(Duration(milliseconds: ms));
 
 void main() {
-  test('an ordinary edit pushes once and keeps the SHA it came back with',
-      () async {
-    final repo = FakeRepo();
-    final store = FakeLocalStore();
-    final state = stateFor(repo, store);
-    await state.init();
+  test(
+    'an ordinary edit pushes once and keeps the SHA it came back with',
+    () async {
+      final repo = FakeRepo();
+      final store = FakeLocalStore();
+      final state = stateFor(repo, store);
+      await state.init();
 
-    await state.createProject('List');
-    await state.addItem('list', 'First');
-    await settle();
+      await state.createProject('List');
+      await state.addItem('list', 'First');
+      await settle();
 
-    expect(repo.rejected, 0);
-    expect(state.projects.single.sha, repo.shaOf('projects/list.md'));
-    expect(state.projects.single.dirty, isFalse);
-  });
+      expect(repo.rejected, 0);
+      expect(state.projects.single.sha, repo.shaOf('projects/list.md'));
+      expect(state.projects.single.dirty, isFalse);
+    },
+  );
 
   // The reported symptom: "it says GitHub is different to local, but nothing
   // else has touched it". Typing while a push is in flight was enough.
@@ -131,7 +141,11 @@ void main() {
     await settle(300);
 
     expect(repo.rejected, 0, reason: 'no write should have been refused');
-    expect(state.conflicts, isEmpty);
+    expect(
+      state.message,
+      isNull,
+      reason: 'nothing to report and nothing to ask',
+    );
     expect(state.projects.single.dirty, isFalse);
     // Both the file and the app agree, and on the later text.
     expect(state.projects.single.sha, repo.shaOf('projects/list.md'));
@@ -191,29 +205,31 @@ void main() {
     expect(repo.rejected, 0);
   });
 
-  test('edits while a push is in flight are coalesced, not one commit each',
-      () async {
-    final repo = FakeRepo();
-    final store = FakeLocalStore();
-    final state = stateFor(repo, store);
-    await state.init();
+  test(
+    'edits while a push is in flight are coalesced, not one commit each',
+    () async {
+      final repo = FakeRepo();
+      final store = FakeLocalStore();
+      final state = stateFor(repo, store);
+      await state.init();
 
-    await state.createProject('List');
-    await state.addItem('list', 'First');
-    await settle();
+      await state.createProject('List');
+      await state.addItem('list', 'First');
+      await settle();
 
-    final before = repo.sent.length;
-    repo.gate = Completer<void>();
-    await state.addItem('list', 'Second');
-    await settle(60);
-    await state.addItem('list', 'Third');
-    await state.addItem('list', 'Fourth');
-    repo.gate!.complete();
-    repo.gate = null;
-    await settle(400);
+      final before = repo.sent.length;
+      repo.gate = Completer<void>();
+      await state.addItem('list', 'Second');
+      await settle(60);
+      await state.addItem('list', 'Third');
+      await state.addItem('list', 'Fourth');
+      repo.gate!.complete();
+      repo.gate = null;
+      await settle(400);
 
-    // The held write, then one more carrying everything typed since.
-    expect(repo.sent.length - before, 2);
-    expect(repo.contents['projects/list.md'], contains('Fourth'));
-  });
+      // The held write, then one more carrying everything typed since.
+      expect(repo.sent.length - before, 2);
+      expect(repo.contents['projects/list.md'], contains('Fourth'));
+    },
+  );
 }

@@ -6,7 +6,6 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../markdown/canvas_cards.dart';
 import '../markdown/canvas_placement.dart';
 import '../markdown/project_links.dart';
-import '../markdown/project_merge.dart';
 import '../models/canvas_layout.dart';
 import '../models/checklist_item.dart';
 import '../models/notes_source.dart';
@@ -51,27 +50,48 @@ class AppState extends ChangeNotifier {
     AttachmentStore? attachmentStore,
     Duration pushDelay = defaultPushDelay,
     Duration syncInterval = defaultSyncInterval,
+    Duration sharedInterval = sharedSyncInterval,
     UpdateCheck? updateCheck,
   }) : _updateCheck = updateCheck,
        _localStore = localStore ?? LocalStore(),
        _settingsStore = settingsStore ?? SettingsStore(),
        _pushDelay = pushDelay,
        _syncInterval = syncInterval,
+       _sharedInterval = sharedInterval,
        attachments = attachmentStore ?? AttachmentStore() {
     _syncService = syncService ?? SyncService(localStore: _localStore);
   }
 
   static const defaultPushDelay = Duration(seconds: 2);
 
-  /// How often to look for changes made elsewhere while the app is open.
-  /// Often enough that two devices feel like one, rarely enough that it is
-  /// not a battery or rate-limit problem.
+  /// How often to look for changes made elsewhere while the app is open and
+  /// nothing is shared — a second device of your own, or a model editing the
+  /// repo, neither of which anybody is sitting watching.
   static const defaultSyncInterval = Duration(seconds: 45);
+
+  /// How often to look when a notebook is shared and somebody might be
+  /// writing in it right now.
+  ///
+  /// Five seconds is what makes a list feel like one list rather than two
+  /// copies: tick a box here and it appears over there before the other
+  /// person has looked away. It is affordable because a check is one request
+  /// per notebook — the listing says which files have moved, and only those
+  /// are fetched — and because everyone shares one token, so the rate limit
+  /// is shared too and a check that downloaded every list would not be.
+  static const sharedSyncInterval = Duration(seconds: 5);
+
+  /// How long a shared notebook goes quiet before checking slows down again.
+  ///
+  /// Two people writing at once is a burst, not a state: it lasts minutes,
+  /// not hours, and polling every five seconds all evening afterwards spends
+  /// the shared rate limit on nothing.
+  static const busyFor = Duration(minutes: 3);
 
   /// How long an edit settles before it is pushed. A test shortens it rather
   /// than waiting two seconds per edit.
   final Duration _pushDelay;
   final Duration _syncInterval;
+  final Duration _sharedInterval;
   Timer? _watch;
 
   /// Left null in tests that do not care, so nothing reaches the network for
@@ -113,7 +133,6 @@ class AppState extends ChangeNotifier {
   DateTime? _lastSynced;
   String? _login;
   ThemeMode _themeMode = ThemeMode.system;
-  List<ProjectConflict> _conflicts = [];
 
   List<Project> get projects => List.unmodifiable(_projects);
   GitHubConfig get config => _config;
@@ -145,16 +164,6 @@ class AppState extends ChangeNotifier {
   String? get message => _message;
   bool get isConfigured => _config.isComplete;
   int get pendingCount => _projects.where((p) => p.dirty).length;
-
-  /// Projects that changed both here and on GitHub, awaiting a decision.
-  List<ProjectConflict> get conflicts => List.unmodifiable(_conflicts);
-
-  ProjectConflict? conflictFor(String slug) {
-    for (final conflict in _conflicts) {
-      if (conflict.slug == slug) return conflict;
-    }
-    return null;
-  }
 
   /// Which project the desktop layout is showing in its detail pane.
   String? get selectedSlug => _selectedSlug;
@@ -298,13 +307,52 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// When something last changed in a shared notebook, here or elsewhere.
+  DateTime? _lastSharedChange;
+
+  /// How often to check, given what is going on.
+  ///
+  /// Fast while a shared notebook is being written in, and back to the slow
+  /// interval once it has been quiet for a few minutes. A notebook nobody
+  /// shares never needs the fast rate at all.
+  Duration get watchInterval {
+    if (sharedSources.isEmpty) return _syncInterval;
+    final since = _lastSharedChange;
+    if (since == null) return _syncInterval;
+    return DateTime.now().difference(since) < busyFor
+        ? _sharedInterval
+        : _syncInterval;
+  }
+
+  /// Notes that a shared notebook is being written in, so checking speeds up.
+  ///
+  /// Called for a change made here as well as one that arrives: the moment
+  /// somebody ticks something, the other person is probably about to.
+  void _sharedActivity() {
+    _lastSharedChange = DateTime.now();
+    // Already fast, so the timer it is running on is the right one.
+    if (_watch != null && _watching != _sharedInterval) startWatching();
+  }
+
+  /// The interval the running timer was built with, so it is only rebuilt
+  /// when the answer actually changes.
+  Duration? _watching;
+
   /// Starts checking for other people's changes while the app is in front.
   ///
   /// Without it a change made on the other device, or by a model editing the
   /// repo, is invisible until something local prompts a sync.
   void startWatching() {
     _watch?.cancel();
-    _watch = Timer.periodic(_syncInterval, (_) {
+    final every = watchInterval;
+    _watching = every;
+    _watch = Timer.periodic(every, (_) {
+      // The right rate may have changed since the timer was made — a busy
+      // notebook going quiet, or a quiet one waking up.
+      if (watchInterval != _watching) {
+        startWatching();
+        return;
+      }
       if (_sources.any((s) => s.config.isComplete) && !_syncing) {
         unawaited(sync());
       }
@@ -316,6 +364,7 @@ class AppState extends ChangeNotifier {
   void stopWatching() {
     _watch?.cancel();
     _watch = null;
+    _watching = null;
   }
 
   /// How many syncs are outstanding: the one running, plus at most one
@@ -368,7 +417,7 @@ class AppState extends ChangeNotifier {
     // been revoked should not take your own notes offline with it.
     final synced = <Project>[];
     final problems = <String>[];
-    final conflicts = <ProjectConflict>[];
+    final combined = <String>[];
 
     for (final source in _sources) {
       if (!source.config.isComplete) {
@@ -383,7 +432,7 @@ class AppState extends ChangeNotifier {
         sourceId: source.id,
       );
       synced.addAll(result.projects);
-      conflicts.addAll(result.conflicts);
+      combined.addAll(result.merged);
       if (result.error != null) {
         problems.add(
           source.isMine ? result.error! : '${source.name}: ${result.error!}',
@@ -391,9 +440,28 @@ class AppState extends ChangeNotifier {
       }
     }
 
+    // Anything that came back different in a shared notebook means somebody
+    // else is writing, which is the moment to start checking often.
+    for (final project in synced) {
+      if (!project.isShared) continue;
+      // One we already had, that has moved. A project appearing for the first
+      // time is a notebook being taken on, which is not somebody writing.
+      final had = before[project.slug];
+      if (had != null && had.sha != project.sha) {
+        _sharedActivity();
+        break;
+      }
+    }
+
     _projects = _reconcile(before, synced);
-    _message = problems.isEmpty ? null : problems.join('\n');
-    _conflicts = conflicts;
+    // A merge is said out loud but never asked about. Somebody should know
+    // their list grew a line they did not write, and should not have to
+    // decide anything about it.
+    _message = [
+      ...problems,
+      if (combined.isNotEmpty) _mergeNotice(combined),
+    ].join('\n');
+    if (_message!.isEmpty) _message = null;
     final result = SyncResult(projects: synced, error: _message);
     // Only a sync that actually reached GitHub counts as having heard from
     // it: saying "synced a minute ago" after a failed attempt would be worse
@@ -445,35 +513,13 @@ class AppState extends ChangeNotifier {
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
   }
 
-  /// Settles a conflict and clears it, so the project can sync again.
-  Future<void> resolveConflict(
-    String slug,
-    ConflictResolution resolution,
-  ) async {
-    final conflict = conflictFor(slug);
-    if (conflict == null) return;
-
-    // Cancel any queued push; it would carry the stale SHA.
-    _pendingPushes.remove(slug)?.cancel();
-
-    final settled = await _syncService.resolve(
-      _configFor(conflict.local.slug),
-      conflict,
-      resolution,
-    );
-
-    _conflicts = _conflicts.where((c) => c.slug != slug).toList();
-    _projects = [
-      for (final project in _projects)
-        if (project.slug == slug) settled else project,
-    ]..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-
-    if (settled.dirty) {
-      _message =
-          'Resolved "${settled.title}" here, but the push has not gone '
-          'through yet — it will retry on the next sync.';
-    }
-    notifyListeners();
+  /// What to say when something was changed in two places at once.
+  static String _mergeNotice(List<String> titles) {
+    final what = titles.length == 1
+        ? '"${titles.single}" was'
+        : '${titles.length} lists were';
+    return '$what changed here and elsewhere at the same time. '
+        'Both sets of changes are in.';
   }
 
   Future<void> updateConfig(GitHubConfig config) async {
@@ -847,7 +893,7 @@ class AppState extends ChangeNotifier {
     required String fileName,
     required List<int> bytes,
   }) async {
-    if (!_config.isComplete) {
+    if (!_configFor(slug).isComplete) {
       _message = 'Connect a GitHub repo in Settings before attaching images.';
       notifyListeners();
       return null;
@@ -875,7 +921,10 @@ class AppState extends ChangeNotifier {
 
     try {
       await _syncService.uploadAttachment(
-        _config,
+        // The project's own notebook, not yours: an image attached to a
+        // shared list belongs beside the list, or the markdown points at a
+        // file nobody else can reach.
+        _configFor(slug),
         path: repoPath,
         bytes: encoded.bytes,
         message: 'Add attachment $name to ${project.title}',
@@ -963,6 +1012,11 @@ class AppState extends ChangeNotifier {
 
   /// Copies one attachment into another project's folder, returning the name
   /// it was given, or null if it could not be copied.
+  ///
+  /// Read from the notebook it is in and written to the notebook it is going
+  /// to, which are not always the same one: an item can be moved out of a
+  /// shared list into your own, and its pictures have to make the same trip
+  /// or the note arrives pointing at nothing.
   Future<String?> _copyAttachment({
     required String name,
     required String fromSlug,
@@ -971,15 +1025,15 @@ class AppState extends ChangeNotifier {
   }) async {
     try {
       final bytes = await attachments.bytesFor(
-        AttachmentStore.repoPath(fromSlug, name),
-        _config,
+        AttachmentStore.repoPath(_fileSlug(fromSlug), name),
+        _configFor(fromSlug),
       );
       if (bytes == null) return null;
 
       final copied = AttachmentStore.uniqueFileName(name, taken);
-      final path = AttachmentStore.repoPath(toSlug, copied);
+      final path = AttachmentStore.repoPath(_fileSlug(toSlug), copied);
       await _syncService.uploadAttachment(
-        _config,
+        _configFor(toSlug),
         path: path,
         bytes: bytes,
         message: 'Copy attachment $copied for a moved item',
@@ -1537,7 +1591,7 @@ class AppState extends ChangeNotifier {
       layout,
       sourceId: sourceOf(slug).id,
     );
-    if (!_config.isComplete) return;
+    if (!_configFor(slug).isComplete) return;
 
     try {
       final pushed = await _syncService.writeLayout(
@@ -1615,8 +1669,16 @@ class AppState extends ChangeNotifier {
 
   /// Coalesces rapid edits into one commit, so ticking five boxes in a row
   /// does not produce five commits.
+  ///
+  /// Asks the project's own notebook whether it can be written to, not your
+  /// own repo. Everybody after the first person has no repo of their own —
+  /// they pasted a code and that is the whole of their setup — so gating this
+  /// on yours meant nothing they wrote was ever pushed. It sat dirty until a
+  /// sync happened to carry it, which is how two people editing the same list
+  /// ended up in a conflict nobody caused.
   void _schedulePush(String slug) {
-    if (!_config.isComplete) return;
+    if (!_configFor(slug).isComplete) return;
+    if (projectBySlug(slug)?.isShared ?? false) _sharedActivity();
 
     _pendingPushes.remove(slug)?.cancel();
     _pendingPushes[slug] = Timer(_pushDelay, () => _pushNow(slug));

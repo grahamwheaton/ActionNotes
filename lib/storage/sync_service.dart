@@ -13,7 +13,7 @@ class SyncResult {
     required this.projects,
     this.error,
     this.pending = 0,
-    this.conflicts = const [],
+    this.merged = const [],
   });
 
   final List<Project> projects;
@@ -24,23 +24,20 @@ class SyncResult {
   /// How many projects still hold unpushed edits.
   final int pending;
 
-  /// Projects that changed on both sides and need a decision.
-  final List<ProjectConflict> conflicts;
+  /// Titles that changed here and on GitHub at the same time and were
+  /// combined. Worth mentioning, but nothing to answer.
+  final List<String> merged;
 
-  bool get ok => error == null && conflicts.isEmpty;
+  bool get ok => error == null;
 }
 
-/// A project edited both here and on GitHub.
-class ProjectConflict {
-  const ProjectConflict({required this.local, required this.remote});
+/// What became of one project's push.
+class _PushOutcome {
+  const _PushOutcome({this.project, this.problem, this.merged = false});
 
-  /// This device's version, still holding the edits that could not be pushed.
-  final Project local;
-
-  /// GitHub's version, carrying the SHA a resolving write has to use.
-  final Project remote;
-
-  String get slug => local.slug;
+  final Project? project;
+  final String? problem;
+  final bool merged;
 }
 
 /// Reconciles the local cache with the GitHub repo.
@@ -91,59 +88,34 @@ class SyncService {
     try {
       final byslug = {for (final project in local) project.fileSlug: project};
       final problems = <String>[];
-      final conflicts = <ProjectConflict>[];
+      // Titles that came back changed on both sides and were combined. Not
+      // errors: something to mention, not something to answer.
+      final merged = <String>[];
 
       // Push anything edited offline first, so a pull cannot clobber it.
       for (final project in local.where((p) => p.dirty)) {
-        try {
-          final sha = await client.writeFile(
-            path: project.path,
-            content: ProjectMarkdown.serialize(project),
-            message: 'Update ${project.title}',
-            sha: project.sha,
-          );
-          final pushed = project.copyWith(sha: sha, dirty: false);
-          byslug[project.fileSlug] = pushed;
-          await localStore.save(pushed, sourceId: sourceId);
-        } on GitHubException catch (error) {
-          // 409 means the file moved on under us. 422 means our SHA was
-          // rejected outright, which happens when the local copy never had
-          // one but the file exists on GitHub — the same situation.
-          if (error.statusCode == 409 || error.statusCode == 422) {
-            final file = await client.readFile(project.path);
-            if (file == null) {
-              // The file is gone, so there is nothing to conflict with;
-              // the next attempt can create it.
-              problems.add(
-                '"${project.title}" could not be pushed: ${error.message}',
-              );
-              continue;
-            }
-            conflicts.add(
-              ProjectConflict(
-                local: project,
-                remote: ProjectMarkdown.parse(
-                  file.content,
-                  slug: project.slug,
-                  sha: file.sha,
-                ).copyWith(sourceId: sourceId),
-              ),
-            );
-          } else {
-            problems.add(
-              '"${project.title}" could not be pushed: ${error.message}',
-            );
-          }
+        final outcome = await _pushMerging(client, project, sourceId: sourceId);
+        if (outcome.project != null) {
+          byslug[project.fileSlug] = outcome.project!;
         }
+        if (outcome.problem != null) problems.add(outcome.problem!);
+        if (outcome.merged) merged.add(project.title);
       }
 
-      // Pull everything else.
-      for (final path in await client.listProjectPaths()) {
-        final slug = path.split('/').last.replaceAll(RegExp(r'\.md$'), '');
+      // Pull everything else. The listing carries each file's SHA, so a file
+      // that has not moved is skipped without being fetched — which is what
+      // makes checking every few seconds affordable rather than a download of
+      // every list, every time.
+      for (final entry in await client.listProjects()) {
+        final slug = entry.path
+            .split('/')
+            .last
+            .replaceAll(RegExp(r'\.md$'), '');
         final existing = byslug[slug];
         if (existing != null && existing.dirty) continue;
+        if (existing != null && existing.sha == entry.sha) continue;
 
-        final file = await client.readFile(path);
+        final file = await client.readFile(entry.path);
         if (file == null) continue;
 
         final remote = ProjectMarkdown.parse(
@@ -151,7 +123,6 @@ class SyncService {
           slug: Project.keyOf(sourceId, slug),
           sha: file.sha,
         ).copyWith(sourceId: sourceId);
-        if (existing != null && existing.sha == file.sha) continue;
 
         byslug[slug] = remote;
         await localStore.save(remote, sourceId: sourceId);
@@ -166,7 +137,7 @@ class SyncService {
         projects: projects,
         error: problems.isEmpty ? null : problems.join('\n'),
         pending: projects.where((p) => p.dirty).length,
-        conflicts: conflicts,
+        merged: merged,
       );
     } on GitHubException catch (error) {
       return SyncResult(
@@ -208,58 +179,80 @@ class SyncService {
     }
   }
 
-  /// Settles a conflict and returns the project to keep locally.
+  /// Pushes one project, combining both sides if it changed on GitHub too.
   ///
-  /// Every outcome ends with local and GitHub agreeing, so the project stops
-  /// being stuck: keeping GitHub's copy needs no write, and the other two push
-  /// using the SHA read back when the conflict was found.
-  Future<Project> resolve(
-    GitHubConfig config,
-    ProjectConflict conflict,
-    ConflictResolution resolution,
-  ) async {
-    if (resolution == ConflictResolution.keepRemote) {
-      final settled = conflict.remote.copyWith(dirty: false);
-      await localStore.save(settled);
-      return settled;
+  /// Nobody is asked anything. A checklist merges by item text, so the result
+  /// holds everything from either side, and prose that differs is kept twice
+  /// with a marker rather than one copy being dropped — so combining can add
+  /// something unexpected but cannot lose what somebody wrote. That is a
+  /// trade worth making silently: the person who hits this is usually not the
+  /// person who knows what a conflict is, and a list that has stopped saving
+  /// while it waits to be asked about is worse than a list with a duplicate
+  /// line in it.
+  ///
+  /// Tried a few times, because losing the race again while merging means
+  /// somebody else pushed in between — which is ordinary when two people are
+  /// on the same list, not a failure.
+  Future<_PushOutcome> _pushMerging(
+    GitHubClient client,
+    Project project, {
+    required String sourceId,
+  }) async {
+    var toPush = project;
+    var combined = false;
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        final sha = await client.writeFile(
+          path: toPush.path,
+          content: ProjectMarkdown.serialize(toPush),
+          message: combined
+              ? 'Merge ${toPush.title}'
+              : 'Update ${toPush.title}',
+          sha: toPush.sha,
+        );
+        final pushed = toPush.copyWith(sha: sha, dirty: false);
+        await localStore.save(pushed, sourceId: sourceId);
+        return _PushOutcome(project: pushed, merged: combined);
+      } on GitHubException catch (error) {
+        // 409 means the file moved on under us. 422 means our SHA was
+        // rejected outright, which happens when the local copy never had one
+        // but the file exists on GitHub — the same situation.
+        if (error.statusCode != 409 && error.statusCode != 422) {
+          return _PushOutcome(
+            project: project,
+            problem: '"${project.title}" could not be pushed: ${error.message}',
+          );
+        }
+
+        final file = await client.readFile(toPush.path);
+        if (file == null) {
+          // The file is gone, so there is nothing to combine with; the next
+          // attempt can create it.
+          return _PushOutcome(
+            project: project,
+            problem: '"${project.title}" could not be pushed: ${error.message}',
+          );
+        }
+
+        final remote = ProjectMarkdown.parse(
+          file.content,
+          slug: project.slug,
+          sha: file.sha,
+        ).copyWith(sourceId: sourceId);
+
+        toPush = ProjectMerge.merge(
+          local: toPush,
+          remote: remote,
+        ).copyWith(sha: file.sha, dirty: true);
+        combined = true;
+      }
     }
 
-    final chosen = switch (resolution) {
-      ConflictResolution.keepLocal => conflict.local,
-      ConflictResolution.merge => ProjectMerge.merge(
-        local: conflict.local,
-        remote: conflict.remote,
-      ),
-      ConflictResolution.keepRemote => conflict.remote,
-    };
-
-    // The remote SHA is the current one, so this write is accepted.
-    final toPush = chosen.copyWith(sha: conflict.remote.sha, dirty: true);
-
-    if (!config.isComplete) {
-      await localStore.save(toPush);
-      return toPush;
-    }
-
-    final client = _clientFactory(config);
-    try {
-      final sha = await client.writeFile(
-        path: toPush.path,
-        content: ProjectMarkdown.serialize(toPush),
-        message: 'Resolve ${toPush.title}',
-        sha: conflict.remote.sha,
-      );
-      final settled = toPush.copyWith(sha: sha, dirty: false);
-      await localStore.save(settled);
-      return settled;
-    } catch (_) {
-      // Keep the chosen content with the fresh SHA, so a later sync can retry
-      // rather than failing the same way forever.
-      await localStore.save(toPush);
-      return toPush;
-    } finally {
-      client.dispose();
-    }
+    // Still being outrun after three goes. The combined copy is kept locally
+    // and stays dirty, so the next sync carries it rather than it being lost.
+    await localStore.save(toPush, sourceId: sourceId);
+    return _PushOutcome(project: toPush, merged: combined);
   }
 
   /// Appends items to a project's archive file, creating it if need be.
