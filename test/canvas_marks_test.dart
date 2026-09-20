@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:actionnotes/models/canvas_layout.dart';
@@ -8,6 +9,8 @@ CanvasShape mark(CanvasShapeKind kind, List<double> points) =>
     CanvasShape(kind: kind, points: points);
 
 void main() {
+  _arrowHeads();
+  _ridingAFrame();
   _stickyArrows();
   _nodes();
 
@@ -355,6 +358,119 @@ void _nodes() {
       expect(
         CanvasMarks.pathThrough([1.0, 2.0], curved: false).getBounds(),
         Rect.zero,
+      );
+    });
+  });
+}
+
+void _arrowHeads() {
+  group('an arrow head', () {
+    test('is a fixed size on the glass, so it does not grow with the zoom', () {
+      // Two arrows of very different lengths get the same head, because the
+      // head is measured on the glass rather than in the scene.
+      expect(CanvasMarks.headLength(400), 16);
+      expect(CanvasMarks.headLength(60), 16);
+    });
+
+    test('is never bigger than a third of the arrow it is on', () {
+      expect(CanvasMarks.headLength(30), 10);
+      expect(CanvasMarks.headLength(12), 4);
+    });
+
+    test('a line too short to point is left without one', () {
+      expect(CanvasMarks.headLength(1), 0);
+      expect(CanvasMarks.headLength(0), 0);
+    });
+
+    test('a straight arrow points the way it was drawn', () {
+      // Left to right is zero; straight down is a quarter turn.
+      expect(
+        CanvasMarks.tipAngle([0, 0, 100, 0], curved: false),
+        closeTo(0, 0.01),
+      );
+      expect(
+        CanvasMarks.tipAngle([0, 0, 0, 100], curved: false),
+        closeTo(math.pi / 2, 0.01),
+      );
+    });
+
+    test(
+      'a bendy arrow points along the way it arrives, not along its ends',
+      () {
+        const points = [0.0, 0.0, 200.0, 100.0];
+
+        // Straight, it arrives on the diagonal between its two ends.
+        expect(
+          CanvasMarks.tipAngle(points, curved: false),
+          closeTo(math.atan2(100, 200), 0.01),
+        );
+        // Bent, it is a noodle: the tangents leave and arrive sideways, so it
+        // comes in flat however far apart the ends are.
+        expect(CanvasMarks.tipAngle(points, curved: true), closeTo(0, 0.05));
+      },
+    );
+
+    test('an arrow that doubles back still points where it ends up', () {
+      // Out to the right and back again: the head must follow the last
+      // stretch, not the line from where it started.
+      const points = [0.0, 0.0, 200.0, 0.0, 100.0, 0.0];
+
+      expect(
+        math.cos(CanvasMarks.tipAngle(points, curved: false)),
+        lessThan(0),
+      );
+    });
+
+    test('its length is measured along the path, so a curve is longer than '
+        'the line between its ends', () {
+      const points = [0.0, 0.0, 200.0, 100.0];
+
+      expect(CanvasMarks.lengthOf(points, curved: false), closeTo(223.6, 1));
+      expect(
+        CanvasMarks.lengthOf(points, curved: true),
+        greaterThan(CanvasMarks.lengthOf(points, curved: false)),
+      );
+    });
+  });
+}
+
+void _ridingAFrame() {
+  group('a mark inside a frame', () {
+    const frame = Rect.fromLTWH(0, 0, 200, 200);
+
+    test('counts as inside only when all of it is', () {
+      expect(CanvasMarks.within([10, 10, 190, 190], frame), isTrue);
+      // Crossing the frame is passing through it, not sitting in it —
+      // dragging the frame should not tear the far end along.
+      expect(CanvasMarks.within([10, 10, 400, 10], frame), isFalse);
+      expect(CanvasMarks.within([300, 300, 400, 400], frame), isFalse);
+    });
+
+    test('a mark with nothing in it is not inside anything', () {
+      expect(CanvasMarks.within(const [], frame), isFalse);
+      expect(CanvasMarks.within(const [10, 10], frame), isFalse);
+    });
+
+    test('moves by exactly what the frame moved', () {
+      expect(CanvasMarks.shifted([0, 0, 10, 20], const Offset(5, -5)), [
+        5,
+        -5,
+        15,
+        15,
+      ]);
+    });
+
+    test('moving a stroke keeps every bend the same shape', () {
+      const stroke = [0.0, 0.0, 10.0, 40.0, 30.0, 10.0];
+      final moved = CanvasMarks.shifted(stroke, const Offset(100, 100));
+
+      expect(
+        CanvasMarks.bounds(
+          CanvasShape(kind: CanvasShapeKind.stroke, points: moved),
+        ),
+        CanvasMarks.bounds(
+          const CanvasShape(kind: CanvasShapeKind.stroke, points: stroke),
+        ).shift(const Offset(100, 100)),
       );
     });
   });

@@ -286,6 +286,69 @@ class CanvasMarks {
     return path;
   }
 
+  /// Which way a line is pointing where it arrives at its last point.
+  ///
+  /// Read off the path's own tangent, so a curve's head points along the way
+  /// it actually comes in rather than at the straight line from where it
+  /// started — which on a bendy arrow is nowhere near the same direction.
+  static double tipAngle(List<double> points, {required bool curved}) {
+    final count = points.length ~/ 2;
+    if (count < 2) return 0;
+
+    for (final metric in pathThrough(points, curved: curved).computeMetrics()) {
+      if (metric.length <= 0) continue;
+      final tip = metric.getTangentForOffset(metric.length);
+      if (tip != null) {
+        return math.atan2(tip.vector.dy, tip.vector.dx);
+      }
+    }
+
+    final from = Offset(points[(count - 2) * 2], points[(count - 2) * 2 + 1]);
+    final to = Offset(points[(count - 1) * 2], points[(count - 1) * 2 + 1]);
+    return math.atan2(to.dy - from.dy, to.dx - from.dx);
+  }
+
+  /// How long a line is along its own path.
+  static double lengthOf(List<double> points, {required bool curved}) {
+    var total = 0.0;
+    for (final metric in pathThrough(points, curved: curved).computeMetrics()) {
+      total += metric.length;
+    }
+    return total;
+  }
+
+  /// How long an arrow's head should be, given how long the arrow is.
+  ///
+  /// A fixed size on the glass, so a head does not grow into a spearhead as
+  /// the board is zoomed in — but never more than a third of the arrow, so a
+  /// short one does not come out as all head. Zero where there is no arrow
+  /// worth putting a head on.
+  static double headLength(double span) {
+    if (span < 2) return 0;
+    return math.min(16, span / 3);
+  }
+
+  /// Whether every one of a mark's points stands inside [bounds].
+  ///
+  /// All of them rather than any: a stroke that merely crosses a frame is
+  /// passing through it, not sitting in it, and dragging the frame should not
+  /// tear the far end of it along.
+  static bool within(List<double> points, Rect bounds) {
+    if (points.length < 4) return false;
+    for (var i = 0; i < points.length ~/ 2; i++) {
+      if (!bounds.contains(Offset(points[i * 2], points[i * 2 + 1]))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// The same mark, moved.
+  static List<double> shifted(List<double> points, Offset by) => [
+    for (var i = 0; i < points.length; i++)
+      points[i] + (i.isEven ? by.dx : by.dy),
+  ];
+
   static bool _nearSegment(Offset point, Offset a, Offset b, double reach) {
     final along = b - a;
     final lengthSquared = along.dx * along.dx + along.dy * along.dy;

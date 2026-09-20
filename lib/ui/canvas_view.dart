@@ -132,6 +132,13 @@ class CanvasViewState extends State<CanvasView> {
   /// What the eraser has passed over during this stroke.
   final Set<int> _rubbed = {};
 
+  /// Marks riding along with a frame that is being dragged, and where they
+  /// started. Drawn shifted while the drag runs and written once at the end:
+  /// a stroke is a hundred numbers, and rewriting the file on every frame of
+  /// a drag would be a hundred numbers a frame.
+  final Map<int, List<double>> _marksRiding = {};
+  Offset _marksShift = Offset.zero;
+
   /// Where the scene's origin sits in the viewport, and how big it is drawn.
   Offset _pan = Offset.zero;
   double _scale = 1;
@@ -256,7 +263,7 @@ class CanvasViewState extends State<CanvasView> {
   /// Shown while the arrow tool is armed so that snapping is something you
   /// watch happen rather than something you find out about afterwards.
   ({Rect card, Offset at})? _holdNear(Offset scene) {
-    for (final entry in _cardRects.entries) {
+    for (final entry in _holdTargets.entries) {
       if (!entry.value.inflate(8 / _scale).contains(scene)) continue;
       final hold = CanvasMarks.nearestHold(entry.value, scene);
       return (
@@ -325,7 +332,7 @@ class CanvasViewState extends State<CanvasView> {
     // them.
     CanvasAnchor? hold(Offset point) {
       if (kind != CanvasShapeKind.arrow) return null;
-      for (final entry in _cardRects.entries) {
+      for (final entry in _holdTargets.entries) {
         if (!entry.value.inflate(8 / _scale).contains(point)) continue;
         final at = CanvasMarks.nearestHold(entry.value, point);
         return CanvasAnchor(ref: entry.key, ax: at.dx, ay: at.dy);
@@ -676,6 +683,23 @@ class CanvasViewState extends State<CanvasView> {
     return rects;
   }
 
+  /// What an arrow may take hold of: everything except the frames.
+  ///
+  /// A frame is the space several things stand in, so an arrow dropped inside
+  /// one was taking hold of the frame and snapping out to its edge — pointing
+  /// at the room rather than at anything in it. Holds are still *resolved*
+  /// against every card, frames included, so an arrow drawn before this
+  /// keeps whatever it was holding.
+  Map<String, Rect> get _holdTargets {
+    final rects = <String, Rect>{};
+    final drawable = math.min(widget.cards.length, _spots.length);
+    for (var i = 0; i < drawable; i++) {
+      if (_spots[i].isFrame) continue;
+      rects.putIfAbsent(widget.cards[i].ref, () => _sceneRect(i));
+    }
+    return rects;
+  }
+
   /// What a frame is holding: everything whose middle stands on it.
   ///
   /// By the middle rather than by overlap, so a card poking over the edge
@@ -705,6 +729,23 @@ class CanvasViewState extends State<CanvasView> {
     for (final at in moving.toList()) {
       if (_spots[at].isFrame) moving = {...moving, ..._within(at)};
     }
+    // A mark drawn inside a frame belongs to what is in the frame, so it
+    // travels with it — a pen note beside a photograph is about that
+    // photograph, and leaving it behind pulls the two apart.
+    _marksRiding.clear();
+    _marksShift = Offset.zero;
+    for (final at in moving) {
+      if (!_spots[at].isFrame) continue;
+      final bounds = _sceneRect(at);
+      for (var i = 0; i < widget.shapes.length; i++) {
+        if (_marksRiding.containsKey(i)) continue;
+        final points = CanvasMarks.pointsOf(widget.shapes[i], _cardRects);
+        if (CanvasMarks.within(points, bounds)) {
+          _marksRiding[i] = points;
+        }
+      }
+    }
+
     _dragFrom
       ..clear()
       // A locked card stays where it is even when it is part of what was
@@ -719,9 +760,36 @@ class CanvasViewState extends State<CanvasView> {
   }
 
   void _endDrag() {
+    _commitRidingMarks();
     _dragFrom.clear();
     _dragRaw = Offset.zero;
     if (_guides.isNotEmpty) setState(() => _guides = const []);
+  }
+
+  /// Writes out the marks that rode along with a frame, once the drag is
+  /// over and it is known how far they went.
+  void _commitRidingMarks() {
+    final riding = {..._marksRiding};
+    final shift = _marksShift;
+    setState(() {
+      _marksRiding.clear();
+      _marksShift = Offset.zero;
+    });
+    if (riding.isEmpty || shift == Offset.zero) return;
+
+    for (final entry in riding.entries) {
+      if (entry.key >= widget.shapes.length) continue;
+      widget.onEditShape?.call(
+        entry.key,
+        widget.shapes[entry.key].copyWith(
+          points: CanvasMarks.shifted(entry.value, shift),
+          // A mark that moved with a frame is where it was put, so an end
+          // that was holding a card lets go rather than springing back.
+          clearFrom: true,
+          clearTo: true,
+        ),
+      );
+    }
   }
 
   /// Moves [index], and everything selected with it — dragging one of a group
@@ -732,6 +800,7 @@ class CanvasViewState extends State<CanvasView> {
     if (moving.isEmpty) return;
 
     _dragRaw += Offset(delta.dx / _scale, delta.dy / _scale);
+    if (_marksRiding.isNotEmpty) _marksShift = _dragRaw;
 
     // Where the drag would put things with nothing lining up.
     Rect? proposed;
@@ -920,6 +989,12 @@ class CanvasViewState extends State<CanvasView> {
         widget.onDrawShape != null &&
         (_tool.drags || _tool == CanvasTool.eraser);
 
+    // With any tool in hand a card stops taking the press — not just a
+    // drawing one. A sticky note or a caption dropped onto a picture was
+    // picking the picture up instead, so it looked as though the tool only
+    // worked on empty canvas.
+    final armed = _tool != CanvasTool.select;
+
     _cardKeys.removeWhere((index, _) => index >= widget.cards.length);
     _selection.removeWhere(
       (index) => index >= widget.cards.length || index >= _spots.length,
@@ -1107,7 +1182,7 @@ class CanvasViewState extends State<CanvasView> {
                     ),
                     card: widget.cards[index],
                     spot: _spots[index],
-                    enabled: !drawing,
+                    enabled: !armed,
                     pan: _pan,
                     scale: _scale,
                     slug: widget.slug,
@@ -1153,6 +1228,8 @@ class CanvasViewState extends State<CanvasView> {
                         theme: theme,
                         rubbed: _rubbed,
                         cards: _cardRects,
+                        riding: _marksRiding.keys.toSet(),
+                        shift: _marksShift,
                       ),
                     ),
                   ),
@@ -2437,6 +2514,8 @@ class _MarksPainter extends CustomPainter {
     required this.theme,
     required this.rubbed,
     required this.cards,
+    this.riding = const {},
+    this.shift = Offset.zero,
   });
 
   final List<CanvasShape> shapes;
@@ -2458,6 +2537,12 @@ class _MarksPainter extends CustomPainter {
   /// Where each card is, so an arrow held to one is drawn at the card rather
   /// than where it was first dragged.
   final Map<String, Rect> cards;
+
+  /// Marks travelling with a frame that is mid-drag, and how far it has got.
+  /// Drawn moved without being written, so they keep up with the frame
+  /// without the file being rewritten on every frame of the drag.
+  final Set<int> riding;
+  final Offset shift;
 
   Offset _at(List<double> points, int index) =>
       Offset(points[index * 2], points[index * 2 + 1]) * scale + pan;
@@ -2508,7 +2593,7 @@ class _MarksPainter extends CustomPainter {
         // Pointed along the last stretch of the line, which for a curve is
         // the tangent it arrives on rather than the straight line from where
         // it started.
-        _head(canvas, _headFrom(onGlass, curved), _at(points, last), paint);
+        _head(canvas, onGlass, curved, paint);
       case CanvasShapeKind.rectangle:
         canvas.drawRect(
           Rect.fromPoints(_at(points, 0), _at(points, last)),
@@ -2527,32 +2612,27 @@ class _MarksPainter extends CustomPainter {
     }
   }
 
-  /// The point an arrow's head should be aimed away from.
-  Offset _headFrom(List<double> onGlass, bool curved) {
-    final path = CanvasMarks.pathThrough(onGlass, curved: curved);
-    for (final metric in path.computeMetrics()) {
-      if (metric.length <= 0) continue;
-      final back = metric.getTangentForOffset(math.max(0, metric.length - 1));
-      if (back != null) return back.position;
-    }
-    final count = onGlass.length ~/ 2;
-    return Offset(onGlass[(count - 2) * 2], onGlass[(count - 2) * 2 + 1]);
-  }
-
-  /// A plain two-stroke head, sized with the zoom so an arrow does not grow a
+  /// A plain two-stroke head, sized on the glass so an arrow does not grow a
   /// spearhead when the board is zoomed in.
-  void _head(Canvas canvas, Offset from, Offset to, Paint paint) {
-    final along = to - from;
-    if (along.distance < 1) return;
+  ///
+  /// The size comes from the arrow's own length, not from the two points its
+  /// direction was worked out between — reading it off those is what once
+  /// left every head half a pixel long, and so invisible.
+  void _head(Canvas canvas, List<double> onGlass, bool curved, Paint paint) {
+    final length = CanvasMarks.headLength(
+      CanvasMarks.lengthOf(onGlass, curved: curved),
+    );
+    if (length <= 0) return;
 
-    final angle = math.atan2(along.dy, along.dx);
-    final length = math.min(18 * scale, along.distance / 2);
+    final angle = CanvasMarks.tipAngle(onGlass, curved: curved);
+    final count = onGlass.length ~/ 2;
+    final tip = Offset(onGlass[(count - 1) * 2], onGlass[(count - 1) * 2 + 1]);
     const spread = 0.5;
 
     for (final side in [-spread, spread]) {
       canvas.drawLine(
-        to,
-        to -
+        tip,
+        tip -
             Offset(
               math.cos(angle + side) * length,
               math.sin(angle + side) * length,
@@ -2566,10 +2646,11 @@ class _MarksPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     for (var i = 0; i < shapes.length; i++) {
       final shape = shapes[i];
+      final points = CanvasMarks.pointsOf(shape, cards);
       _draw(
         canvas,
         shape.kind,
-        CanvasMarks.pointsOf(shape, cards),
+        riding.contains(i) ? CanvasMarks.shifted(points, shift) : points,
         shape.colour,
         shape.thickness,
         rubbed.contains(i) ? 0.2 : 1,

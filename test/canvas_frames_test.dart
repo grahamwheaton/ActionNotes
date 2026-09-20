@@ -273,6 +273,39 @@ void _theSideTools() {
       await settle(tester);
     });
 
+    testWidgets('a note can be dropped straight onto a picture', (
+      tester,
+    ) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- One',
+        spots: const [CanvasSpot(x: 200, y: 150, width: 400, ref: 'One')],
+      );
+
+      await tester.tap(find.byTooltip('Text'));
+      await tester.pumpAndSettle();
+
+      // On top of the card. With a tool in hand the press is the tool's, not
+      // the card's — otherwise it looked as though the tool only worked once
+      // something else had been selected.
+      final card = tester.getRect(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('One'),
+        ),
+      );
+      await tester.tapAt(card.center);
+      await tester.pumpAndSettle();
+
+      expect(find.byType(TextField), findsOneWidget);
+      await tester.enterText(find.byType(TextField).last, 'A caption');
+      await tester.tap(find.text('Add'));
+      await tester.pumpAndSettle();
+
+      expect(spotsOf(state).last.kind, CanvasSpotKind.text);
+      await settle(tester);
+    });
+
     testWidgets('cancelling places nothing', (tester) async {
       final state = await pumpBoard(tester);
       final before = spotsOf(state).length;
@@ -589,6 +622,135 @@ void _drawingOnTheBoard() {
       // Dragged by hand is where it was put, so the hold is given up rather
       // than snapping the node back to the card.
       expect(state.canvasDrawing('list', 'Board').single.to, isNull);
+      await settle(tester);
+    });
+
+    testWidgets('an arrow inside a frame holds the card, not the frame', (
+      tester,
+    ) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- Ideas\n- One',
+        spots: const [
+          CanvasSpot(
+            x: 0,
+            y: 0,
+            width: 600,
+            height: 500,
+            z: -1,
+            ref: 'Ideas',
+            kind: CanvasSpotKind.frame,
+          ),
+          CanvasSpot(x: 200, y: 200, width: 150, ref: 'One'),
+        ],
+      );
+
+      await tester.tap(find.byTooltip('Shapes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Arrow').last);
+      await tester.pumpAndSettle();
+
+      final card = tester.getRect(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('One'),
+        ),
+      );
+      await tester.dragFrom(
+        const Offset(700, 650),
+        card.center - const Offset(700, 650),
+      );
+      await tester.pumpAndSettle();
+
+      // The card it was dropped on, not the room it is standing in.
+      expect(state.canvasDrawing('list', 'Board').single.to?.ref, 'One');
+      await settle(tester);
+    });
+
+    testWidgets('a mark drawn inside a frame travels with it', (tester) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- Ideas',
+        spots: const [
+          CanvasSpot(
+            x: 0,
+            y: 0,
+            width: 600,
+            height: 500,
+            ref: 'Ideas',
+            kind: CanvasSpotKind.frame,
+          ),
+        ],
+      );
+
+      await tester.tap(find.byTooltip('Pen'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(200, 300), const Offset(80, 40));
+      await tester.pumpAndSettle();
+
+      final before = state.canvasDrawing('list', 'Board').single.points;
+      expect(before, isNotEmpty);
+
+      // The pen stays armed, so put it down before dragging anything.
+      await tester.tap(find.byTooltip('Select'));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('Ideas'),
+        ),
+        const Offset(120, 60),
+      );
+      await tester.pumpAndSettle();
+
+      final after = state.canvasDrawing('list', 'Board').single.points;
+      // Every point moved by exactly what the frame moved: a pen note beside
+      // a photograph is about that photograph, so leaving it behind would
+      // pull the two apart.
+      for (var i = 0; i < before.length; i++) {
+        expect(after[i], closeTo(before[i] + (i.isEven ? 120 : 60), 1));
+      }
+      await settle(tester);
+    });
+
+    testWidgets('a mark that only crosses a frame is left where it is', (
+      tester,
+    ) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- Ideas',
+        spots: const [
+          CanvasSpot(
+            x: 0,
+            y: 0,
+            width: 300,
+            height: 200,
+            ref: 'Ideas',
+            kind: CanvasSpotKind.frame,
+          ),
+        ],
+      );
+
+      await tester.tap(find.byTooltip('Pen'));
+      await tester.pumpAndSettle();
+      // Starts inside the frame and runs well past its edge.
+      await tester.dragFrom(const Offset(200, 250), const Offset(600, 0));
+      await tester.pumpAndSettle();
+
+      final before = state.canvasDrawing('list', 'Board').single.points;
+
+      await tester.tap(find.byTooltip('Select'));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('Ideas'),
+        ),
+        const Offset(100, 50),
+      );
+      await tester.pumpAndSettle();
+
+      expect(state.canvasDrawing('list', 'Board').single.points, before);
       await settle(tester);
     });
 
