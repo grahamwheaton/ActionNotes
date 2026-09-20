@@ -1094,332 +1094,350 @@ class CanvasViewState extends State<CanvasView> {
             if (event.pointer == _middlePan) _middlePan = null;
           },
           child: ClipRect(
-            child: Stack(
-              key: _viewport,
-              clipBehavior: Clip.none,
-              children: [
-                // The surface, *behind* the cards rather than around them. As an
-                // ancestor its scale recognizer beat every card to the gesture
-                // and nothing could be dragged; as a sibling underneath, a
-                // pointer that lands on a card is taken by the card and never
-                // reaches here.
-                // The canvas's own paper. Only when it is keeping a light or
-                // dark of its own — otherwise whatever it is sitting in shows
-                // through, the way it always did.
-                if (settings.dark != null)
-                  Positioned.fill(
-                    child: ColoredBox(color: theme.colorScheme.surface),
-                  ),
-                Positioned.fill(
-                  child: MouseRegion(
-                    // Only while an arrow is in hand: nothing else on the
-                    // canvas cares where the pointer is between gestures, and
-                    // a rebuild for every mouse move is not free.
-                    onHover: _tool == CanvasTool.arrow
-                        ? (event) =>
-                              setState(() => _pointer = event.localPosition)
-                        : null,
-                    onExit: _tool == CanvasTool.arrow
-                        ? (_) => setState(() => _pointer = null)
-                        : null,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      // From where the pointer went down, not from where the
-                      // drag was recognised. The default swallows the first
-                      // eighteen pixels as slop, which on a card read as lag
-                      // and here is worse: a shape drawn from a corner
-                      // started short of it, and a frame came out smaller
-                      // than the box that was dragged out for it.
-                      dragStartBehavior: DragStartBehavior.down,
-                      onTapUp: (details) {
-                        _focus.requestFocus();
-                        // A tool that is armed puts its thing down where the
-                        // press landed; select clears the selection, which is
-                        // what a press on empty canvas always did.
-                        if (_tool.places) {
-                          _useTool(details.localPosition);
-                          return;
-                        }
-                        // A drawing tool is worked by dragging; a press with
-                        // one armed is not a mark, so it does nothing rather
-                        // than quietly clearing the selection behind it.
-                        if (_tool != CanvasTool.select) return;
-                        setState(() {
-                          _selection.clear();
-                          _picked = null;
-                        });
-                      },
-                      // A mark is not a card, so it has no box to press on:
-                      // the press lands on the canvas and the mark under it
-                      // has to be looked for.
-                      onSecondaryTapUp: (details) {
-                        final scene = _toScene(details.localPosition);
-                        final mark = _markNear(scene);
-                        if (mark == null) return;
-                        _showMarkMenu(mark, scene, details.globalPosition);
-                      },
-                      onLongPressStart: (details) {
-                        final scene = _toScene(details.localPosition);
-                        final mark = _markNear(scene);
-                        if (mark == null) return;
-                        _showMarkMenu(mark, scene, details.globalPosition);
-                      },
-                      // Under a finger, a drag pans and two fingers zoom. With a
-                      // mouse, a drag draws a marquee unless space is held, and
-                      // panning is the middle button, space and drag, or the
-                      // wheel.
-                      //
-                      // A drawing tool takes the drag on either, finger or
-                      // mouse, since drawing is what the drag is now for. Two
-                      // fingers stop zooming while one is armed, which is the
-                      // price of being able to draw with one.
-                      onScaleStart: touch && !drawing ? _onScaleStart : null,
-                      onScaleUpdate: touch && !drawing ? _onScaleUpdate : null,
-                      onPanStart: drawing
-                          ? (details) {
-                              _focus.requestFocus();
-                              if (_tool == CanvasTool.eraser) {
-                                _rub(details.localPosition);
-                                return;
-                              }
-                              _drawStart(details.localPosition);
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                // Kept for the next build rather than used in this one: a
+                // card being near the screen only has to be right by the
+                // time it decides whether to fetch, and reading it here
+                // avoids measuring the board from inside every card.
+                _viewportSize = constraints.biggest;
+                return Stack(
+                  key: _viewport,
+                  clipBehavior: Clip.none,
+                  children: [
+                    // The surface, *behind* the cards rather than around them. As an
+                    // ancestor its scale recognizer beat every card to the gesture
+                    // and nothing could be dragged; as a sibling underneath, a
+                    // pointer that lands on a card is taken by the card and never
+                    // reaches here.
+                    // The canvas's own paper. Only when it is keeping a light or
+                    // dark of its own — otherwise whatever it is sitting in shows
+                    // through, the way it always did.
+                    if (settings.dark != null)
+                      Positioned.fill(
+                        child: ColoredBox(color: theme.colorScheme.surface),
+                      ),
+                    Positioned.fill(
+                      child: MouseRegion(
+                        // Only while an arrow is in hand: nothing else on the
+                        // canvas cares where the pointer is between gestures, and
+                        // a rebuild for every mouse move is not free.
+                        onHover: _tool == CanvasTool.arrow
+                            ? (event) =>
+                                  setState(() => _pointer = event.localPosition)
+                            : null,
+                        onExit: _tool == CanvasTool.arrow
+                            ? (_) => setState(() => _pointer = null)
+                            : null,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          // From where the pointer went down, not from where the
+                          // drag was recognised. The default swallows the first
+                          // eighteen pixels as slop, which on a card read as lag
+                          // and here is worse: a shape drawn from a corner
+                          // started short of it, and a frame came out smaller
+                          // than the box that was dragged out for it.
+                          dragStartBehavior: DragStartBehavior.down,
+                          onTapUp: (details) {
+                            _focus.requestFocus();
+                            // A tool that is armed puts its thing down where the
+                            // press landed; select clears the selection, which is
+                            // what a press on empty canvas always did.
+                            if (_tool.places) {
+                              _useTool(details.localPosition);
+                              return;
                             }
-                          : touch
-                          ? null
-                          : (details) {
-                              _focus.requestFocus();
-                              // Space held: this drag pans instead of selecting,
-                              // and leaving the marquee unstarted is what the
-                              // update below reads as "pan".
-                              if (_panning) return;
-                              _marqueeStart(details.localPosition);
-                            },
-                      onPanUpdate: drawing
-                          ? (details) {
-                              if (_tool == CanvasTool.eraser) {
-                                setState(() => _rub(details.localPosition));
-                                return;
-                              }
-                              _drawUpdate(details.localPosition);
-                            }
-                          : touch
-                          ? null
-                          : (details) {
-                              if (_marqueeFrom != null) {
-                                _marqueeUpdate(details.localPosition);
-                                return;
-                              }
-                              setState(() => _pan += details.delta);
-                            },
-                      onPanEnd: drawing
-                          ? (_) {
-                              if (_tool == CanvasTool.eraser) {
-                                setState(_rubEnd);
-                                return;
-                              }
-                              _drawEnd();
-                            }
-                          : touch
-                          ? null
-                          : (_) => _marqueeEnd(),
-                      child: CustomPaint(
-                        painter: _GridPainter(
-                          pan: _pan,
-                          scale: _scale,
-                          style: settings.background,
-                          colour: theme.colorScheme.outlineVariant,
+                            // A drawing tool is worked by dragging; a press with
+                            // one armed is not a mark, so it does nothing rather
+                            // than quietly clearing the selection behind it.
+                            if (_tool != CanvasTool.select) return;
+                            setState(() {
+                              _selection.clear();
+                              _picked = null;
+                            });
+                          },
+                          // A mark is not a card, so it has no box to press on:
+                          // the press lands on the canvas and the mark under it
+                          // has to be looked for.
+                          onSecondaryTapUp: (details) {
+                            final scene = _toScene(details.localPosition);
+                            final mark = _markNear(scene);
+                            if (mark == null) return;
+                            _showMarkMenu(mark, scene, details.globalPosition);
+                          },
+                          onLongPressStart: (details) {
+                            final scene = _toScene(details.localPosition);
+                            final mark = _markNear(scene);
+                            if (mark == null) return;
+                            _showMarkMenu(mark, scene, details.globalPosition);
+                          },
+                          // Under a finger, a drag pans and two fingers zoom. With a
+                          // mouse, a drag draws a marquee unless space is held, and
+                          // panning is the middle button, space and drag, or the
+                          // wheel.
+                          //
+                          // A drawing tool takes the drag on either, finger or
+                          // mouse, since drawing is what the drag is now for. Two
+                          // fingers stop zooming while one is armed, which is the
+                          // price of being able to draw with one.
+                          onScaleStart: touch && !drawing
+                              ? _onScaleStart
+                              : null,
+                          onScaleUpdate: touch && !drawing
+                              ? _onScaleUpdate
+                              : null,
+                          onPanStart: drawing
+                              ? (details) {
+                                  _focus.requestFocus();
+                                  if (_tool == CanvasTool.eraser) {
+                                    _rub(details.localPosition);
+                                    return;
+                                  }
+                                  _drawStart(details.localPosition);
+                                }
+                              : touch
+                              ? null
+                              : (details) {
+                                  _focus.requestFocus();
+                                  // Space held: this drag pans instead of selecting,
+                                  // and leaving the marquee unstarted is what the
+                                  // update below reads as "pan".
+                                  if (_panning) return;
+                                  _marqueeStart(details.localPosition);
+                                },
+                          onPanUpdate: drawing
+                              ? (details) {
+                                  if (_tool == CanvasTool.eraser) {
+                                    setState(() => _rub(details.localPosition));
+                                    return;
+                                  }
+                                  _drawUpdate(details.localPosition);
+                                }
+                              : touch
+                              ? null
+                              : (details) {
+                                  if (_marqueeFrom != null) {
+                                    _marqueeUpdate(details.localPosition);
+                                    return;
+                                  }
+                                  setState(() => _pan += details.delta);
+                                },
+                          onPanEnd: drawing
+                              ? (_) {
+                                  if (_tool == CanvasTool.eraser) {
+                                    setState(_rubEnd);
+                                    return;
+                                  }
+                                  _drawEnd();
+                                }
+                              : touch
+                              ? null
+                              : (_) => _marqueeEnd(),
+                          child: CustomPaint(
+                            painter: _GridPainter(
+                              pan: _pan,
+                              scale: _scale,
+                              style: settings.background,
+                              colour: theme.colorScheme.outlineVariant,
+                            ),
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-                for (final index in order)
-                  _CardOnCanvas(
-                    key: ValueKey(
-                      'card-${widget.section}-'
-                      '${widget.cards[index].ref}-$index',
-                    ),
-                    card: widget.cards[index],
-                    spot: _spots[index],
-                    enabled: !armed,
-                    pan: _pan,
-                    scale: _scale,
-                    slug: widget.slug,
-                    cardKey: _cardKeys.putIfAbsent(index, GlobalKey.new),
-                    selected: _selection.contains(index),
-                    onGrab: () {
-                      _focus.requestFocus();
-                      _active = index;
-                      _select(index, additive: _additive);
-                      _beginDrag(index);
-                      // Raise whatever is now selected, so a group picked up
-                      // comes forward together rather than one of it.
-                      _bringToFront(
-                        _selection.contains(index) ? _selection : {index},
-                      );
-                    },
-                    onMenu: (at) => _showCardMenu(index, at),
-                    onMove: (delta) => _moveBy(index, delta),
-                    onRotate: (at) => _rotateTo(index, at),
-                    onResize: (delta) => _resizeBy(index, delta),
-                    onRelease: () {
-                      _active = null;
-                      _dragFocal = null;
-                      _endDrag();
-                      _commit();
-                    },
-                    onDragAnchor: (at) => _dragFocal = at,
-                    onDragTo: (at) {
-                      final from = _dragFocal;
-                      if (from == null) return;
-                      _dragFocal = at;
-                      _moveBy(index, at - from);
-                    },
-                    onPinchStart: touch ? _pinchStart : null,
-                    onPinchUpdate: touch ? _pinchUpdate : null,
-                  ),
-                // Over the cards: an arrow pointing at a reference has to be
-                // on top of it to mean anything. It takes no pointers, so a
-                // card under a stroke is still a card you can pick up.
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _MarksPainter(
-                        shapes: widget.shapes,
-                        pending: _drawing,
-                        pendingKind: _tool == CanvasTool.frame
-                            ? CanvasShapeKind.rectangle
-                            : _tool.draws,
-                        pendingColour: _colour,
-                        pendingThickness: _thickness,
+                    for (final index in order)
+                      _CardOnCanvas(
+                        key: ValueKey(
+                          'card-${widget.section}-'
+                          '${widget.cards[index].ref}-$index',
+                        ),
+                        card: widget.cards[index],
+                        spot: _spots[index],
+                        enabled: !armed,
                         pan: _pan,
                         scale: _scale,
-                        theme: theme,
-                        rubbed: _rubbed,
-                        cards: _cardRects,
-                        riding: _marksRiding.keys.toSet(),
-                        shift: _marksShift,
+                        slug: widget.slug,
+                        cardKey: _cardKeys.putIfAbsent(index, GlobalKey.new),
+                        selected: _selection.contains(index),
+                        onGrab: () {
+                          _focus.requestFocus();
+                          _active = index;
+                          _select(index, additive: _additive);
+                          _beginDrag(index);
+                          // Raise whatever is now selected, so a group picked up
+                          // comes forward together rather than one of it.
+                          _bringToFront(
+                            _selection.contains(index) ? _selection : {index},
+                          );
+                        },
+                        onMenu: (at) => _showCardMenu(index, at),
+                        onMove: (delta) => _moveBy(index, delta),
+                        onRotate: (at) => _rotateTo(index, at),
+                        onResize: (delta) => _resizeBy(index, delta),
+                        onRelease: () {
+                          _active = null;
+                          _dragFocal = null;
+                          _endDrag();
+                          _commit();
+                        },
+                        onDragAnchor: (at) => _dragFocal = at,
+                        onDragTo: (at) {
+                          final from = _dragFocal;
+                          if (from == null) return;
+                          _dragFocal = at;
+                          _moveBy(index, at - from);
+                        },
+                        onPinchStart: touch ? _pinchStart : null,
+                        onPinchUpdate: touch ? _pinchUpdate : null,
+                        near: _nearViewport(_spots[index]),
                       ),
-                    ),
-                  ),
-                ),
-                // The nodes of the picked mark, each one a handle you can
-                // drag. Real widgets rather than paint, because a node is
-                // something you take hold of.
-                if (picked != null)
-                  for (var node = 0; node < nodes.length ~/ 2; node++)
-                    _NodeHandle(
-                      key: ValueKey('node-${widget.section}-$picked-$node'),
-                      at:
-                          Offset(nodes[node * 2], nodes[node * 2 + 1]) *
-                              _scale +
-                          _pan,
-                      colour: theme.colorScheme.tertiary,
-                      onMove: (delta) => _moveNode(picked, node, delta),
-                      onRemove: () => widget.onEditShape?.call(
-                        picked,
-                        widget.shapes[picked].copyWith(
-                          points: CanvasMarks.withoutNode(nodes, node),
+                    // Over the cards: an arrow pointing at a reference has to be
+                    // on top of it to mean anything. It takes no pointers, so a
+                    // card under a stroke is still a card you can pick up.
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: CustomPaint(
+                          painter: _MarksPainter(
+                            shapes: widget.shapes,
+                            pending: _drawing,
+                            pendingKind: _tool == CanvasTool.frame
+                                ? CanvasShapeKind.rectangle
+                                : _tool.draws,
+                            pendingColour: _colour,
+                            pendingThickness: _thickness,
+                            pan: _pan,
+                            scale: _scale,
+                            theme: theme,
+                            rubbed: _rubbed,
+                            cards: _cardRects,
+                            riding: _marksRiding.keys.toSet(),
+                            shift: _marksShift,
+                          ),
                         ),
                       ),
                     ),
-                // What an arrow would take hold of, while one is in hand.
-                if (_tool == CanvasTool.arrow && _pointer != null)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: CustomPaint(
-                        painter: _HoldsPainter(
-                          hold: _holdNear(_toScene(_pointer!)),
-                          pan: _pan,
-                          scale: _scale,
+                    // The nodes of the picked mark, each one a handle you can
+                    // drag. Real widgets rather than paint, because a node is
+                    // something you take hold of.
+                    if (picked != null)
+                      for (var node = 0; node < nodes.length ~/ 2; node++)
+                        _NodeHandle(
+                          key: ValueKey('node-${widget.section}-$picked-$node'),
+                          at:
+                              Offset(nodes[node * 2], nodes[node * 2 + 1]) *
+                                  _scale +
+                              _pan,
                           colour: theme.colorScheme.tertiary,
-                        ),
-                      ),
-                    ),
-                  ),
-                for (final guide in _guides)
-                  Positioned.fromRect(
-                    rect: _guideRect(guide),
-                    child: IgnorePointer(
-                      child: ColoredBox(color: theme.colorScheme.tertiary),
-                    ),
-                  ),
-                if (_marquee != null)
-                  Positioned.fromRect(
-                    rect: _marquee!,
-                    child: IgnorePointer(
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.primary.withValues(
-                            alpha: 0.12,
+                          onMove: (delta) => _moveNode(picked, node, delta),
+                          onRemove: () => widget.onEditShape?.call(
+                            picked,
+                            widget.shapes[picked].copyWith(
+                              points: CanvasMarks.withoutNode(nodes, node),
+                            ),
                           ),
-                          border: Border.all(color: theme.colorScheme.primary),
                         ),
-                      ),
-                    ),
-                  ),
-                if (_selection.length > 1)
-                  Positioned(
-                    left: 8,
-                    bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
-                    child: IgnorePointer(
-                      child: Material(
-                        color: theme.colorScheme.primaryContainer,
-                        borderRadius: BorderRadius.circular(16),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 6,
-                          ),
-                          child: Text(
-                            '${_selection.length} selected',
-                            style: theme.textTheme.labelMedium,
+                    // What an arrow would take hold of, while one is in hand.
+                    if (_tool == CanvasTool.arrow && _pointer != null)
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: _HoldsPainter(
+                              hold: _holdNear(_toScene(_pointer!)),
+                              pan: _pan,
+                              scale: _scale,
+                              colour: theme.colorScheme.tertiary,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                if (widget.onPlaceCard != null)
-                  Positioned(
-                    left: 8,
-                    top: 0,
-                    bottom: 0,
-                    // Down the middle of the left edge, the way every tool
-                    // that has a tool column puts one — and clear of the top
-                    // left corner, which is where a canvas starts and so
-                    // where its first cards sit.
-                    child: Center(
-                      child: _CanvasTools(
-                        tool: _tool,
-                        colour: _colour,
-                        onTool: (tool) => setState(
-                          () =>
-                              _tool = _tool == tool ? CanvasTool.select : tool,
+                    for (final guide in _guides)
+                      Positioned.fromRect(
+                        rect: _guideRect(guide),
+                        child: IgnorePointer(
+                          child: ColoredBox(color: theme.colorScheme.tertiary),
                         ),
-                        onColour: (colour) => setState(() => _colour = colour),
-                        thickness: _thickness,
-                        onThickness: (value) =>
-                            setState(() => _thickness = value),
+                      ),
+                    if (_marquee != null)
+                      Positioned.fromRect(
+                        rect: _marquee!,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary.withValues(
+                                alpha: 0.12,
+                              ),
+                              border: Border.all(
+                                color: theme.colorScheme.primary,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (_selection.length > 1)
+                      Positioned(
+                        left: 8,
+                        bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
+                        child: IgnorePointer(
+                          child: Material(
+                            color: theme.colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(16),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              child: Text(
+                                '${_selection.length} selected',
+                                style: theme.textTheme.labelMedium,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (widget.onPlaceCard != null)
+                      Positioned(
+                        left: 8,
+                        top: 0,
+                        bottom: 0,
+                        // Down the middle of the left edge, the way every tool
+                        // that has a tool column puts one — and clear of the top
+                        // left corner, which is where a canvas starts and so
+                        // where its first cards sit.
+                        child: Center(
+                          child: _CanvasTools(
+                            tool: _tool,
+                            colour: _colour,
+                            onTool: (tool) => setState(
+                              () => _tool = _tool == tool
+                                  ? CanvasTool.select
+                                  : tool,
+                            ),
+                            onColour: (colour) =>
+                                setState(() => _colour = colour),
+                            thickness: _thickness,
+                            onThickness: (value) =>
+                                setState(() => _thickness = value),
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      right: 8,
+                      // Clear of the system bar at the bottom of a phone, which was
+                      // sitting on top of the zoom controls.
+                      bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
+                      child: _CanvasControls(
+                        scale: _scale,
+                        settings: settings,
+                        onSettingsChanged: widget.onSettingsChanged,
+                        onOpenFullScreen: widget.onOpenFullScreen,
+                        onZoomIn: () => _zoomAround(_centre(), 1.2),
+                        onZoomOut: () => _zoomAround(_centre(), 1 / 1.2),
+                        onFit: fit,
+                        onReset: () => setState(() => _scale = 1),
                       ),
                     ),
-                  ),
-                Positioned(
-                  right: 8,
-                  // Clear of the system bar at the bottom of a phone, which was
-                  // sitting on top of the zoom controls.
-                  bottom: 8 + MediaQuery.viewPaddingOf(context).bottom,
-                  child: _CanvasControls(
-                    scale: _scale,
-                    settings: settings,
-                    onSettingsChanged: widget.onSettingsChanged,
-                    onOpenFullScreen: widget.onOpenFullScreen,
-                    onZoomIn: () => _zoomAround(_centre(), 1.2),
-                    onZoomOut: () => _zoomAround(_centre(), 1 / 1.2),
-                    onFit: fit,
-                    onReset: () => setState(() => _scale = 1),
-                  ),
-                ),
-              ],
+                  ],
+                );
+              },
             ),
           ),
         ),
@@ -1481,6 +1499,39 @@ class CanvasViewState extends State<CanvasView> {
 
   RenderBox? get _viewportBox =>
       _viewport.currentContext?.findRenderObject() as RenderBox?;
+
+  /// The last size the board was drawn at, so a card can be told whether it
+  /// is worth fetching a picture for before the frame is laid out.
+  Size _viewportSize = Size.zero;
+
+  /// How far outside the screen a picture is still worth having: one screen
+  /// in every direction, so scrolling or zooming out a little finds pictures
+  /// already there rather than a row of grey boxes.
+  static const _eagerMargin = 1.0;
+
+  /// Whether a card is close enough to the screen to be worth fetching.
+  ///
+  /// A board with thirty pictures on it fetched all thirty the moment it
+  /// opened, which on a phone is a lot of waiting for pictures that are not
+  /// on screen. Anything without a size yet counts as near: a picture whose
+  /// height is unknown has never loaded, and refusing to load it is how it
+  /// would stay unknown.
+  bool _nearViewport(CanvasSpot spot) {
+    if (_viewportSize == Size.zero) return true;
+
+    final at = Offset(spot.x, spot.y) * _scale + _pan;
+    final width = spot.width * _scale;
+    final height = (spot.height ?? spot.width) * _scale;
+    final margin = Offset(
+      _viewportSize.width * _eagerMargin,
+      _viewportSize.height * _eagerMargin,
+    );
+
+    return at.dx + width >= -margin.dx &&
+        at.dy + height >= -margin.dy &&
+        at.dx <= _viewportSize.width + margin.dx &&
+        at.dy <= _viewportSize.height + margin.dy;
+  }
 
   /// Lines up everything in [targets] on one edge, or spreads them evenly.
   ///
@@ -2121,6 +2172,7 @@ class _CardOnCanvas extends StatelessWidget {
     required this.onDragTo,
     this.onPinchStart,
     this.onPinchUpdate,
+    this.near = true,
     this.enabled = true,
   });
 
@@ -2162,6 +2214,10 @@ class _CardOnCanvas extends StatelessWidget {
   /// picture about and did not zoom at all.
   final void Function(Offset focal)? onPinchStart;
   final void Function(Offset focal, double scale)? onPinchUpdate;
+
+  /// Whether this card is close enough to the screen for its picture to be
+  /// worth fetching yet.
+  final bool near;
 
   /// Where a one-finger drag started and where it has reached, in global
   /// coordinates. The canvas turns them into movement, so the slop the
@@ -2303,7 +2359,10 @@ class _CardOnCanvas extends StatelessWidget {
                               // frame you are meant to be able to take hold of.
                               ? const SizedBox.shrink()
                               : card.isImage
-                              ? _CanvasImage(reference: card.imagePath!)
+                              ? _CanvasImage(
+                                  reference: card.imagePath!,
+                                  near: near,
+                                )
                               // The writing is scaled with the canvas, not left
                               // at its own size. A card's box is drawn at
                               // width × zoom, so text that did not scale kept
@@ -2485,9 +2544,14 @@ class _ZoomedText extends TextScaler {
 
 /// A picture on the canvas, at whatever width the card is.
 class _CanvasImage extends StatefulWidget {
-  const _CanvasImage({required this.reference});
+  const _CanvasImage({required this.reference, this.near = true});
 
   final String reference;
+
+  /// False while the card is far enough off screen that its picture is not
+  /// worth fetching. A board of thirty pictures fetched all thirty the
+  /// moment it opened, most of them for nothing.
+  final bool near;
 
   @override
   State<_CanvasImage> createState() => _CanvasImageState();
@@ -2526,7 +2590,8 @@ class _CanvasImageState extends State<_CanvasImage> {
     final theme = Theme.of(context);
     final state = context.watch<AppState>();
 
-    if (_file == null || (_missing && state.syncGeneration != _askedAt)) {
+    if (widget.near &&
+        (_file == null || (_missing && state.syncGeneration != _askedAt))) {
       _load(state);
     }
 
