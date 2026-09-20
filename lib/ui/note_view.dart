@@ -20,6 +20,7 @@ class NoteView extends StatelessWidget {
     this.selectable = true,
     this.onOpenProject,
     this.maxImageHeight,
+    this.align,
   });
 
   final String markdown;
@@ -33,6 +34,11 @@ class NoteView extends StatelessWidget {
   /// for, so the picture came out full size and was then clipped. Capping the
   /// picture scales it instead, which is what "too tall" should mean.
   final double? maxImageHeight;
+
+  /// How the text sits across the width. Null is the ordinary left, which is
+  /// what writing wants; a sticky note is the exception, because a sticky
+  /// note is a label rather than a paragraph.
+  final WrapAlignment? align;
 
   /// Called when a link to another project is tapped. Without it, such links
   /// are shown but do nothing.
@@ -49,7 +55,14 @@ class NoteView extends StatelessWidget {
     return MarkdownBody(
       data: rendered,
       selectable: selectable,
-      styleSheet: _styleSheet(context),
+      styleSheet: align == null
+          ? _styleSheet(context)
+          : _styleSheet(context).copyWith(
+              textAlign: align!,
+              h1Align: align!,
+              h2Align: align!,
+              h3Align: align!,
+            ),
       imageBuilder: (uri, title, alt) => _NoteImage(
         reference: uri.toString(),
         alt: alt,

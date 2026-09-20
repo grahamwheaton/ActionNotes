@@ -700,6 +700,26 @@ class CanvasViewState extends State<CanvasView> {
     return rects;
   }
 
+  /// The sticky notes sitting on top of [index].
+  ///
+  /// A note put on a photograph is about that photograph, so moving the
+  /// photograph takes the note with it. Worked out from where things are
+  /// rather than recorded anywhere: a note is stuck to whatever it is sitting
+  /// on at the moment you pick that thing up, which is what "stuck to it"
+  /// means to a person and needs nothing written in the file.
+  Set<int> _stuckOn(int index) {
+    if (_spots[index].isFrame) return const {};
+    final bounds = _sceneRect(index);
+
+    return {
+      for (var i = 0; i < _spots.length; i++)
+        if (i != index &&
+            _spots[i].kind == CanvasSpotKind.sticky &&
+            bounds.contains(_sceneRect(i).center))
+          i,
+    };
+  }
+
   /// What a frame is holding: everything whose middle stands on it.
   ///
   /// By the middle rather than by overlap, so a card poking over the edge
@@ -728,6 +748,12 @@ class CanvasViewState extends State<CanvasView> {
     // leave the group halfway across the canvas.
     for (final at in moving.toList()) {
       if (_spots[at].isFrame) moving = {...moving, ..._within(at)};
+    }
+    // And a sticky note sitting on something comes along when that thing is
+    // picked up. After the frames, so a note on a photograph in a frame is
+    // caught whichever of the two was grabbed.
+    for (final at in moving.toList()) {
+      moving = {...moving, ..._stuckOn(at)};
     }
     // A mark drawn inside a frame belongs to what is in the frame, so it
     // travels with it — a pen note beside a photograph is about that
@@ -1661,6 +1687,11 @@ class CanvasViewState extends State<CanvasView> {
         ContextMenuAction(
           label: option.label,
           icon: option == CanvasColour.none ? Icons.hide_source : Icons.circle,
+          // Drawn in the colour it names: a menu of colours whose entries are
+          // all the same grey circle is just a list of words.
+          tint: option == CanvasColour.none
+              ? null
+              : canvasColourOf(option, Theme.of(context)),
           onSelected: () => _transform(
             targets,
             (spot) => spot.copyWith(
@@ -2106,7 +2137,15 @@ class _CardOnCanvas extends StatelessWidget {
               1,
             ),
             child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+              // A frame answers only where its title is. Its body is the
+              // space other things stand in, so a press in the middle of one
+              // belongs to the canvas — to a pinch that means to zoom, to a
+              // marquee that means to select what is standing there. A frame
+              // covers half the board, and one that swallowed every press
+              // made that half of the board unusable.
+              behavior: spot.isFrame
+                  ? HitTestBehavior.deferToChild
+                  : HitTestBehavior.opaque,
               // From the moment it is touched, not from where the drag was
               // recognised: the default loses the first eighteen pixels of every
               // drag to the slop, which on a canvas reads as the card lagging
@@ -2129,102 +2168,140 @@ class _CardOnCanvas extends StatelessWidget {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Container(
-                    decoration: BoxDecoration(
-                      color: spot.isFrame
-                          // Barely there: a frame is a boundary, not a panel,
-                          // and what stands on it has to stay readable.
-                          ? theme.colorScheme.surfaceContainerHighest
-                                .withValues(alpha: 0.35)
-                          : card.isImage || !spot.hasPaper
-                          // Writing straight on the board, and a picture that
-                          // is its own shape: neither wants a card behind it.
-                          ? Colors.transparent
-                          : canvasColourOf(spot.colour, theme),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                        color: selected
-                            ? theme.colorScheme.primary
-                            : spot.isFrame
-                            ? theme.colorScheme.outline
+                  IgnorePointer(
+                    ignoring: spot.isFrame,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: spot.isFrame
+                            // Barely there: a frame is a boundary, not a panel,
+                            // and what stands on it has to stay readable.
+                            ? theme.colorScheme.surfaceContainerHighest
+                                  .withValues(alpha: 0.35)
                             : card.isImage || !spot.hasPaper
+                            // Writing straight on the board, and a picture that
+                            // is its own shape: neither wants a card behind it.
                             ? Colors.transparent
-                            : theme.colorScheme.outlineVariant,
-                        width: selected ? 2 : 1,
+                            : canvasColourOf(spot.colour, theme),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                          color: selected
+                              ? theme.colorScheme.primary
+                              : spot.isFrame
+                              ? theme.colorScheme.outline
+                              : card.isImage || !spot.hasPaper
+                              ? Colors.transparent
+                              : theme.colorScheme.outlineVariant,
+                          width: selected ? 2 : 1,
+                        ),
+                        boxShadow: selected
+                            ? [
+                                BoxShadow(
+                                  color: theme.colorScheme.primary.withValues(
+                                    alpha: 0.25,
+                                  ),
+                                  blurRadius: 12,
+                                ),
+                              ]
+                            : null,
                       ),
-                      boxShadow: selected
-                          ? [
-                              BoxShadow(
-                                color: theme.colorScheme.primary.withValues(
-                                  alpha: 0.25,
+                      clipBehavior: Clip.antiAlias,
+                      // The content takes no pointers of its own. Rendered markdown
+                      // carries gesture recognizers for its links and its text, and
+                      // those were winning the arena against the card — so a card
+                      // could be looked at and never moved. On a canvas a card is an
+                      // object you pick up, not a page you interact with.
+                      child: IgnorePointer(
+                        child: spot.isFrame
+                            // A frame shows only its name, at the top left where
+                            // a label goes — the rest of it is the space it
+                            // encloses, and drawing anything there would be
+                            // drawing over what it is holding.
+                            // Nothing: a frame's name is drawn as a handle
+                            // beside it, because the name is the one part of a
+                            // frame you are meant to be able to take hold of.
+                            ? const SizedBox.shrink()
+                            : card.isImage
+                            ? _CanvasImage(reference: card.imagePath!)
+                            // The writing is scaled with the canvas, not left
+                            // at its own size. A card's box is drawn at
+                            // width × zoom, so text that did not scale kept
+                            // full-size glyphs in a shrinking box: zoomed out,
+                            // a sticky note wrapped to one letter a line and
+                            // stretched into a ribbon.
+                            //
+                            // Scaled through the text scaler rather than by
+                            // transforming the widget, so the glyphs are laid
+                            // out at the size they are drawn and stay crisp.
+                            : MediaQuery(
+                                data: MediaQuery.of(context).copyWith(
+                                  textScaler: _ZoomedText(
+                                    MediaQuery.textScalerOf(context),
+                                    scale.clamp(0.2, 4.0),
+                                  ),
                                 ),
-                                blurRadius: 12,
-                              ),
-                            ]
-                          : null,
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    // The content takes no pointers of its own. Rendered markdown
-                    // carries gesture recognizers for its links and its text, and
-                    // those were winning the arena against the card — so a card
-                    // could be looked at and never moved. On a canvas a card is an
-                    // object you pick up, not a page you interact with.
-                    child: IgnorePointer(
-                      child: spot.isFrame
-                          // A frame shows only its name, at the top left where
-                          // a label goes — the rest of it is the space it
-                          // encloses, and drawing anything there would be
-                          // drawing over what it is holding.
-                          ? Align(
-                              alignment: Alignment.topLeft,
-                              child: Padding(
-                                padding: EdgeInsets.all(
-                                  6 * scale.clamp(0.5, 1.5),
-                                ),
-                                child: Text(
-                                  card.markdown,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.labelLarge
-                                      ?.copyWith(
-                                        color:
-                                            theme.colorScheme.onSurfaceVariant,
-                                        fontWeight: FontWeight.w600,
-                                      )
-                                      .apply(
-                                        fontSizeFactor: scale.clamp(0.6, 1.4),
-                                      ),
-                                ),
-                              ),
-                            )
-                          : card.isImage
-                          ? _CanvasImage(reference: card.imagePath!)
-                          // The writing is scaled with the canvas, not left
-                          // at its own size. A card's box is drawn at
-                          // width × zoom, so text that did not scale kept
-                          // full-size glyphs in a shrinking box: zoomed out,
-                          // a sticky note wrapped to one letter a line and
-                          // stretched into a ribbon.
-                          //
-                          // Scaled through the text scaler rather than by
-                          // transforming the widget, so the glyphs are laid
-                          // out at the size they are drawn and stay crisp.
-                          : MediaQuery(
-                              data: MediaQuery.of(context).copyWith(
-                                textScaler: _ZoomedText(
-                                  MediaQuery.textScalerOf(context),
-                                  scale.clamp(0.2, 4.0),
+                                child: Padding(
+                                  padding: EdgeInsets.all(
+                                    // A note is a label written on a square, so
+                                    // it wants air around it; an ordinary card
+                                    // is writing and wants the room for it.
+                                    (spot.kind == CanvasSpotKind.sticky
+                                            ? 12
+                                            : 8) *
+                                        scale.clamp(0.5, 1.5),
+                                  ),
+                                  child: NoteView(
+                                    markdown: card.markdown,
+                                    // Centred on a sticky note, the way one
+                                    // written by hand is: what is on it is a
+                                    // label, not a paragraph. Everything else
+                                    // stays left, where writing belongs.
+                                    align: spot.kind == CanvasSpotKind.sticky
+                                        ? WrapAlignment.center
+                                        : null,
+                                  ),
                                 ),
                               ),
-                              child: Padding(
-                                padding: EdgeInsets.all(
-                                  8 * scale.clamp(0.5, 1.5),
-                                ),
-                                child: NoteView(markdown: card.markdown),
-                              ),
-                            ),
+                      ),
                     ),
                   ),
+                  // A frame's name, and the one part of it you take hold of.
+                  if (spot.isFrame)
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      child: Container(
+                        constraints: BoxConstraints(
+                          maxWidth: math.max(40, spot.width * scale),
+                        ),
+                        padding: EdgeInsets.symmetric(
+                          horizontal: 8 * scale.clamp(0.6, 1.4),
+                          vertical: 4 * scale.clamp(0.6, 1.4),
+                        ),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          borderRadius: const BorderRadius.only(
+                            topLeft: Radius.circular(4),
+                            bottomRight: Radius.circular(6),
+                          ),
+                          border: Border.all(
+                            color: selected
+                                ? theme.colorScheme.primary
+                                : theme.colorScheme.outlineVariant,
+                          ),
+                        ),
+                        child: Text(
+                          card.markdown,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.labelLarge
+                              ?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                                fontWeight: FontWeight.w600,
+                              )
+                              .apply(fontSizeFactor: scale.clamp(0.6, 1.4)),
+                        ),
+                      ),
+                    ),
                   if (selected)
                     Positioned(
                       right: -6,

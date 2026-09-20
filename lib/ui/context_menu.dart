@@ -6,12 +6,18 @@ class ContextMenuAction {
     required this.icon,
     required this.onSelected,
     this.destructive = false,
+    this.tint,
   });
 
   final String label;
   final IconData icon;
   final VoidCallback onSelected;
   final bool destructive;
+
+  /// What colour to draw the icon in, for a menu whose entries *are* colours
+  /// — a list of identical grey circles named Pink and Blue says nothing that
+  /// the words were not already saying.
+  final Color? tint;
 }
 
 /// Shows the actions as a menu at a point on the screen.
@@ -117,7 +123,7 @@ class _ActionRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final color = action.destructive ? theme.colorScheme.error : null;
+    final color = action.destructive ? theme.colorScheme.error : action.tint;
 
     return Row(
       children: [

@@ -175,6 +175,134 @@ void main() {
     });
   });
 
+  group('a sticky note on something', () {
+    testWidgets('travels with what it is sitting on', (tester) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- One\n- A note',
+        spots: const [
+          CanvasSpot(x: 100, y: 100, width: 400, ref: 'One'),
+          // Sitting on top of it: both are short cards, so the note has to
+          // start at much the same height to be standing on the other.
+          CanvasSpot(
+            x: 200,
+            y: 102,
+            width: 120,
+            ref: 'A note',
+            kind: CanvasSpotKind.sticky,
+            colour: CanvasColour.yellow,
+          ),
+        ],
+      );
+
+      await tester.drag(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('One'),
+        ),
+        const Offset(90, 70),
+      );
+      await tester.pumpAndSettle();
+
+      final spots = spotsOf(state);
+      expect(spots[0].x, 190);
+      // A note put on a photograph is about that photograph, so it comes
+      // along rather than being left behind on the board.
+      expect(spots[1].x, 290);
+      expect(spots[1].y, 172);
+      await settle(tester);
+    });
+
+    testWidgets('a note beside it, not on it, stays where it is', (
+      tester,
+    ) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- One\n- A note',
+        spots: const [
+          CanvasSpot(x: 100, y: 100, width: 200, ref: 'One'),
+          CanvasSpot(
+            x: 700,
+            y: 700,
+            width: 120,
+            ref: 'A note',
+            kind: CanvasSpotKind.sticky,
+          ),
+        ],
+      );
+
+      await tester.drag(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('One'),
+        ),
+        const Offset(50, 50),
+      );
+      await tester.pumpAndSettle();
+
+      expect(spotsOf(state)[1].x, 700);
+      await settle(tester);
+    });
+  });
+
+  group('a frame is taken hold of by its name', () {
+    testWidgets('dragging its middle leaves it where it is', (tester) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- Ideas',
+        spots: const [
+          CanvasSpot(
+            x: 0,
+            y: 0,
+            width: 500,
+            height: 400,
+            ref: 'Ideas',
+            kind: CanvasSpotKind.frame,
+          ),
+        ],
+      );
+
+      // Well inside the frame, away from its name.
+      await tester.dragFrom(const Offset(400, 400), const Offset(80, 80));
+      await tester.pumpAndSettle();
+
+      // The body is the space things stand in: a press there belongs to the
+      // canvas, so that a pinch can zoom and a marquee can select.
+      expect(spotsOf(state).single.x, 0);
+      await settle(tester);
+    });
+
+    testWidgets('dragging its name moves it', (tester) async {
+      final state = await pumpBoard(
+        tester,
+        body: '- Ideas',
+        spots: const [
+          CanvasSpot(
+            x: 0,
+            y: 0,
+            width: 500,
+            height: 400,
+            ref: 'Ideas',
+            kind: CanvasSpotKind.frame,
+          ),
+        ],
+      );
+
+      await tester.drag(
+        find.descendant(
+          of: find.byType(CanvasScreen),
+          matching: find.text('Ideas'),
+        ),
+        const Offset(70, 40),
+      );
+      await tester.pumpAndSettle();
+
+      expect(spotsOf(state).single.x, 70);
+      expect(spotsOf(state).single.y, 40);
+      await settle(tester);
+    });
+  });
+
   group('renaming a frame', () {
     testWidgets('changes the markdown and keeps the frame where it was', (
       tester,
