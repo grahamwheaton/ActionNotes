@@ -7,12 +7,27 @@ import 'checklist_item.dart';
 /// switched to notes and back loses nothing.
 enum ProjectMode {
   tasks,
-  notes;
+  notes,
 
-  static ProjectMode parse(String? raw) =>
-      raw?.trim().toLowerCase() == 'notes' ? ProjectMode.notes : ProjectMode.tasks;
+  /// A day at a time: what was written today is open, and the days before it
+  /// are folded up under their dates.
+  ///
+  /// The file is an ordinary project whose sections happen to be dates, so a
+  /// feed read anywhere else is a list under date headings — which is what
+  /// anyone would have written by hand anyway.
+  feed;
 
-  String get name => this == ProjectMode.notes ? 'notes' : 'tasks';
+  static ProjectMode parse(String? raw) => switch (raw?.trim().toLowerCase()) {
+    'notes' => ProjectMode.notes,
+    'feed' => ProjectMode.feed,
+    _ => ProjectMode.tasks,
+  };
+
+  String get name => switch (this) {
+    ProjectMode.notes => 'notes',
+    ProjectMode.feed => 'feed',
+    ProjectMode.tasks => 'tasks',
+  };
 }
 
 /// A `##` section of a project.

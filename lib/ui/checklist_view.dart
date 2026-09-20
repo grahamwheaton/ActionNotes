@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 
 import '../markdown/canvas_cards.dart';
 import '../markdown/canvas_placement.dart';
+import '../markdown/feed_days.dart';
 import '../markdown/note_conversation.dart';
 import '../markdown/project_links.dart';
 import '../models/canvas_layout.dart';
@@ -68,6 +69,11 @@ class _ChecklistViewState extends State<ChecklistView> {
   /// whatever is on it, so a project with two of them is mostly canvas unless
   /// they can be put away.
   final Set<String> _collapsedSections = {};
+
+  /// Which project's days have already been folded, so opening a feed folds
+  /// everything but today once rather than every time it rebuilds — which
+  /// would fold a day shut the moment you opened it.
+  String? _foldedFeed;
 
   void _toggleNotes(int index, String itemText) {
     // Alt makes it a decision about the whole project, the way alt-clicking a
@@ -253,6 +259,25 @@ class _ChecklistViewState extends State<ChecklistView> {
 
     final state = context.read<AppState>();
 
+    // In a feed, what is written goes under today, and today is made if this
+    // is the first thing written in it. Nothing else has to be chosen: a feed
+    // is a day at a time, so the day is never a decision.
+    final project = state.projectBySlug(widget.slug);
+    if (project != null &&
+        project.mode == ProjectMode.feed &&
+        _addKind == AddKind.task) {
+      final today = FeedDays.titleFor(DateTime.now());
+      if (!project.blocks.any((block) => block.title == today)) {
+        state.addBlock(widget.slug, today);
+        // A day made now is today, so it opens rather than arriving folded.
+        _collapsedSections.remove(today);
+      }
+      state.addItem(widget.slug, text, starred: starred, block: today);
+      _newItemController.clear();
+      _newItemFocus.requestFocus();
+      return;
+    }
+
     // On a canvas, what is typed goes onto the board as a card rather than
     // into a list underneath it — the canvas is what the section is now.
     final target = _resolvedTarget;
@@ -364,6 +389,35 @@ class _ChecklistViewState extends State<ChecklistView> {
     _newItemController.clear();
   }
 
+  /// A feed opens on today, with the days before it folded away.
+  ///
+  /// Done once per project rather than on every build: doing it on every
+  /// build would fold a day shut again the moment it was opened.
+  void _foldOlderDays(Project project) {
+    if (_foldedFeed == project.slug) return;
+    _foldedFeed = project.slug;
+
+    _collapsedSections
+      ..clear()
+      ..addAll(
+        project.blocks
+            .map((block) => block.title)
+            .where((title) => !FeedDays.opensByDefault(title)),
+      );
+  }
+
+  /// The sections in the order this project shows them: newest day first for
+  /// a feed, and the order they are written in for anything else.
+  List<ProjectBlock> _sectionsOf(Project project) {
+    if (project.mode != ProjectMode.feed) return project.blocks;
+
+    final byTitle = {for (final block in project.blocks) block.title: block};
+    return [
+      for (final title in FeedDays.order(byTitle.keys))
+        if (byTitle[title] != null) byTitle[title]!,
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final project = context.watch<AppState>().projectBySlug(widget.slug);
@@ -375,6 +429,8 @@ class _ChecklistViewState extends State<ChecklistView> {
         body: const Center(child: Text('This project is no longer here.')),
       );
     }
+
+    if (project.mode == ProjectMode.feed) _foldOlderDays(project);
 
     // A notes project is a document, not a list. The items are still in the
     // file and come back if it is switched again — this is a second view, not
@@ -435,6 +491,9 @@ class _ChecklistViewState extends State<ChecklistView> {
         _state.clearRevealed();
       }
     }
+
+    final isFeed = project.mode == ProjectMode.feed;
+    final sections = _sectionsOf(project);
 
     return Scaffold(
       appBar: widget.showAppBar
@@ -549,21 +608,33 @@ class _ChecklistViewState extends State<ChecklistView> {
                             );
                           },
                         ),
-                      if (project.blocks.isNotEmpty)
+                      if (sections.isNotEmpty)
                         SliverReorderableList(
-                          itemCount: project.blocks.length,
+                          itemCount: sections.length,
+                          // A feed is in date order, which is not something
+                          // to drag things out of.
                           onReorderItem: (oldIndex, newIndex) => context
                               .read<AppState>()
                               .reorderBlocks(widget.slug, oldIndex, newIndex),
                           itemBuilder: (context, position) {
-                            final block = project.blocks[position];
+                            final block = sections[position];
                             return _BlockSection(
                               key: ValueKey(
                                 'block-${widget.slug}-${block.title}',
                               ),
                               slug: widget.slug,
                               block: block,
-                              dragPosition: position,
+                              // No handle on a feed: it is in date order,
+                              // which is not something to drag things out of,
+                              // and without a handle there is no drag to
+                              // reach the reorder with.
+                              dragPosition: isFeed ? null : position,
+                              // A day's heading is a date, so it is read
+                              // rather than typed: Today, Yesterday, or the
+                              // day itself.
+                              dayLabel: isFeed
+                                  ? FeedDays.label(block.title)
+                                  : null,
                               collapsed: _collapsedSections.contains(
                                 block.title,
                               ),
@@ -1233,10 +1304,16 @@ class _BlockSection extends StatelessWidget {
     required this.collapsed,
     required this.onToggleCollapsed,
     this.dragPosition,
+    this.dayLabel,
   });
 
   final String slug;
   final ProjectBlock block;
+
+  /// What to show instead of the section's own name, where the name is not
+  /// something a person typed. A feed's sections are dates, so they read as
+  /// Today, Yesterday or the day itself — and are not renamed by hand.
+  final String? dayLabel;
 
   /// Fires when this section is touched anywhere, so the composer can add
   /// into it.
@@ -1363,11 +1440,30 @@ class _BlockSection extends StatelessWidget {
             onPressed: onToggleCollapsed,
           ),
           Expanded(
-            child: _BlockTitleField(
-              key: ValueKey('title-$slug-${block.title}'),
-              title: block.title,
-              onRename: (title) => state.renameBlock(slug, block.title, title),
-            ),
+            // A day is read, not typed: its name is the date, and renaming it
+            // by hand would file what is under it on a different day.
+            child: dayLabel != null
+                // The name of a day opens it. A folded day is a name and
+                // nothing else, and the obvious thing to press to see what is
+                // under it is the name.
+                ? InkWell(
+                    onTap: onToggleCollapsed,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Text(
+                        dayLabel!,
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  )
+                : _BlockTitleField(
+                    key: ValueKey('title-$slug-${block.title}'),
+                    title: block.title,
+                    onRename: (title) =>
+                        state.renameBlock(slug, block.title, title),
+                  ),
           ),
           ItemMenuButton(tooltip: 'Section actions', actions: actions),
           // A handle on every platform, unlike a row. A row is moved by
@@ -1862,6 +1958,13 @@ class _ProjectMenu extends StatelessWidget {
                   ? ProjectMode.tasks
                   : ProjectMode.notes,
             );
+          case 'feed':
+            await state.setMode(
+              project.slug,
+              project.mode == ProjectMode.feed
+                  ? ProjectMode.tasks
+                  : ProjectMode.feed,
+            );
           case 'notes':
             final notes = await TextPromptDialog.show(
               context,
@@ -1882,6 +1985,14 @@ class _ProjectMenu extends StatelessWidget {
             project.mode == ProjectMode.notes
                 ? 'Turn into a checklist'
                 : 'Turn into notes',
+          ),
+        ),
+        PopupMenuItem(
+          value: 'feed',
+          child: Text(
+            project.mode == ProjectMode.feed
+                ? 'Turn into a checklist'
+                : 'Turn into a feed',
           ),
         ),
         if (project.mode != ProjectMode.notes) ...const [
