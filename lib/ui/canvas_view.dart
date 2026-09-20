@@ -9,7 +9,6 @@ import 'package:provider/provider.dart';
 import '../markdown/canvas_cards.dart';
 import '../models/canvas_layout.dart';
 import '../state/app_state.dart';
-import '../storage/attachment_store.dart';
 import 'image_viewer.dart';
 import 'canvas_marks.dart';
 import 'canvas_snap.dart';
@@ -1829,10 +1828,8 @@ class CanvasViewState extends State<CanvasView> {
   Future<File?> _fileFor(int index) async {
     final path = widget.cards[index].imagePath;
     if (path == null) return null;
-    final repoPath = AttachmentStore.resolveRepoPath(path);
-    if (repoPath == null) return null;
     if (!mounted) return null;
-    return AttachmentStore().resolve(repoPath, context.read<AppState>().config);
+    return context.read<AppState>().attachmentFor(path);
   }
 
   /// Runs one of the picture actions and says what happened.
@@ -2413,12 +2410,8 @@ class _CanvasImage extends StatefulWidget {
 class _CanvasImageState extends State<_CanvasImage> {
   late final Future<File?> _file = _load();
 
-  Future<File?> _load() async {
-    final repoPath = AttachmentStore.resolveRepoPath(widget.reference);
-    if (repoPath == null) return null;
-    final state = context.read<AppState>();
-    return AttachmentStore().resolve(repoPath, state.config);
-  }
+  Future<File?> _load() =>
+      context.read<AppState>().attachmentFor(widget.reference);
 
   @override
   Widget build(BuildContext context) {

@@ -597,7 +597,10 @@ class CanvasLayout {
     );
   }
 
-  static String path(String slug) => 'canvas/$slug.json';
+  /// The folder every arrangement lives in, beside `projects/`.
+  static const dir = 'canvas';
+
+  static String path(String slug) => '$dir/$slug.json';
 
   String toJsonString() => const JsonEncoder.withIndent('  ').convert({
     'version': 1,

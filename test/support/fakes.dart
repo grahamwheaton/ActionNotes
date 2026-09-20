@@ -98,9 +98,26 @@ class FakeAttachmentStore extends AttachmentStore {
     return file.existsSync() ? file : null;
   }
 
+  /// Bytes the "remote" holds, keyed by repo name then path — so a test can
+  /// show which notebook a picture was actually fetched from, which is the
+  /// whole of what went wrong.
+  final Map<String, Map<String, List<int>>> remote = {};
+
+  /// The configs resolve was asked with, in order.
+  final List<GitHubConfig> askedWith = [];
+
   @override
-  Future<File?> resolve(String repoPath, GitHubConfig config) =>
-      cached(repoPath);
+  Future<File?> resolve(String repoPath, GitHubConfig config) async {
+    final local = await cached(repoPath);
+    if (local != null) return local;
+
+    askedWith.add(config);
+    if (!config.isComplete) return null;
+
+    final bytes = remote[config.repo]?[repoPath];
+    if (bytes == null) return null;
+    return save(repoPath, bytes);
+  }
 }
 
 /// Reports no repo configured by default, so nothing tries to reach the

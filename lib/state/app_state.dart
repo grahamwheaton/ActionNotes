@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -153,6 +154,50 @@ class AppState extends ChangeNotifier {
       (source) => source.id == id,
       orElse: () => NotesSource.ownedBy(_config),
     );
+  }
+
+  /// The file behind a picture in a note or on a canvas, fetched from
+  /// whichever notebook the picture belongs to.
+  ///
+  /// Every caller used to hand this your own repo, whatever notebook the
+  /// project was in. A picture in a shared list therefore could not be
+  /// fetched by anybody except whoever uploaded it and still had it cached,
+  /// and for somebody who joined with a code — no repo of their own at
+  /// all — no picture could ever be fetched.
+  ///
+  /// The notebook is worked out from the reference rather than passed in.
+  /// A reference is `../attachments/<project>/<file>`, so the project it
+  /// belongs to is in the string already, and a note does not have to be
+  /// told which project it is being drawn inside to show its own pictures.
+  Future<File?> attachmentFor(String reference) async {
+    final repoPath = AttachmentStore.resolveRepoPath(reference);
+    if (repoPath == null) return null;
+
+    // Already here: no notebook needs deciding, and nothing is fetched.
+    final local = await attachments.cached(repoPath);
+    if (local != null) return local;
+
+    final folder = repoPath.split('/').elementAtOrNull(1);
+    final candidates = [
+      // The project on screen first, for the ordinary case where a picture
+      // belongs to the list you are looking at.
+      if (projectBySlug(_selectedSlug ?? '') case final open?)
+        if (open.fileSlug == folder) open,
+      for (final project in _projects)
+        if (project.fileSlug == folder && project.slug != _selectedSlug)
+          project,
+    ];
+
+    for (final project in candidates) {
+      final config = _configFor(project.slug);
+      if (!config.isComplete) continue;
+      final file = await attachments.resolve(repoPath, config);
+      if (file != null) return file;
+    }
+
+    // Nothing claims it — an old reference, or a project not loaded yet.
+    // Your own repo is the only sensible guess left.
+    return attachments.resolve(repoPath, _config);
   }
 
   /// Which repo a project's edits are written to.
@@ -540,6 +585,9 @@ class AppState extends ChangeNotifier {
       );
       synced.addAll(result.projects);
       combined.addAll(result.merged);
+      // An arrangement that arrived is what makes a section a canvas rather
+      // than a list, so it goes in alongside the projects it belongs to.
+      _layouts.addAll(result.layouts);
       if (result.error != null) {
         problems.add(
           source.isMine ? result.error! : '${source.name}: ${result.error!}',

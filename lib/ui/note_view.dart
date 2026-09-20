@@ -192,11 +192,7 @@ class _NoteImageState extends State<_NoteImage> {
     _file = _load();
   }
 
-  Future<File?> _load() async {
-    final repoPath = AttachmentStore.resolveRepoPath(widget.reference);
-    if (repoPath == null) return null;
-    return widget.store.resolve(repoPath, widget.state.config);
-  }
+  Future<File?> _load() => widget.state.attachmentFor(widget.reference);
 
   @override
   Widget build(BuildContext context) {

@@ -17,6 +17,7 @@ class SyncResult {
     this.error,
     this.pending = 0,
     this.merged = const [],
+    this.layouts = const {},
   });
 
   final List<Project> projects;
@@ -30,6 +31,10 @@ class SyncResult {
   /// Titles that changed here and on GitHub at the same time and were
   /// combined. Worth mentioning, but nothing to answer.
   final List<String> merged;
+
+  /// Arrangements that arrived with this sync, keyed by project slug — the
+  /// difference between a section being a canvas and being a bullet list.
+  final Map<String, CanvasLayout> layouts;
 
   bool get ok => error == null;
 }
@@ -167,11 +172,14 @@ class SyncService {
           (a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()),
         );
 
+      final layouts = await _pullLayouts(client, projects, sourceId: sourceId);
+
       return SyncResult(
         projects: projects,
         error: problems.isEmpty ? null : problems.join('\n'),
         pending: projects.where((p) => p.dirty).length,
         merged: merged,
+        layouts: layouts,
       );
     } on GitHubException catch (error) {
       return SyncResult(
@@ -419,6 +427,58 @@ class SyncService {
   /// Absent, unreadable or nonsense all mean the same thing — no layout — so a
   /// canvas whose positions cannot be read opens as the list of pictures and
   /// notes it is rather than as an error.
+  /// Fetches the arrangements that have changed, for the projects in hand.
+  ///
+  /// A canvas is a section with an arrangement beside it, and the arrangement
+  /// is its own file. Sync pulled the markdown and never the arrangement, so
+  /// a canvas made on the desktop arrived on the phone as what it is without
+  /// one: an ordinary bullet list of pictures and notes. Everything was
+  /// there; it simply was not a canvas.
+  ///
+  /// One listing for the whole folder, and only the files whose SHA has
+  /// moved are fetched — the same bargain the projects themselves get, so
+  /// checking often stays affordable.
+  Future<Map<String, CanvasLayout>> _pullLayouts(
+    GitHubClient client,
+    List<Project> projects, {
+    required String sourceId,
+  }) async {
+    final wanted = {for (final p in projects) CanvasLayout.path(p.fileSlug): p};
+    if (wanted.isEmpty) return const {};
+
+    final pulled = <String, CanvasLayout>{};
+    try {
+      final listing = await client.listDirectory(CanvasLayout.dir);
+
+      for (final entry in listing.entries) {
+        final project = wanted[entry.key];
+        if (project == null) continue;
+
+        final known = await localStore.loadLayout(
+          project.fileSlug,
+          sourceId: sourceId,
+        );
+        if (!known.isEmpty && known.sha == entry.value) continue;
+
+        final file = await client.readFile(entry.key);
+        if (file == null) continue;
+
+        final layout = CanvasLayout.parse(file.content, sha: file.sha);
+        pulled[project.slug] = layout;
+        await localStore.saveLayout(
+          project.fileSlug,
+          layout,
+          sourceId: sourceId,
+        );
+      }
+    } catch (_) {
+      // An arrangement that could not be fetched leaves the section as a
+      // list, which is what it already looked like. The notes themselves are
+      // the part that must not fail.
+    }
+    return pulled;
+  }
+
   Future<CanvasLayout> readLayout(GitHubConfig config, String slug) async {
     final client = _clientFactory(config);
     try {

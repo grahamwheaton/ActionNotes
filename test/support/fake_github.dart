@@ -94,12 +94,14 @@ class FakeGitHub {
         return stubResponse('{}', 200);
       }
 
-      // A listing of projects/, or one file, or an empty folder.
-      if (path == 'projects' || path.endsWith('/projects')) {
+      // A folder listing: projects/, canvas/, attachments/<project>/. A
+      // path with no dot in its last part is a folder, the way GitHub
+      // answers a directory with a list rather than a file.
+      if (!path.split('/').last.contains('.')) {
         return stubResponse(
           jsonEncode([
             for (final entry in repo(name).keys)
-              if (entry.startsWith('projects/'))
+              if (entry.startsWith('$path/'))
                 {'type': 'file', 'path': entry, 'sha': shaOf(name, entry)},
           ]),
           200,
@@ -150,7 +152,11 @@ AppState stateWith(FakeGitHub github, FakeLocalStore store) {
 ///
 /// This is the common case for everyone after the first person, so almost
 /// nothing should depend on their own repo being set up.
-AppState guestWith(FakeGitHub github, FakeLocalStore store) {
+AppState guestWith(
+  FakeGitHub github,
+  FakeLocalStore store, {
+  FakeAttachmentStore? attachments,
+}) {
   return AppState(
     localStore: store,
     settingsStore: FakeSettingsStore(),
@@ -159,6 +165,7 @@ AppState guestWith(FakeGitHub github, FakeLocalStore store) {
       clientFactory: (config) =>
           GitHubClient(config, client: github.clientFor(config)),
     ),
+    attachmentStore: attachments,
     pushDelay: const Duration(milliseconds: 10),
   );
 }
