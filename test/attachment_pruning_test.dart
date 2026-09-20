@@ -21,16 +21,22 @@ http.Client trackingClient({
       deleted.add(Uri.decodeFull(request.url.path).split('/contents/').last);
       return stubResponse('{}', 200);
     }
-    if (request.url.path.contains('/contents/attachments')) {
-      return stubResponse(
-        jsonEncode([
-          for (final entry in directory.entries)
-            {'type': 'file', 'path': entry.key, 'sha': entry.value},
-        ]),
-        200,
-      );
-    }
-    return stubResponse('[]', 200);
+    // Only what is actually in the folder being asked for. GitHub scopes a
+    // listing to its path, and a fake that hands back everything would let a
+    // sweep of one folder appear to reach into another.
+    final at = Uri.decodeFull(request.url.path).split('/contents/').last;
+    final inside = {
+      for (final entry in directory.entries)
+        if (entry.key.startsWith('$at/')) entry.key: entry.value,
+    };
+
+    return stubResponse(
+      jsonEncode([
+        for (final entry in inside.entries)
+          {'type': 'file', 'path': entry.key, 'sha': entry.value},
+      ]),
+      200,
+    );
   });
 }
 
@@ -107,10 +113,7 @@ and ![two](../attachments/trip/two.jpg)
         ),
       );
 
-      await sync.pruneAttachments(
-        testConfig,
-        projectWith(['a.png', 'b.png']),
-      );
+      await sync.pruneAttachments(testConfig, projectWith(['a.png', 'b.png']));
 
       expect(deleted, isEmpty);
     });
@@ -190,6 +193,53 @@ and ![two](../attachments/trip/two.jpg)
         'attachments/trip/one.png',
         'attachments/trip/two.png',
       ]);
+    });
+
+    test('takes its canvas layout too', () async {
+      final deleted = <String>[];
+      final sync = SyncService(
+        localStore: FakeLocalStore(),
+        clientFactory: (config) => GitHubClient(
+          config,
+          client: trackingClient(
+            directory: {
+              'canvas/trip.json': 'sha-canvas',
+              // Another project's, which must be left alone.
+              'canvas/house.json': 'sha-other',
+            },
+            deleted: deleted,
+          ),
+        ),
+      );
+
+      final problem = await sync.deleteRemote(
+        testConfig,
+        Project(slug: 'trip', title: 'Trip', sha: 'file-sha'),
+      );
+
+      expect(problem, isNull);
+      // Left behind, this was orphaned on GitHub for good — and a project
+      // later made with the same name would have inherited its canvases.
+      expect(deleted, contains('canvas/trip.json'));
+      expect(deleted, isNot(contains('canvas/house.json')));
+    });
+
+    test('a project with no canvases deletes nothing extra', () async {
+      final deleted = <String>[];
+      final sync = SyncService(
+        localStore: FakeLocalStore(),
+        clientFactory: (config) => GitHubClient(
+          config,
+          client: trackingClient(directory: const {}, deleted: deleted),
+        ),
+      );
+
+      await sync.deleteRemote(
+        testConfig,
+        Project(slug: 'trip', title: 'Trip', sha: 'file-sha'),
+      );
+
+      expect(deleted, ['projects/trip.md']);
     });
   });
 }

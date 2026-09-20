@@ -402,6 +402,7 @@ class SyncService {
       );
       // The project's images have nothing left referring to them.
       await _deleteAttachmentDirectory(client, project);
+      await _deleteLayout(client, project);
       return null;
     } on GitHubException catch (error) {
       return 'Removed here, but GitHub still has the file: ${error.message}';
@@ -409,6 +410,34 @@ class SyncService {
       return 'Removed here, but GitHub could not be reached.';
     } finally {
       client.dispose();
+    }
+  }
+
+  /// Removes the canvas layout belonging to a deleted project.
+  ///
+  /// The markdown and the attachments were already being cleaned up and this
+  /// was not, so every deleted project left its arrangement behind on GitHub
+  /// for good — and a project later made with the same name would silently
+  /// inherit the dead one's canvases.
+  ///
+  /// Swallowed like the attachments, and for the same reason: the project
+  /// itself is gone, and a leftover file is untidy rather than broken.
+  Future<void> _deleteLayout(GitHubClient client, Project project) async {
+    try {
+      final path = CanvasLayout.path(project.slug);
+      // The folder, not the file: listing a single file gives back the file
+      // rather than a listing, and what is needed here is its SHA.
+      final files = await client.listDirectory(path.split('/').first);
+      final sha = files[path];
+      if (sha == null) return;
+
+      await client.deleteFile(
+        path: path,
+        sha: sha,
+        message: 'Remove the canvas layout for ${project.title}',
+      );
+    } catch (_) {
+      // Nothing depends on this having worked.
     }
   }
 
