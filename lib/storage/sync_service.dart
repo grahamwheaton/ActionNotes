@@ -3,6 +3,7 @@ import '../markdown/project_markdown.dart';
 import '../markdown/project_merge.dart';
 import '../models/checklist_item.dart';
 import '../models/canvas_layout.dart';
+import '../models/notes_source.dart';
 import '../models/project.dart';
 import 'github_client.dart';
 import 'local_store.dart';
@@ -61,8 +62,22 @@ class SyncService {
   /// layer without reaching the network.
   final GitHubClient Function(GitHubConfig) _clientFactory;
 
-  Future<SyncResult> sync(GitHubConfig config) async {
-    final local = await localStore.loadAll();
+  /// How this service reaches GitHub, so that anything else needing a client
+  /// — checking a share code, say — reaches it the same way rather than
+  /// building its own and going round whatever a test has put in place.
+  GitHubClient clientFor(GitHubConfig config) => _clientFactory(config);
+
+  /// Brings one notebook into step with its repo.
+  ///
+  /// [sourceId] says which notebook: your own by default, or a shared one.
+  /// The repo has never heard of notebooks, so everything inside here is
+  /// keyed by the file's own name and only the projects handed back carry
+  /// the notebook they came from.
+  Future<SyncResult> sync(
+    GitHubConfig config, {
+    String sourceId = NotesSource.mineId,
+  }) async {
+    final local = await localStore.loadAll(sourceId: sourceId);
 
     if (!config.isComplete) {
       return SyncResult(
@@ -74,7 +89,7 @@ class SyncService {
 
     final client = _clientFactory(config);
     try {
-      final byslug = {for (final project in local) project.slug: project};
+      final byslug = {for (final project in local) project.fileSlug: project};
       final problems = <String>[];
       final conflicts = <ProjectConflict>[];
 
@@ -88,8 +103,8 @@ class SyncService {
             sha: project.sha,
           );
           final pushed = project.copyWith(sha: sha, dirty: false);
-          byslug[project.slug] = pushed;
-          await localStore.save(pushed);
+          byslug[project.fileSlug] = pushed;
+          await localStore.save(pushed, sourceId: sourceId);
         } on GitHubException catch (error) {
           // 409 means the file moved on under us. 422 means our SHA was
           // rejected outright, which happens when the local copy never had
@@ -111,7 +126,7 @@ class SyncService {
                   file.content,
                   slug: project.slug,
                   sha: file.sha,
-                ),
+                ).copyWith(sourceId: sourceId),
               ),
             );
           } else {
@@ -133,13 +148,13 @@ class SyncService {
 
         final remote = ProjectMarkdown.parse(
           file.content,
-          slug: slug,
+          slug: Project.keyOf(sourceId, slug),
           sha: file.sha,
-        );
+        ).copyWith(sourceId: sourceId);
         if (existing != null && existing.sha == file.sha) continue;
 
         byslug[slug] = remote;
-        await localStore.save(remote);
+        await localStore.save(remote, sourceId: sourceId);
       }
 
       final projects = byslug.values.toList()
@@ -261,7 +276,7 @@ class SyncService {
       return 'Connect a GitHub repo in Settings before archiving.';
     }
 
-    final path = '${GitHubClient.archiveDir}/${project.slug}.md';
+    final path = '${GitHubClient.archiveDir}/${project.fileSlug}.md';
     final client = _clientFactory(config);
     try {
       final existing = await client.readFile(path);
@@ -273,7 +288,7 @@ class SyncService {
           ..writeln('# ${project.title} — archive')
           ..writeln()
           ..writeln(
-            'Completed items moved out of `projects/${project.slug}.md`.',
+            'Completed items moved out of `projects/${project.fileSlug}.md`.',
           )
           ..writeln();
       } else {
@@ -424,7 +439,7 @@ class SyncService {
   /// itself is gone, and a leftover file is untidy rather than broken.
   Future<void> _deleteLayout(GitHubClient client, Project project) async {
     try {
-      final path = CanvasLayout.path(project.slug);
+      final path = CanvasLayout.path(project.fileSlug);
       // The folder, not the file: listing a single file gives back the file
       // rather than a listing, and what is needed here is its SHA.
       final files = await client.listDirectory(path.split('/').first);
@@ -452,7 +467,7 @@ class SyncService {
   ) async {
     try {
       final files = await client.listDirectory(
-        '${GitHubClient.attachmentsDir}/${project.slug}',
+        '${GitHubClient.attachmentsDir}/${project.fileSlug}',
       );
       for (final entry in files.entries) {
         await client.deleteFile(
@@ -482,7 +497,7 @@ class SyncService {
     final client = _clientFactory(config);
     try {
       final files = await client.listDirectory(
-        '${GitHubClient.attachmentsDir}/${project.slug}',
+        '${GitHubClient.attachmentsDir}/${project.fileSlug}',
       );
 
       for (final entry in files.entries) {

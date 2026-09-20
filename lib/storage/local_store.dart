@@ -68,9 +68,11 @@ class LocalStore {
       projects.add(
         ProjectMarkdown.parse(
           source,
-          slug: slug,
+          // The folder is the notebook's, so the file's own name is all that
+          // is on disk — the notebook is put back on here.
+          slug: Project.keyOf(sourceId, slug),
           sha: meta['sha'] as String?,
-        ).copyWith(dirty: meta['dirty'] as bool? ?? false),
+        ).copyWith(dirty: meta['dirty'] as bool? ?? false, sourceId: sourceId),
       );
     }
 
@@ -87,14 +89,15 @@ class LocalStore {
     final root = await _ensureRoot(sourceId);
     await _markdownFile(
       root,
-      project.slug,
+      project.fileSlug,
     ).writeAsString(ProjectMarkdown.serialize(project));
     // Merged rather than replaced: the canvas layout keeps its own SHA in
     // here, and writing the project would otherwise forget it.
-    final meta = Map<String, dynamic>.from(await _readMeta(root, project.slug))
-      ..['sha'] = project.sha
-      ..['dirty'] = project.dirty;
-    await _metaFile(root, project.slug).writeAsString(jsonEncode(meta));
+    final meta =
+        Map<String, dynamic>.from(await _readMeta(root, project.fileSlug))
+          ..['sha'] = project.sha
+          ..['dirty'] = project.dirty;
+    await _metaFile(root, project.fileSlug).writeAsString(jsonEncode(meta));
   }
 
   /// Where this project's canvases put things, or an empty layout when it has

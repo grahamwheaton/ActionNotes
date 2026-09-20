@@ -1,4 +1,5 @@
 import 'checklist_item.dart';
+import 'notes_source.dart';
 
 /// How a project is meant to be read.
 ///
@@ -72,9 +73,16 @@ class Project {
     this.extraFrontMatter = const {},
     this.sha,
     this.dirty = false,
+    this.sourceId = NotesSource.mineId,
   });
 
-  /// Filename without the `.md`. Stable for the life of the project.
+  /// How the app refers to this project, and unique across every notebook.
+  ///
+  /// For your own notes this is the filename, as it always was. For a project
+  /// in a shared notebook it carries the notebook in front of it, because two
+  /// notebooks can each hold a `shopping.md` and the app needs to be able to
+  /// tell them apart without every screen having to carry a notebook around
+  /// beside the name.
   final String slug;
   final String title;
   final List<ChecklistItem> items;
@@ -106,7 +114,29 @@ class Project {
   /// True when the local copy has edits that are not yet on GitHub.
   final bool dirty;
 
-  String get path => 'projects/$slug.md';
+  /// Which notebook this came from.
+  final String sourceId;
+
+  /// What the file is actually called, in whichever repo it lives in.
+  ///
+  /// Everything written into the repo — the file, its attachments, its canvas
+  /// layout — is named by this rather than by [slug], because the repo has
+  /// never heard of the notebook the app keeps it under.
+  String get fileSlug {
+    final prefix = '$sourceId~';
+    return slug.startsWith(prefix) ? slug.substring(prefix.length) : slug;
+  }
+
+  bool get isShared => sourceId != NotesSource.mineId;
+
+  /// The app-wide name for a project called [fileSlug] in [sourceId].
+  ///
+  /// `~` because a slug is only ever letters, digits and dashes, so it can
+  /// never turn up in one by accident.
+  static String keyOf(String sourceId, String fileSlug) =>
+      sourceId == NotesSource.mineId ? fileSlug : '$sourceId~$fileSlug';
+
+  String get path => 'projects/$fileSlug.md';
 
   int get doneCount => items.where((i) => i.done).length;
 
@@ -136,9 +166,11 @@ class Project {
     Map<String, String>? extraFrontMatter,
     String? sha,
     bool? dirty,
+    String? sourceId,
   }) {
     return Project(
       slug: slug,
+      sourceId: sourceId ?? this.sourceId,
       title: title ?? this.title,
       items: items ?? this.items,
       notes: notes ?? this.notes,

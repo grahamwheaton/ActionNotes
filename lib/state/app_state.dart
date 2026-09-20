@@ -9,9 +9,11 @@ import '../markdown/project_links.dart';
 import '../markdown/project_merge.dart';
 import '../models/canvas_layout.dart';
 import '../models/checklist_item.dart';
+import '../models/notes_source.dart';
 import '../models/project.dart';
 import '../storage/attachment_store.dart';
 import '../storage/github_client.dart';
+import '../storage/share_code.dart';
 import '../storage/image_encoder.dart';
 import '../storage/local_store.dart';
 import '../storage/settings_store.dart';
@@ -92,6 +94,10 @@ class AppState extends ChangeNotifier {
   final Set<String> _pushing = {};
 
   List<Project> _projects = [];
+
+  /// Yours, plus any shared notebook a code has been pasted for. Yours is
+  /// always first and always present, even before it is signed in to.
+  List<NotesSource> _sources = const [];
   GitHubConfig _config = const GitHubConfig(
     owner: '',
     repo: '',
@@ -111,6 +117,29 @@ class AppState extends ChangeNotifier {
 
   List<Project> get projects => List.unmodifiable(_projects);
   GitHubConfig get config => _config;
+
+  /// Every notebook: yours first, then any shared with you.
+  List<NotesSource> get sources => List.unmodifiable(_sources);
+
+  List<NotesSource> get sharedSources =>
+      _sources.where((source) => !source.isMine).toList();
+
+  /// The notebook a project belongs to, or your own when it is not one the
+  /// app knows about — which is what everything was before sharing.
+  NotesSource sourceOf(String slug) {
+    final id = projectBySlug(slug)?.sourceId ?? NotesSource.mineId;
+    return _sources.firstWhere(
+      (source) => source.id == id,
+      orElse: () => NotesSource.ownedBy(_config),
+    );
+  }
+
+  /// Which repo a project's edits are written to.
+  GitHubConfig _configFor(String slug) => sourceOf(slug).config;
+
+  /// The file's own name in its repo, which is what every remote path is
+  /// built from.
+  String _fileSlug(String slug) => projectBySlug(slug)?.fileSlug ?? slug;
   bool get loading => _loading;
   bool get syncing => _syncing;
   String? get message => _message;
@@ -251,15 +280,22 @@ class AppState extends ChangeNotifier {
   Future<void> init() async {
     _themeMode = await _settingsStore.loadThemeMode();
     _login = await _settingsStore.loadLogin();
-    _config = await _settingsStore.load();
-    _projects = await _localStore.loadAll();
+    _sources = await _settingsStore.loadSources();
+    _config = _sources.first.config;
+
+    _projects = [
+      for (final source in _sources)
+        ...await _localStore.loadAll(sourceId: source.id),
+    ];
     for (final project in _projects) {
       await _loadLayout(project.slug);
     }
     _loading = false;
     notifyListeners();
 
-    if (_config.isComplete) unawaited(sync());
+    if (_sources.any((source) => source.config.isComplete)) {
+      unawaited(sync());
+    }
   }
 
   /// Starts checking for other people's changes while the app is in front.
@@ -269,7 +305,9 @@ class AppState extends ChangeNotifier {
   void startWatching() {
     _watch?.cancel();
     _watch = Timer.periodic(_syncInterval, (_) {
-      if (_config.isComplete && !_syncing) unawaited(sync());
+      if (_sources.any((s) => s.config.isComplete) && !_syncing) {
+        unawaited(sync());
+      }
     });
   }
 
@@ -280,8 +318,37 @@ class AppState extends ChangeNotifier {
     _watch = null;
   }
 
-  Future<void> sync() async {
-    if (_syncing) return;
+  /// How many syncs are outstanding: the one running, plus at most one
+  /// waiting behind it.
+  int _queuedSyncs = 0;
+  Future<void> _syncChain = Future<void>.value();
+
+  /// Brings every notebook into step, waiting for any sync already running.
+  ///
+  /// Waiting rather than returning. A caller that has just changed
+  /// something — taken on a shared notebook, moved a project — asks for a
+  /// sync *because* of that change, and a sync already in flight was started
+  /// before it and cannot include it. Returning early there meant the new
+  /// notebook showed nothing until the next poll three quarters of a minute
+  /// later, for no reason anyone could see.
+  ///
+  /// At most one waits: past that, the one already waiting has not started
+  /// yet and so will pick up whatever has changed by the time it does.
+  Future<void> sync() {
+    if (_queuedSyncs >= 2) return _syncChain;
+
+    _queuedSyncs++;
+    _syncChain = _syncChain.then((_) async {
+      try {
+        await _runSync();
+      } finally {
+        _queuedSyncs--;
+      }
+    });
+    return _syncChain;
+  }
+
+  Future<void> _runSync() async {
     _syncing = true;
     notifyListeners();
 
@@ -296,10 +363,38 @@ class AppState extends ChangeNotifier {
     // be told from one it left alone.
     final before = {for (final project in _projects) project.slug: project};
 
-    final result = await _syncService.sync(_config);
-    _projects = _reconcile(before, result.projects);
-    _message = result.error;
-    _conflicts = result.conflicts;
+    // Each notebook is its own repo, so each is its own sync. One that fails
+    // says so without stopping the others: a shared notebook whose token has
+    // been revoked should not take your own notes offline with it.
+    final synced = <Project>[];
+    final problems = <String>[];
+    final conflicts = <ProjectConflict>[];
+
+    for (final source in _sources) {
+      if (!source.config.isComplete) {
+        synced.addAll(
+          _projects.where((project) => project.sourceId == source.id),
+        );
+        continue;
+      }
+
+      final result = await _syncService.sync(
+        source.config,
+        sourceId: source.id,
+      );
+      synced.addAll(result.projects);
+      conflicts.addAll(result.conflicts);
+      if (result.error != null) {
+        problems.add(
+          source.isMine ? result.error! : '${source.name}: ${result.error!}',
+        );
+      }
+    }
+
+    _projects = _reconcile(before, synced);
+    _message = problems.isEmpty ? null : problems.join('\n');
+    _conflicts = conflicts;
+    final result = SyncResult(projects: synced, error: _message);
     // Only a sync that actually reached GitHub counts as having heard from
     // it: saying "synced a minute ago" after a failed attempt would be worse
     // than saying nothing.
@@ -361,7 +456,11 @@ class AppState extends ChangeNotifier {
     // Cancel any queued push; it would carry the stale SHA.
     _pendingPushes.remove(slug)?.cancel();
 
-    final settled = await _syncService.resolve(_config, conflict, resolution);
+    final settled = await _syncService.resolve(
+      _configFor(conflict.local.slug),
+      conflict,
+      resolution,
+    );
 
     _conflicts = _conflicts.where((c) => c.slug != slug).toList();
     _projects = [
@@ -379,9 +478,76 @@ class AppState extends ChangeNotifier {
 
   Future<void> updateConfig(GitHubConfig config) async {
     _config = config;
+    _sources = [
+      NotesSource.ownedBy(config),
+      ..._sources.where((source) => !source.isMine),
+    ];
     await _settingsStore.save(config);
     notifyListeners();
     if (config.isComplete) await sync();
+  }
+
+  /// Takes on a notebook someone has shared, from the code they sent.
+  ///
+  /// Returns null when it worked, or a sentence saying why not. Everything
+  /// that can go wrong here goes wrong in someone's hands rather than in a
+  /// log, so each answer is the next thing they would need to do.
+  Future<String?> addSharedNotebook(String code, {String label = ''}) async {
+    final config = ShareCode.decode(code);
+    if (config == null) {
+      return ShareCode.looksLikeOne(code)
+          ? 'That code is damaged — ask for it again, and paste the whole of it.'
+          : 'That does not look like a share code.';
+    }
+
+    if (config.owner == _config.owner && config.repo == _config.repo) {
+      return 'That is your own notebook, which you already have.';
+    }
+
+    final id = NotesSource.idFor(config);
+    if (_sources.any((source) => source.id == id)) {
+      return 'You already have that notebook.';
+    }
+
+    // Tried before it is kept, so a code that cannot reach anything says so
+    // now rather than becoming a notebook that never loads.
+    final problem = await testConnection(config);
+    if (problem != null) return problem;
+
+    _sources = [..._sources, NotesSource.sharedFrom(config, label: label)];
+    await _settingsStore.saveSharedSources(_sources);
+    notifyListeners();
+    await sync();
+    return null;
+  }
+
+  /// Gives a shared notebook up: its projects, its local copy and its token.
+  ///
+  /// What is in the repo is untouched — this is one device letting go, not a
+  /// deletion. The token goes, so the notebook is no longer reachable from
+  /// here without the code again.
+  Future<void> forgetSharedNotebook(String id) async {
+    if (id == NotesSource.mineId) return;
+
+    _sources = _sources.where((source) => source.id != id).toList();
+    _projects = _projects.where((p) => p.sourceId != id).toList();
+    if (projectBySlug(_selectedSlug ?? '') == null) _selectedSlug = null;
+
+    await _settingsStore.forgetSharedSource(id);
+    await _localStore.forget(id);
+    notifyListeners();
+  }
+
+  /// The code to hand someone so they can reach a shared notebook.
+  ///
+  /// Null for your own, which has no code: the token in it is the one that
+  /// reaches everything you have.
+  String? shareCodeFor(String sourceId) {
+    final source = _sources.firstWhere(
+      (source) => source.id == sourceId,
+      orElse: () => NotesSource.ownedBy(_config),
+    );
+    return source.isMine ? null : ShareCode.encode(source.config);
   }
 
   /// Checks the repo is reachable with these details. Returns null on success,
@@ -389,7 +555,7 @@ class AppState extends ChangeNotifier {
   Future<String?> testConnection(GitHubConfig config) async {
     if (!config.isComplete) return 'Fill in owner, repo, branch and token.';
 
-    final client = GitHubClient(config);
+    final client = _syncService.clientFor(config);
     try {
       await client.checkAccess();
       return null;
@@ -430,7 +596,7 @@ class AppState extends ChangeNotifier {
 
     _projects = [..._projects, project]
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-    await _localStore.save(project);
+    await _localStore.save(project, sourceId: project.sourceId);
     notifyListeners();
     _schedulePush(slug);
     return project;
@@ -438,6 +604,86 @@ class AppState extends ChangeNotifier {
 
   Future<void> renameProject(String slug, String title) =>
       _mutate(slug, (project) => project.copyWith(title: title.trim()));
+
+  /// Moves a project into another notebook — which is what sharing one is.
+  ///
+  /// Moved rather than copied, deliberately. Two copies of a list drift apart
+  /// within a day and there is no honest way to say afterwards which one was
+  /// real; one copy in a place you both reach is the whole point. Bringing it
+  /// back is the same move the other way.
+  ///
+  /// Returns null on success, or a sentence saying why not.
+  Future<String?> moveProject(String slug, String toSourceId) async {
+    final project = projectBySlug(slug);
+    if (project == null) return 'That project is no longer here.';
+    if (project.sourceId == toSourceId) return null;
+
+    final target = _sources.where((s) => s.id == toSourceId).firstOrNull;
+    if (target == null) return 'That notebook is no longer here.';
+    if (!target.config.isComplete) {
+      return '${target.name} is not set up to write to.';
+    }
+
+    // Written to the new notebook before it is taken out of the old one: a
+    // move that failed half way should leave the project where it was, not
+    // nowhere.
+    final fileSlug = _uniqueSlug(project.fileSlug, sourceId: toSourceId);
+    final moved = project.copyWith(
+      sourceId: toSourceId,
+      // A file in a new repo has never been seen there, so it carries no SHA
+      // from the old one — sending that would be a conflict with a file that
+      // has nothing to do with it.
+      sha: null,
+      dirty: true,
+    );
+    final landed = Project(
+      slug: Project.keyOf(toSourceId, fileSlug),
+      sourceId: toSourceId,
+      title: moved.title,
+      items: moved.items,
+      notes: moved.notes,
+      mode: moved.mode,
+      blocks: moved.blocks,
+      created: moved.created,
+      updated: DateTime.now().toUtc(),
+      extraFrontMatter: moved.extraFrontMatter,
+      dirty: true,
+    );
+
+    await _localStore.save(landed, sourceId: toSourceId);
+
+    // The arrangement goes too, or the canvases arrive as bare lists.
+    final layout = layoutFor(slug);
+    if (!layout.isEmpty) {
+      _layouts[landed.slug] = layout.copyWith(sha: null);
+      await _localStore.saveLayout(
+        fileSlug,
+        _layouts[landed.slug]!,
+        sourceId: toSourceId,
+      );
+    }
+
+    _projects = [..._projects.where((p) => p.slug != slug), landed]
+      ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
+
+    if (_selectedSlug == slug) _selectedSlug = landed.slug;
+    _layouts.remove(slug);
+    notifyListeners();
+
+    // Now take it out of where it was. Its pictures go with it only as far as
+    // the markdown refers to them; moving the files themselves is a thing to
+    // do properly rather than quickly, so for now a project with pictures
+    // keeps them where they were and says so.
+    await _localStore.delete(project.fileSlug, sourceId: project.sourceId);
+    final problem = await _syncService.deleteRemote(
+      _configFor(project.slug),
+      project,
+    );
+
+    _schedulePush(landed.slug);
+    unawaited(_pushLayout(landed.slug));
+    return problem;
+  }
 
   /// Adds an item at the top, where it can be seen — the list is read
   /// newest-first, and the file keeps that same order.
@@ -625,7 +871,7 @@ class AppState extends ChangeNotifier {
     // naming: a file called .png has to actually be one.
     final encoded = ImageEncoder.prepare(fileName, bytes);
     final name = AttachmentStore.uniqueFileName(encoded.fileName, taken);
-    final repoPath = AttachmentStore.repoPath(slug, name);
+    final repoPath = AttachmentStore.repoPath(project.fileSlug, name);
 
     try {
       await _syncService.uploadAttachment(
@@ -636,7 +882,8 @@ class AppState extends ChangeNotifier {
       );
       // Cache it so the note renders without a round trip.
       await attachments.save(repoPath, encoded.bytes);
-      return '![$name](${AttachmentStore.markdownPath(slug, name)})';
+      return '![$name]'
+          '(${AttachmentStore.markdownPath(project.fileSlug, name)})';
     } on GitHubException catch (error) {
       _message = 'Could not upload the image: ${error.message}';
       notifyListeners();
@@ -794,7 +1041,11 @@ class AppState extends ChangeNotifier {
     final done = project.items.where((item) => item.done).toList();
     if (done.isEmpty) return 'Nothing is completed yet.';
 
-    final problem = await _syncService.archiveItems(_config, project, done);
+    final problem = await _syncService.archiveItems(
+      _configFor(project.slug),
+      project,
+      done,
+    );
     if (problem != null) return problem;
 
     await _mutate(
@@ -909,7 +1160,10 @@ class AppState extends ChangeNotifier {
       layoutFor(slug).isCanvas(section);
 
   Future<void> _loadLayout(String slug) async {
-    final layout = await _localStore.loadLayout(slug);
+    final layout = await _localStore.loadLayout(
+      _fileSlug(slug),
+      sourceId: sourceOf(slug).id,
+    );
     if (layout.isEmpty) return;
     _layouts[slug] = layout;
     notifyListeners();
@@ -1278,16 +1532,28 @@ class AppState extends ChangeNotifier {
   Future<void> _pushLayout(String slug) async {
     _layoutTimers.remove(slug)?.cancel();
     final layout = layoutFor(slug);
-    await _localStore.saveLayout(slug, layout);
+    await _localStore.saveLayout(
+      _fileSlug(slug),
+      layout,
+      sourceId: sourceOf(slug).id,
+    );
     if (!_config.isComplete) return;
 
     try {
-      final pushed = await _syncService.writeLayout(_config, slug, layout);
+      final pushed = await _syncService.writeLayout(
+        _configFor(slug),
+        _fileSlug(slug),
+        layout,
+      );
       // Adopt the SHA whatever else has happened in the meantime, the same as
       // a project push does: throwing it away is what made every later write
       // fail against a SHA GitHub had already moved past.
       _layouts[slug] = layoutFor(slug).copyWith(sha: pushed.sha);
-      await _localStore.saveLayout(slug, _layouts[slug]!);
+      await _localStore.saveLayout(
+        _fileSlug(slug),
+        _layouts[slug]!,
+        sourceId: sourceOf(slug).id,
+      );
     } catch (_) {
       // An arrangement is worth no interruption. It is saved on the device and
       // the next change will try again.
@@ -1313,10 +1579,13 @@ class AppState extends ChangeNotifier {
     if (_selectedSlug == slug) _selectedSlug = null;
     if (_openNote?.slug == slug) _openNote = null;
     _projects = _projects.where((p) => p.slug != slug).toList();
-    await _localStore.delete(slug);
+    await _localStore.delete(project.fileSlug, sourceId: project.sourceId);
     notifyListeners();
 
-    final problem = await _syncService.deleteRemote(_config, project);
+    final problem = await _syncService.deleteRemote(
+      _configFor(project.slug),
+      project,
+    );
     if (problem != null) {
       _message = problem;
       notifyListeners();
@@ -1339,7 +1608,7 @@ class AppState extends ChangeNotifier {
 
     _projects = _projects.map((p) => p.slug == slug ? updated : p).toList()
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-    await _localStore.save(updated);
+    await _localStore.save(updated, sourceId: updated.sourceId);
     notifyListeners();
     _schedulePush(slug);
   }
@@ -1381,7 +1650,7 @@ class AppState extends ChangeNotifier {
     _pushing.add(slug);
     final Project pushed;
     try {
-      pushed = await _syncService.push(_config, project);
+      pushed = await _syncService.push(_configFor(project.slug), project);
     } finally {
       _pushing.remove(slug);
     }
@@ -1390,7 +1659,7 @@ class AppState extends ChangeNotifier {
 
     // An image dropped from a note leaves its file behind, so tidy up once
     // the note itself has landed.
-    unawaited(_syncService.pruneAttachments(_config, pushed));
+    unawaited(_syncService.pruneAttachments(_configFor(pushed.slug), pushed));
 
     final latest = projectBySlug(slug);
     if (latest == null) return;
@@ -1403,14 +1672,19 @@ class AppState extends ChangeNotifier {
     final settled = latest.copyWith(sha: pushed.sha, dirty: editedWhilePushing);
 
     _projects = _projects.map((p) => p.slug == slug ? settled : p).toList();
-    await _localStore.save(settled);
+    await _localStore.save(settled, sourceId: settled.sourceId);
     notifyListeners();
 
     if (editedWhilePushing) _schedulePush(slug);
   }
 
-  String _uniqueSlug(String base) {
-    final taken = _projects.map((p) => p.slug).toSet();
+  /// A file name nothing in [sourceId] is already using.
+  String _uniqueSlug(String base, {String sourceId = NotesSource.mineId}) {
+    final taken = _projects
+        .where((p) => p.sourceId == sourceId)
+        .map((p) => p.fileSlug)
+        .toSet();
+
     if (!taken.contains(base)) return base;
     var suffix = 2;
     while (taken.contains('$base-$suffix')) {
@@ -1419,8 +1693,23 @@ class AppState extends ChangeNotifier {
     return '$base-$suffix';
   }
 
+  bool _disposed = false;
+
+  /// Nothing to say once nobody is listening.
+  ///
+  /// A sync started before the app let go of this can land after it: the
+  /// request is already in flight and cannot be recalled. Without this it
+  /// arrives to find a disposed notifier and throws, which is a crash caused
+  /// entirely by good timing.
+  @override
+  void notifyListeners() {
+    if (_disposed) return;
+    super.notifyListeners();
+  }
+
   @override
   void dispose() {
+    _disposed = true;
     stopWatching();
     for (final timer in _pendingPushes.values) {
       timer.cancel();
