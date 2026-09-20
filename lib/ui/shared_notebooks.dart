@@ -49,6 +49,10 @@ class SharedNotebooksCard extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 12),
+        // Only once there is somebody to be told apart from. Asking a
+        // person with no shared notebooks who they are is a question
+        // about nothing.
+        if (shared.isNotEmpty) const _YourNameField(),
         for (final source in shared) _NotebookRow(source: source),
         if (shared.isNotEmpty) const SizedBox(height: 8),
         OutlinedButton.icon(
@@ -57,6 +61,72 @@ class SharedNotebooksCard extends StatelessWidget {
           label: const Text('Add a notebook'),
         ),
       ],
+    );
+  }
+}
+
+/// What to sign things with, for somebody with no GitHub account.
+///
+/// Signing in gives a name for free, so this only appears when there is not
+/// one — and it is the difference between a shared list where you can see who
+/// wrote what and one where every message is from "me".
+class _YourNameField extends StatefulWidget {
+  const _YourNameField();
+
+  @override
+  State<_YourNameField> createState() => _YourNameFieldState();
+}
+
+class _YourNameFieldState extends State<_YourNameField> {
+  late final TextEditingController _name;
+
+  @override
+  void initState() {
+    super.initState();
+    final state = context.read<AppState>();
+    _name = TextEditingController(
+      text: state.displayName ?? (state.needsName ? '' : state.me),
+    );
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final needed = context.watch<AppState>().needsName;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _name,
+            textCapitalization: TextCapitalization.words,
+            onChanged: (value) =>
+                context.read<AppState>().setDisplayName(value),
+            decoration: InputDecoration(
+              labelText: 'Your name',
+              hintText: 'What the others should see',
+              border: const OutlineInputBorder(),
+              errorText: needed ? 'Everything you write is signed "me"' : null,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Used to sign notes and messages you leave, so the other people '
+            'can tell who wrote what.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -174,6 +244,7 @@ class AddNotebookDialog extends StatefulWidget {
 class _AddNotebookDialogState extends State<AddNotebookDialog> {
   final _code = TextEditingController();
   final _name = TextEditingController();
+  final _you = TextEditingController();
   final _token = TextEditingController();
   final _owner = TextEditingController();
   final _repo = TextEditingController();
@@ -187,7 +258,7 @@ class _AddNotebookDialogState extends State<AddNotebookDialog> {
 
   @override
   void dispose() {
-    for (final controller in [_code, _name, _token, _owner, _repo]) {
+    for (final controller in [_code, _name, _you, _token, _owner, _repo]) {
       controller.dispose();
     }
     super.dispose();
@@ -234,6 +305,20 @@ class _AddNotebookDialogState extends State<AddNotebookDialog> {
       : _code.text.trim();
 
   Future<void> _add() async {
+    // Asked for here rather than left to Settings, because this is the one
+    // moment somebody is certainly about to write something other people
+    // will read. Without it every message in the notebook is signed "me",
+    // including theirs, and a conversation where both sides are "me" cannot
+    // be read at all.
+    if (context.read<AppState>().needsName && _you.text.trim().isEmpty) {
+      setState(
+        () => _problem =
+            'Put your name in, so the others know who '
+            'wrote what.',
+      );
+      return;
+    }
+
     if (_setUp &&
         (_owner.text.trim().isEmpty ||
             _repo.text.trim().isEmpty ||
@@ -247,7 +332,12 @@ class _AddNotebookDialogState extends State<AddNotebookDialog> {
       _problem = null;
     });
 
-    final problem = await context.read<AppState>().addSharedNotebook(
+    final state = context.read<AppState>();
+    if (_you.text.trim().isNotEmpty) {
+      await state.setDisplayName(_you.text.trim());
+    }
+
+    final problem = await state.addSharedNotebook(
       _codeToUse,
       label: _name.text.trim(),
     );
@@ -301,6 +391,19 @@ class _AddNotebookDialogState extends State<AddNotebookDialog> {
                   border: OutlineInputBorder(),
                 ),
               ),
+              if (context.watch<AppState>().needsName) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _you,
+                  enabled: !_busy,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Your name',
+                    hintText: 'What the others should see',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
               if (_problem != null) ...[
                 const SizedBox(height: 14),
                 Text(

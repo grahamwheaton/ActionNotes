@@ -133,6 +133,7 @@ class AppState extends ChangeNotifier {
   NoteTarget? _revealed;
   DateTime? _lastSynced;
   String? _login;
+  String? _displayName;
   ThemeMode _themeMode = ThemeMode.system;
 
   List<Project> get projects => List.unmodifiable(_projects);
@@ -270,14 +271,39 @@ class AppState extends ChangeNotifier {
     await _settingsStore.saveThemeMode(mode);
   }
 
-  /// Who a message in a note is signed as: the signed-in account if there is
-  /// one, the repo owner otherwise, and a plain fallback if neither — a note
-  /// should still be able to hold a conversation before anyone has signed in.
+  /// Who a message in a note is signed as: a name that has been set, the
+  /// signed-in account otherwise, then the repo owner, and a plain fallback
+  /// if none of those — a note should still be able to hold a conversation
+  /// before anyone has signed in.
+  ///
+  /// The name set by hand wins, because the person who set it meant it.
   String get me {
+    final chosen = _displayName;
+    if (chosen != null && chosen.isNotEmpty) return chosen;
     final login = _login;
     if (login != null && login.isNotEmpty) return login;
     if (_config.owner.isNotEmpty) return _config.owner;
     return 'me';
+  }
+
+  String? get displayName => _displayName;
+
+  /// Whether this device has no idea who is using it.
+  ///
+  /// Somebody who joined with a code has no GitHub account and no repo of
+  /// their own, so there is nothing to take a name from and everything they
+  /// write is signed the same as everybody else. In a shared notebook that
+  /// is not a cosmetic problem: a conversation where both sides are "me"
+  /// cannot be read at all.
+  bool get needsName =>
+      (_displayName == null || _displayName!.isEmpty) &&
+      (_login == null || _login!.isEmpty) &&
+      _config.owner.isEmpty;
+
+  Future<void> setDisplayName(String? name) async {
+    _displayName = name?.trim();
+    notifyListeners();
+    await _settingsStore.saveName(_displayName);
   }
 
   /// Remembers the signed-in account's name, so notes can be signed with it.
@@ -290,6 +316,7 @@ class AppState extends ChangeNotifier {
   Future<void> init() async {
     _themeMode = await _settingsStore.loadThemeMode();
     _login = await _settingsStore.loadLogin();
+    _displayName = await _settingsStore.loadName();
     _sources = await _settingsStore.loadSources();
     _config = _sources.first.config;
 
@@ -1825,7 +1852,19 @@ class AppState extends ChangeNotifier {
 
     // An image dropped from a note leaves its file behind, so tidy up once
     // the note itself has landed.
-    unawaited(_syncService.pruneAttachments(_configFor(pushed.slug), pushed));
+    unawaited(
+      _syncService.pruneAttachments(
+        _configFor(pushed.slug),
+        pushed,
+        // A picture this device still holds but the repo has lost goes back
+        // up. That is how the ones the old sweep deleted return: whoever
+        // added them still has them, and everybody else has a broken square.
+        recover: (path) async {
+          final file = await attachments.cached(path);
+          return file?.readAsBytes();
+        },
+      ),
+    );
 
     final latest = projectBySlug(slug);
     if (latest == null) return;

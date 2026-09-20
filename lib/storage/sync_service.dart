@@ -575,20 +575,41 @@ class SyncService {
   ///
   /// Called after an edit, so removing an image from a note takes the file
   /// with it instead of leaving it in the repo for good.
-  Future<void> pruneAttachments(GitHubConfig config, Project project) async {
+  ///
+  /// What counts as a reference is the whole file, written out exactly as it
+  /// is pushed, rather than a list of the places a picture is allowed to be.
+  /// That list was items' notes and the project's own, and it was wrong: a
+  /// canvas card is a bullet in a section's prose, so every picture on every
+  /// canvas looked like an orphan and was deleted from the repo seconds
+  /// after it was uploaded. The device that added it kept showing it from
+  /// its cache, so it looked like the *other* device was broken.
+  ///
+  /// Reading the serialized file cannot go wrong the same way again: if a
+  /// picture is anywhere the file can hold one, it is referenced. Deleting
+  /// somebody's picture is unrecoverable, and leaving a stray file costs a
+  /// few kilobytes, so this errs the only direction it can afford to.
+  ///
+  /// [recover] is asked for the bytes of a picture the file refers to that is
+  /// not in the repo, so a device still holding it can put it back. That is
+  /// how a picture deleted by the old sweep returns: the phone that added it
+  /// still has it cached, and the desktop that only ever saw a broken square
+  /// gets it on the next sync.
+  Future<void> pruneAttachments(
+    GitHubConfig config,
+    Project project, {
+    Future<List<int>?> Function(String repoPath)? recover,
+  }) async {
     if (!config.isComplete) return;
 
-    final referenced = <String>{};
-    for (final item in project.items) {
-      referenced.addAll(ProjectLinks.attachmentNames(item.notes));
-    }
-    referenced.addAll(ProjectLinks.attachmentNames(project.notes));
+    final referenced = ProjectLinks.attachmentNames(
+      ProjectMarkdown.serialize(project),
+    );
 
     final client = _clientFactory(config);
     try {
-      final files = await client.listDirectory(
-        '${GitHubClient.attachmentsDir}/${project.fileSlug}',
-      );
+      final folder = '${GitHubClient.attachmentsDir}/${project.fileSlug}';
+      final files = await client.listDirectory(folder);
+      final present = files.keys.map((path) => path.split('/').last).toSet();
 
       for (final entry in files.entries) {
         final name = entry.key.split('/').last;
@@ -598,6 +619,20 @@ class SyncService {
           path: entry.key,
           sha: entry.value,
           message: 'Remove unused attachment $name',
+        );
+      }
+
+      if (recover == null) return;
+      for (final name in referenced) {
+        if (present.contains(name)) continue;
+
+        final bytes = await recover('$folder/$name');
+        if (bytes == null) continue;
+
+        await client.writeBytes(
+          path: '$folder/$name',
+          bytes: bytes,
+          message: 'Restore missing attachment $name',
         );
       }
     } catch (_) {

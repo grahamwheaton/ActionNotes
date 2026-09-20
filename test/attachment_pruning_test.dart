@@ -76,6 +76,166 @@ and ![two](../attachments/trip/two.jpg)
       );
     }
 
+    test('a picture on a canvas is not an orphan', () async {
+      // The reported symptom: a picture added on the phone showed there and
+      // was a broken square on the desktop. A canvas card is a bullet in a
+      // section's prose, and the sweep only ever read the items' notes — so
+      // every canvas picture looked like a file nothing pointed at, and was
+      // deleted from the repo moments after being uploaded. The phone kept
+      // showing it from its own cache, which is why it looked like a
+      // desktop problem.
+      final deleted = <String>[];
+      final sync = SyncService(
+        localStore: FakeLocalStore(),
+        clientFactory: (config) => GitHubClient(
+          config,
+          client: trackingClient(
+            directory: {'attachments/trip/board.png': 'sha-board'},
+            deleted: deleted,
+          ),
+        ),
+      );
+
+      await sync.pruneAttachments(
+        testConfig,
+        Project(
+          slug: 'trip',
+          title: 'Trip',
+          items: const [],
+          blocks: const [
+            ProjectBlock(
+              title: 'Board',
+              body: '- ![board.png](../attachments/trip/board.png)',
+            ),
+          ],
+        ),
+      );
+
+      expect(deleted, isEmpty);
+    });
+
+    test('a picture in an item title is not an orphan either', () async {
+      final deleted = <String>[];
+      final sync = SyncService(
+        localStore: FakeLocalStore(),
+        clientFactory: (config) => GitHubClient(
+          config,
+          client: trackingClient(
+            directory: {'attachments/trip/inline.png': 'sha-inline'},
+            deleted: deleted,
+          ),
+        ),
+      );
+
+      await sync.pruneAttachments(
+        testConfig,
+        Project(
+          slug: 'trip',
+          title: 'Trip',
+          items: const [
+            ChecklistItem(
+              text: 'Look ![inline.png](../attachments/trip/inline.png)',
+            ),
+          ],
+        ),
+      );
+
+      expect(deleted, isEmpty);
+    });
+
+    test('a picture the repo has lost is put back from the device', () async {
+      // The repair for the ones already deleted. The phone that added them
+      // still has them; the desktop has only ever seen a broken square.
+      final deleted = <String>[];
+      final written = <String>[];
+      final sync = SyncService(
+        localStore: FakeLocalStore(),
+        clientFactory: (config) => GitHubClient(
+          config,
+          client: MockClient((request) async {
+            if (request.method == 'PUT') {
+              written.add(
+                Uri.decodeFull(request.url.path).split('/contents/').last,
+              );
+              return stubResponse(
+                jsonEncode({
+                  'content': {'sha': 'sha-new'},
+                }),
+                201,
+              );
+            }
+            if (request.method == 'DELETE') {
+              deleted.add(
+                Uri.decodeFull(request.url.path).split('/contents/').last,
+              );
+              return stubResponse('{}', 200);
+            }
+            // The folder is empty: the picture was swept away.
+            return stubResponse('[]', 200);
+          }),
+        ),
+      );
+
+      await sync.pruneAttachments(
+        testConfig,
+        Project(
+          slug: 'trip',
+          title: 'Trip',
+          items: const [],
+          blocks: const [
+            ProjectBlock(
+              title: 'Board',
+              body: '- ![board.png](../attachments/trip/board.png)',
+            ),
+          ],
+        ),
+        recover: (path) async =>
+            path == 'attachments/trip/board.png' ? [1, 2, 3] : null,
+      );
+
+      expect(written, ['attachments/trip/board.png']);
+      expect(deleted, isEmpty);
+    });
+
+    test('a picture nobody still holds is left alone, not blanked', () async {
+      final written = <String>[];
+      final sync = SyncService(
+        localStore: FakeLocalStore(),
+        clientFactory: (config) => GitHubClient(
+          config,
+          client: MockClient((request) async {
+            if (request.method == 'PUT') {
+              written.add(request.url.path);
+              return stubResponse(
+                jsonEncode({
+                  'content': {'sha': 'sha-new'},
+                }),
+                201,
+              );
+            }
+            return stubResponse('[]', 200);
+          }),
+        ),
+      );
+
+      await sync.pruneAttachments(
+        testConfig,
+        Project(
+          slug: 'trip',
+          title: 'Trip',
+          items: const [
+            ChecklistItem(
+              text: 'item',
+              notes: '![gone.png](../attachments/trip/gone.png)',
+            ),
+          ],
+        ),
+        recover: (_) async => null,
+      );
+
+      expect(written, isEmpty);
+    });
+
     test('removes a file nothing points at any more', () async {
       final deleted = <String>[];
       final sync = SyncService(

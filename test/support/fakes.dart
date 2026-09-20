@@ -134,6 +134,14 @@ class FakeSettingsStore implements SettingsStore {
   @override
   Future<void> saveLogin(String? value) async => login = value;
 
+  String? name;
+
+  @override
+  Future<String?> loadName() async => name;
+
+  @override
+  Future<void> saveName(String? value) async => name = value;
+
   /// The shared notebooks a test has added, in memory.
   final List<NotesSource> shared = [];
 

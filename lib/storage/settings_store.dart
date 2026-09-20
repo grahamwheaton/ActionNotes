@@ -16,6 +16,7 @@ class SettingsStore {
   static const _themeKey = 'theme_mode';
   static const _loginKey = 'github_login';
   static const _sharedKey = 'shared_sources';
+  static const _nameKey = 'display_name';
 
   /// A shared repo's token, kept in the keystore beside your own.
   static String _sharedTokenKey(String id) => 'shared_token_$id';
@@ -54,6 +55,25 @@ class SettingsStore {
       await prefs.remove(_loginKey);
     } else {
       await prefs.setString(_loginKey, login.trim());
+    }
+  }
+
+  /// What to sign notes with when there is no GitHub account to take a name
+  /// from. Someone who joined a shared notebook with a code has no account
+  /// and no repo of their own, so without this every message they leave is
+  /// signed the same as everybody else's.
+  Future<String?> loadName() async {
+    final prefs = await SharedPreferences.getInstance();
+    final name = prefs.getString(_nameKey);
+    return (name == null || name.trim().isEmpty) ? null : name.trim();
+  }
+
+  Future<void> saveName(String? name) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (name == null || name.trim().isEmpty) {
+      await prefs.remove(_nameKey);
+    } else {
+      await prefs.setString(_nameKey, name.trim());
     }
   }
 
