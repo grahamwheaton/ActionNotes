@@ -5,6 +5,10 @@ import 'package:provider/provider.dart';
 import '../models/notes_source.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
+import '../storage/github_account.dart';
+import '../storage/github_client.dart';
+import '../storage/share_code.dart';
+import 'repo_picker.dart';
 
 /// Everything a person sees about notebooks shared with them.
 ///
@@ -149,7 +153,12 @@ class _NotebookRow extends StatelessWidget {
   }
 }
 
-/// Paste a code, get a notebook.
+/// Two ways into a shared notebook: paste a code somebody sent, or set one
+/// up from a repo of your own.
+///
+/// Both exist because somebody has to be first. Everyone after them pastes a
+/// code; the first person has an empty repo and a token they made for it, and
+/// nothing to paste.
 class AddNotebookDialog extends StatefulWidget {
   const AddNotebookDialog({super.key});
 
@@ -165,24 +174,81 @@ class AddNotebookDialog extends StatefulWidget {
 class _AddNotebookDialogState extends State<AddNotebookDialog> {
   final _code = TextEditingController();
   final _name = TextEditingController();
+  final _token = TextEditingController();
+  final _owner = TextEditingController();
+  final _repo = TextEditingController();
+  String _branch = 'main';
+
+  /// False while someone is pasting a code, true while they are setting a
+  /// notebook up from a repo of their own.
+  bool _setUp = false;
   bool _busy = false;
   String? _problem;
 
   @override
   void dispose() {
-    _code.dispose();
-    _name.dispose();
+    for (final controller in [_code, _name, _token, _owner, _repo]) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
+  Future<void> _pickRepo() async {
+    final token = _token.text.trim();
+    if (token.isEmpty) return;
+
+    final account = GitHubAccount(token);
+    try {
+      final picked = await showRepoPicker(context, load: account.repos);
+      if (picked == null || !mounted) return;
+      setState(() {
+        _owner.text = picked.owner;
+        _repo.text = picked.name;
+        _branch = picked.defaultBranch;
+        _problem = null;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(
+        () => _problem =
+            'That token could not list any repositories. Check it and try '
+            'again.',
+      );
+    } finally {
+      account.dispose();
+    }
+  }
+
+  /// Both routes end in the same place: a code. Setting one up just builds
+  /// the code here instead of being handed it, so there is one way in and
+  /// one thing to get right.
+  String get _codeToUse => _setUp
+      ? ShareCode.encode(
+          GitHubConfig(
+            owner: _owner.text.trim(),
+            repo: _repo.text.trim(),
+            branch: _branch,
+            token: _token.text.trim(),
+          ),
+        )
+      : _code.text.trim();
+
   Future<void> _add() async {
+    if (_setUp &&
+        (_owner.text.trim().isEmpty ||
+            _repo.text.trim().isEmpty ||
+            _token.text.trim().isEmpty)) {
+      setState(() => _problem = 'Paste the token, then pick the repository.');
+      return;
+    }
+
     setState(() {
       _busy = true;
       _problem = null;
     });
 
     final problem = await context.read<AppState>().addSharedNotebook(
-      _code.text.trim(),
+      _codeToUse,
       label: _name.text.trim(),
     );
 
@@ -204,55 +270,52 @@ class _AddNotebookDialogState extends State<AddNotebookDialog> {
     return AlertDialog(
       title: const Text('Add a shared notebook'),
       content: SizedBox(
-        width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Paste the code somebody sent you. That is all — there is '
-              'nothing to sign in to.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SegmentedButton<bool>(
+                segments: const [
+                  ButtonSegment(value: false, label: Text('I have a code')),
+                  ButtonSegment(value: true, label: Text('Set one up')),
+                ],
+                selected: {_setUp},
+                onSelectionChanged: _busy
+                    ? null
+                    : (choice) => setState(() {
+                        _setUp = choice.first;
+                        _problem = null;
+                      }),
               ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _code,
-              autofocus: true,
-              maxLines: 3,
-              minLines: 2,
-              enabled: !_busy,
-              decoration: const InputDecoration(
-                labelText: 'Code',
-                hintText: 'AN1-…',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _name,
-              enabled: !_busy,
-              decoration: const InputDecoration(
-                labelText: 'Call it (optional)',
-                hintText: 'Kitchen, Holiday, Work…',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            if (_problem != null) ...[
-              const SizedBox(height: 14),
-              Text(
-                _problem!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.error,
+              const SizedBox(height: 16),
+              if (_setUp) ..._setUpFields(theme) else ..._codeFields(theme),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _name,
+                enabled: !_busy,
+                decoration: const InputDecoration(
+                  labelText: 'Call it (optional)',
+                  hintText: 'Kitchen, Holiday, Work…',
+                  border: OutlineInputBorder(),
                 ),
               ),
+              if (_problem != null) ...[
+                const SizedBox(height: 14),
+                Text(
+                  _problem!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
+              if (_busy) ...[
+                const SizedBox(height: 16),
+                const Center(child: CircularProgressIndicator()),
+              ],
             ],
-            if (_busy) ...[
-              const SizedBox(height: 16),
-              const Center(child: CircularProgressIndicator()),
-            ],
-          ],
+          ),
         ),
       ),
       actions: [
@@ -260,10 +323,83 @@ class _AddNotebookDialogState extends State<AddNotebookDialog> {
           onPressed: _busy ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        FilledButton(onPressed: _busy ? null : _add, child: const Text('Add')),
+        FilledButton(
+          onPressed: _busy ? null : _add,
+          child: Text(_setUp ? 'Set it up' : 'Add'),
+        ),
       ],
     );
   }
+
+  List<Widget> _codeFields(ThemeData theme) => [
+    Text(
+      'Paste the code somebody sent you. That is all — there is nothing to '
+      'sign in to.',
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+    ),
+    const SizedBox(height: 16),
+    TextField(
+      controller: _code,
+      autofocus: true,
+      maxLines: 3,
+      minLines: 2,
+      enabled: !_busy,
+      decoration: const InputDecoration(
+        labelText: 'Code',
+        hintText: 'AN1-…',
+        border: OutlineInputBorder(),
+      ),
+    ),
+  ];
+
+  List<Widget> _setUpFields(ThemeData theme) => [
+    // The only screen in the app that asks for a token, and it asks for a
+    // particular one: made for this repo and nothing else, because the code
+    // built from it is what gets handed around. A token that reaches
+    // everything would hand everything around with it.
+    Text(
+      'Make an empty private repository on GitHub for the notebook, then a '
+      'fine-grained token that can read and write that one repository and '
+      'nothing else. Paste it here and pick the repository.',
+      style: theme.textTheme.bodySmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+    ),
+    const SizedBox(height: 16),
+    TextField(
+      controller: _token,
+      autofocus: true,
+      obscureText: true,
+      enabled: !_busy,
+      onChanged: (_) => setState(() {}),
+      decoration: const InputDecoration(
+        labelText: 'Token for that repository',
+        hintText: 'github_pat_…',
+        border: OutlineInputBorder(),
+      ),
+    ),
+    const SizedBox(height: 12),
+    Row(
+      children: [
+        Expanded(
+          child: Text(
+            _repo.text.trim().isEmpty
+                ? 'No repository picked yet'
+                : '${_owner.text.trim()}/${_repo.text.trim()} on $_branch',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        OutlinedButton(
+          onPressed: _busy || _token.text.trim().isEmpty ? null : _pickRepo,
+          child: const Text('Pick repository'),
+        ),
+      ],
+    ),
+  ];
 }
 
 /// Shows the code for a notebook, to hand to somebody else.

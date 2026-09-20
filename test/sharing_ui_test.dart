@@ -98,6 +98,47 @@ void main() {
       await tester.pump(const Duration(seconds: 3));
     });
 
+    testWidgets('setting one up asks for a token for that repo alone', (
+      tester,
+    ) async {
+      final state = stateWith(FakeGitHub(), FakeLocalStore());
+      await state.init();
+      await pump(tester, state, const SettingsScreen());
+
+      await tester.tap(find.text('Add a notebook'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Set one up'));
+      await tester.pumpAndSettle();
+
+      // The sentence that keeps somebody from pasting the token that reaches
+      // everything they have, which is what the code would then carry.
+      expect(
+        find.textContaining('that one repository and nothing else'),
+        findsOneWidget,
+      );
+      // Nothing can be picked until there is a token to list repos with.
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.widgetWithText(OutlinedButton, 'Pick repository'),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Set it up'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Paste the token, then pick the repository.'),
+        findsOneWidget,
+      );
+      expect(state.sharedSources, isEmpty);
+
+      await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 3));
+    });
+
     testWidgets('giving a notebook up is asked about, and says what it does', (
       tester,
     ) async {
