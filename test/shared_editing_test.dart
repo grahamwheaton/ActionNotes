@@ -96,17 +96,49 @@ void main() {
       state.dispose();
     });
 
-    test('a shared notebook being written in is checked often', () async {
+    test(
+      'pasting a code starts it fast, without waiting to be shown',
+      () async {
+        // The moment somebody is standing next to the person who sent them the
+        // code, trying it. Earning the fast rate first would make the one
+        // check anybody actually watches the slowest.
+        final github = FakeGitHub();
+        final state = await joined(github);
+
+        expect(state.watchInterval, AppState.sharedSyncInterval);
+        state.dispose();
+      },
+    );
+
+    test('opening the app starts it fast too', () async {
       final github = FakeGitHub();
       final state = await joined(github);
 
-      // Nothing has happened in it yet, so there is nobody to keep up with.
+      // Quiet for long enough that it has dropped back.
+      state.debugSharedQuietSince(
+        DateTime.now().subtract(const Duration(minutes: 10)),
+      );
       expect(state.watchInterval, AppState.defaultSyncInterval);
 
-      await state.addItem(state.projects.single.slug, 'Bread');
+      // Coming back to the app is a reason to expect company.
+      state.startWatching();
+      expect(state.watchInterval, AppState.sharedSyncInterval);
 
-      // Somebody is writing, so the other person should see it now rather
-      // than in three quarters of a minute.
+      state.stopWatching();
+      state.dispose();
+    });
+
+    test('a shared notebook that goes quiet is checked slowly again', () async {
+      final github = FakeGitHub();
+      final state = await joined(github);
+
+      state.debugSharedQuietSince(
+        DateTime.now().subtract(const Duration(minutes: 10)),
+      );
+      expect(state.watchInterval, AppState.defaultSyncInterval);
+
+      // Until somebody writes, and then it is a conversation again.
+      await state.addItem(state.projects.single.slug, 'Bread');
       expect(state.watchInterval, AppState.sharedSyncInterval);
       await settleOut();
       state.dispose();
@@ -115,6 +147,9 @@ void main() {
     test('a change arriving from somebody else speeds it up too', () async {
       final github = FakeGitHub();
       final state = await joined(github);
+      state.debugSharedQuietSince(
+        DateTime.now().subtract(const Duration(minutes: 10)),
+      );
       expect(state.watchInterval, AppState.defaultSyncInterval);
 
       github.repo('SharedProjectNotes')['projects/shopping.md'] =

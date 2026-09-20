@@ -331,8 +331,13 @@ class AppState extends ChangeNotifier {
   void _sharedActivity() {
     _lastSharedChange = DateTime.now();
     // Already fast, so the timer it is running on is the right one.
-    if (_watch != null && _watching != _sharedInterval) startWatching();
+    if (_watch != null && _watching != _sharedInterval) _watchAtCurrentRate();
   }
+
+  /// Pretends a shared notebook has been quiet since a given moment, so a
+  /// test can reach the slow rate without waiting three minutes for it.
+  @visibleForTesting
+  void debugSharedQuietSince(DateTime when) => _lastSharedChange = when;
 
   /// The interval the running timer was built with, so it is only rebuilt
   /// when the answer actually changes.
@@ -342,7 +347,18 @@ class AppState extends ChangeNotifier {
   ///
   /// Without it a change made on the other device, or by a model editing the
   /// repo, is invisible until something local prompts a sync.
+  ///
+  /// Opening the app counts as activity, so a shared notebook starts at the
+  /// fast rate rather than earning it. Waiting for evidence meant the first
+  /// change either person made took up to three quarters of a minute to
+  /// appear — the one moment the delay is most obvious, since it is when
+  /// somebody is watching to see whether this works at all.
   void startWatching() {
+    if (sharedSources.isNotEmpty) _lastSharedChange = DateTime.now();
+    _watchAtCurrentRate();
+  }
+
+  void _watchAtCurrentRate() {
     _watch?.cancel();
     final every = watchInterval;
     _watching = every;
@@ -350,7 +366,7 @@ class AppState extends ChangeNotifier {
       // The right rate may have changed since the timer was made — a busy
       // notebook going quiet, or a quiet one waking up.
       if (watchInterval != _watching) {
-        startWatching();
+        _watchAtCurrentRate();
         return;
       }
       if (_sources.any((s) => s.config.isComplete) && !_syncing) {
@@ -562,6 +578,9 @@ class AppState extends ChangeNotifier {
 
     _sources = [..._sources, NotesSource.sharedFrom(config, label: label)];
     await _settingsStore.saveSharedSources(_sources);
+    // Somebody who has just pasted a code is about to try it with the person
+    // who sent it, so this is the least good moment to be checking slowly.
+    _sharedActivity();
     notifyListeners();
     await sync();
     return null;
