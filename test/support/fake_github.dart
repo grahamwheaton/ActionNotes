@@ -134,10 +134,15 @@ Future<void> settle(AppState state) async {
   state.dispose();
 }
 
-AppState stateWith(FakeGitHub github, FakeLocalStore store) {
+AppState stateWith(
+  FakeGitHub github,
+  FakeLocalStore store, {
+  FakeAttachmentStore? attachments,
+}) {
   return AppState(
     localStore: store,
     settingsStore: FakeSettingsStore(config: mine),
+    attachmentStore: attachments,
     syncService: SyncService(
       localStore: store,
       clientFactory: (config) =>

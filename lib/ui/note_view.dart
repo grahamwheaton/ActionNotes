@@ -166,7 +166,14 @@ class _NoteImage extends StatefulWidget {
 }
 
 class _NoteImageState extends State<_NoteImage> {
-  late Future<File?> _file;
+  Future<File?>? _file;
+
+  /// The sync this picture was last asked for at, and whether that attempt
+  /// found nothing — so a picture uploaded a moment ago on another device is
+  /// tried again when a sync brings news, rather than staying a grey square
+  /// until the app is restarted.
+  int _askedAt = -1;
+  bool _missing = false;
 
   String _fileName(File file) {
     final alt = widget.alt?.trim();
@@ -186,17 +193,34 @@ class _NoteImageState extends State<_NoteImage> {
     messenger.showSnackBar(SnackBar(content: Text(message)));
   }
 
-  @override
-  void initState() {
-    super.initState();
-    _file = _load();
+  Future<File?> _load() {
+    _askedAt = widget.state.syncGeneration;
+    _missing = false;
+    return _file = widget.state.attachmentFor(widget.reference).then((file) {
+      if (mounted && file == null) _missing = true;
+      return file;
+    });
   }
 
-  Future<File?> _load() => widget.state.attachmentFor(widget.reference);
+  @override
+  void didUpdateWidget(_NoteImage old) {
+    super.didUpdateWidget(old);
+    // A note can be rewritten under the same widget, so the picture it is
+    // showing may no longer be the picture it is for.
+    if (old.reference != widget.reference) _file = null;
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+
+    // Watched here rather than relied on from above: the markdown widget
+    // keeps the children it built and hands back the same ones when the note
+    // has not changed, so a rebuild of the screen never reaches this. A
+    // picture that could not be fetched has to notice for itself that a sync
+    // has been and gone.
+    final generation = context.watch<AppState>().syncGeneration;
+    if (_file == null || (_missing && generation != _askedAt)) _load();
 
     return FutureBuilder<File?>(
       future: _file,

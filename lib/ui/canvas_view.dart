@@ -2408,14 +2408,41 @@ class _CanvasImage extends StatefulWidget {
 }
 
 class _CanvasImageState extends State<_CanvasImage> {
-  late final Future<File?> _file = _load();
+  Future<File?>? _file;
 
-  Future<File?> _load() =>
-      context.read<AppState>().attachmentFor(widget.reference);
+  /// The sync this picture was last asked for at, so a failure can be tried
+  /// again once something has happened that might have fixed it.
+  int _askedAt = -1;
+
+  /// Whether the last attempt came back with nothing.
+  bool _missing = false;
+
+  Future<File?> _load(AppState state) {
+    _askedAt = state.syncGeneration;
+    _missing = false;
+    final pending = state.attachmentFor(widget.reference).then((file) {
+      if (mounted && file == null) _missing = true;
+      return file;
+    });
+    return _file = pending;
+  }
+
+  @override
+  void didUpdateWidget(_CanvasImage old) {
+    super.didUpdateWidget(old);
+    // Cards shift along as others are added, so the same widget can be handed
+    // a different picture. Keeping the first answer showed the wrong one.
+    if (old.reference != widget.reference) _file = null;
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final state = context.watch<AppState>();
+
+    if (_file == null || (_missing && state.syncGeneration != _askedAt)) {
+      _load(state);
+    }
 
     return FutureBuilder<File?>(
       future: _file,

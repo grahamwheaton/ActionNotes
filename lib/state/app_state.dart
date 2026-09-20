@@ -262,6 +262,20 @@ class AppState extends ChangeNotifier {
   /// especially on a phone that has been in a pocket.
   DateTime? get lastSynced => _lastSynced;
 
+  /// Counts the syncs that have finished, so something that failed to load
+  /// can tell whether it is worth trying again.
+  ///
+  /// A picture is fetched once and the answer kept, which is right: a
+  /// project with thirty pictures must not ask GitHub for all thirty every
+  /// time anything on screen changes. But a fetch that failed — the file was
+  /// uploaded a moment ago and had not landed yet — was kept just as firmly,
+  /// so a picture added on the phone stayed a grey square on the desktop
+  /// until the app was restarted. A sync is the only thing that can have
+  /// changed the answer, so it is the only thing that lets one be asked
+  /// again.
+  int get syncGeneration => _syncGeneration;
+  int _syncGeneration = 0;
+
   /// An item a search asked to be shown, for the list to scroll to and mark
   /// for a moment. Cleared as soon as the list has taken it, so coming back
   /// to a project later does not flash a line again.
@@ -623,6 +637,7 @@ class AppState extends ChangeNotifier {
     // it: saying "synced a minute ago" after a failed attempt would be worse
     // than saying nothing.
     if (result.error == null) _lastSynced = DateTime.now();
+    _syncGeneration++;
   }
 
   /// Folds a sync's answer into what is on screen, keeping anything edited
