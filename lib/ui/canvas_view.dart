@@ -539,21 +539,55 @@ class CanvasViewState extends State<CanvasView> {
     _zoomAround(focal, event.scrollDelta.dy < 0 ? 1.12 : 1 / 1.12);
   }
 
+  /// Where the finger dragging a card was last seen, so movement is measured
+  /// from the moment it touched down rather than from the recogniser's first
+  /// update.
+  Offset? _dragFocal;
+
+  /// A pinch that began on a card, handed up in global coordinates.
+  ///
+  /// The board zooms about the point between the fingers, exactly as it does
+  /// when the pinch begins on empty space — which is what anybody pinching
+  /// over a picture meant.
+  void _pinchStart(Offset globalFocal) {
+    final local = _toLocal(globalFocal);
+    if (local == null) return;
+    _panAtStart = _pan;
+    _scaleAtStart = _scale;
+    _focalAtStart = local;
+  }
+
+  void _pinchUpdate(Offset globalFocal, double scale) {
+    final local = _toLocal(globalFocal);
+    if (local == null) return;
+    _applyZoom(local, scale);
+  }
+
+  /// Where a point on the screen falls inside the viewport.
+  Offset? _toLocal(Offset global) {
+    final box = _viewport.currentContext?.findRenderObject() as RenderBox?;
+    return box?.globalToLocal(global);
+  }
+
+  /// The zoom both pinches share: the point under the fingers when the
+  /// gesture started stays under them.
+  void _applyZoom(Offset focal, double scale) {
+    final next = (_scaleAtStart * scale).clamp(_minScale, _maxScale);
+    final scene = (_focalAtStart - _panAtStart) / _scaleAtStart;
+    setState(() {
+      _scale = next;
+      _pan = focal - scene * next;
+    });
+  }
+
   void _onScaleStart(ScaleStartDetails details) {
     _panAtStart = _pan;
     _scaleAtStart = _scale;
     _focalAtStart = details.localFocalPoint;
   }
 
-  void _onScaleUpdate(ScaleUpdateDetails details) {
-    final next = (_scaleAtStart * details.scale).clamp(_minScale, _maxScale);
-    // The point under the fingers when the gesture started stays under them.
-    final scene = (_focalAtStart - _panAtStart) / _scaleAtStart;
-    setState(() {
-      _scale = next;
-      _pan = details.localFocalPoint - scene * next;
-    });
-  }
+  void _onScaleUpdate(ScaleUpdateDetails details) =>
+      _applyZoom(details.localFocalPoint, details.scale);
 
   /// Puts everything on screen, which is the first thing wanted on opening a
   /// canvas that was arranged somewhere else.
@@ -1230,9 +1264,19 @@ class CanvasViewState extends State<CanvasView> {
                     onResize: (delta) => _resizeBy(index, delta),
                     onRelease: () {
                       _active = null;
+                      _dragFocal = null;
                       _endDrag();
                       _commit();
                     },
+                    onDragAnchor: (at) => _dragFocal = at,
+                    onDragTo: (at) {
+                      final from = _dragFocal;
+                      if (from == null) return;
+                      _dragFocal = at;
+                      _moveBy(index, at - from);
+                    },
+                    onPinchStart: touch ? _pinchStart : null,
+                    onPinchUpdate: touch ? _pinchUpdate : null,
                   ),
                 // Over the cards: an arrow pointing at a reference has to be
                 // on top of it to mean anything. It takes no pointers, so a
@@ -2073,6 +2117,10 @@ class _CardOnCanvas extends StatelessWidget {
     required this.onRotate,
     required this.onResize,
     required this.onRelease,
+    required this.onDragAnchor,
+    required this.onDragTo,
+    this.onPinchStart,
+    this.onPinchUpdate,
     this.enabled = true,
   });
 
@@ -2106,6 +2154,21 @@ class _CardOnCanvas extends StatelessWidget {
   /// is the one place an arrow most wants to go.
   final bool enabled;
 
+  /// A pinch that began on this card, in global coordinates.
+  ///
+  /// It has to be handed up rather than left to the canvas underneath. The
+  /// card wins the gesture the moment a finger lands on it, so the canvas
+  /// never sees the second finger: pinching over a picture dragged the
+  /// picture about and did not zoom at all.
+  final void Function(Offset focal)? onPinchStart;
+  final void Function(Offset focal, double scale)? onPinchUpdate;
+
+  /// Where a one-finger drag started and where it has reached, in global
+  /// coordinates. The canvas turns them into movement, so the slop the
+  /// recogniser swallowed before its first update is not lost.
+  final ValueChanged<Offset> onDragAnchor;
+  final ValueChanged<Offset> onDragTo;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2133,232 +2196,255 @@ class _CardOnCanvas extends StatelessWidget {
               spot.flipY ? -1 : 1,
               1,
             ),
-            child: GestureDetector(
-              // A frame answers only where its title is. Its body is the
-              // space other things stand in, so a press in the middle of one
-              // belongs to the canvas — to a pinch that means to zoom, to a
-              // marquee that means to select what is standing there. A frame
-              // covers half the board, and one that swallowed every press
-              // made that half of the board unusable.
-              behavior: spot.isFrame
-                  ? HitTestBehavior.deferToChild
-                  : HitTestBehavior.opaque,
-              // From the moment it is touched, not from where the drag was
-              // recognised: the default loses the first eighteen pixels of every
-              // drag to the slop, which on a canvas reads as the card lagging
-              // behind the finger before it catches up.
-              dragStartBehavior: DragStartBehavior.down,
-              onPanStart: (_) => onGrab(),
-              onPanUpdate: (details) => onMove(details.delta),
-              onPanEnd: (_) => onRelease(),
-              onTap: onGrab,
-              // A hold is free on a card — moving one is a drag — so it opens the
-              // menu, which is how a phone reaches what a right-click reaches.
-              onSecondaryTapUp: (details) {
-                onGrab();
-                onMenu(details.globalPosition);
-              },
-              onLongPressStart: (details) {
-                onGrab();
-                onMenu(details.globalPosition);
-              },
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  IgnorePointer(
-                    ignoring: spot.isFrame,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: spot.isFrame
-                            // Barely there: a frame is a boundary, not a panel,
-                            // and what stands on it has to stay readable.
-                            ? theme.colorScheme.surfaceContainerHighest
-                                  .withValues(alpha: 0.35)
-                            : card.isImage || !spot.hasPaper
-                            // Writing straight on the board, and a picture that
-                            // is its own shape: neither wants a card behind it.
-                            ? Colors.transparent
-                            : canvasColourOf(spot.colour, theme),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                          color: selected
-                              ? theme.colorScheme.primary
-                              : spot.isFrame
-                              ? theme.colorScheme.outline
-                              : card.isImage || !spot.hasPaper
-                              ? Colors.transparent
-                              : theme.colorScheme.outlineVariant,
-                          width: selected ? 2 : 1,
-                        ),
-                        boxShadow: selected
-                            ? [
-                                BoxShadow(
-                                  color: theme.colorScheme.primary.withValues(
-                                    alpha: 0.25,
-                                  ),
-                                  blurRadius: 12,
-                                ),
-                              ]
-                            : null,
-                      ),
-                      clipBehavior: Clip.antiAlias,
-                      // The content takes no pointers of its own. Rendered markdown
-                      // carries gesture recognizers for its links and its text, and
-                      // those were winning the arena against the card — so a card
-                      // could be looked at and never moved. On a canvas a card is an
-                      // object you pick up, not a page you interact with.
-                      child: IgnorePointer(
-                        child: spot.isFrame
-                            // A frame shows only its name, at the top left where
-                            // a label goes — the rest of it is the space it
-                            // encloses, and drawing anything there would be
-                            // drawing over what it is holding.
-                            // Nothing: a frame's name is drawn as a handle
-                            // beside it, because the name is the one part of a
-                            // frame you are meant to be able to take hold of.
-                            ? const SizedBox.shrink()
-                            : card.isImage
-                            ? _CanvasImage(reference: card.imagePath!)
-                            // The writing is scaled with the canvas, not left
-                            // at its own size. A card's box is drawn at
-                            // width × zoom, so text that did not scale kept
-                            // full-size glyphs in a shrinking box: zoomed out,
-                            // a sticky note wrapped to one letter a line and
-                            // stretched into a ribbon.
-                            //
-                            // Scaled through the text scaler rather than by
-                            // transforming the widget, so the glyphs are laid
-                            // out at the size they are drawn and stay crisp.
-                            : MediaQuery(
-                                data: MediaQuery.of(context).copyWith(
-                                  textScaler: _ZoomedText(
-                                    MediaQuery.textScalerOf(context),
-                                    scale.clamp(0.2, 4.0),
-                                  ),
-                                ),
-                                child: Padding(
-                                  padding: EdgeInsets.all(
-                                    // A note is a label written on a square, so
-                                    // it wants air around it; an ordinary card
-                                    // is writing and wants the room for it.
-                                    (spot.kind == CanvasSpotKind.sticky
-                                            ? 12
-                                            : 8) *
-                                        scale.clamp(0.5, 1.5),
-                                  ),
-                                  child: NoteView(
-                                    markdown: card.markdown,
-                                    // Centred on a sticky note, the way one
-                                    // written by hand is: what is on it is a
-                                    // label, not a paragraph. Everything else
-                                    // stays left, where writing belongs.
-                                    align: spot.kind == CanvasSpotKind.sticky
-                                        ? WrapAlignment.center
-                                        : null,
-                                  ),
-                                ),
-                              ),
-                      ),
-                    ),
-                  ),
-                  // A frame's name, and the one part of it you take hold of.
-                  if (spot.isFrame)
-                    Positioned(
-                      left: 0,
-                      top: 0,
+            // The raw touch, before any recogniser has decided anything.
+            // A scale recogniser only starts once the slop is crossed, so
+            // its first report is already twenty pixels along; anchoring the
+            // drag here instead keeps the card under the finger from the
+            // moment it lands.
+            child: Listener(
+              onPointerDown: (event) => onDragAnchor(event.position),
+              child: GestureDetector(
+                // A frame answers only where its title is. Its body is the
+                // space other things stand in, so a press in the middle of one
+                // belongs to the canvas — to a pinch that means to zoom, to a
+                // marquee that means to select what is standing there. A frame
+                // covers half the board, and one that swallowed every press
+                // made that half of the board unusable.
+                behavior: spot.isFrame
+                    ? HitTestBehavior.deferToChild
+                    : HitTestBehavior.opaque,
+                // From the moment it is touched, not from where the drag was
+                // recognised: the default loses the first eighteen pixels of every
+                // drag to the slop, which on a canvas reads as the card lagging
+                // behind the finger before it catches up.
+                dragStartBehavior: DragStartBehavior.down,
+                // Scale rather than pan, because one recogniser has to handle
+                // both: a second finger on a card means zoom the board, and a
+                // pan recogniser cannot tell that it has happened.
+                onScaleStart: (details) {
+                  if (details.pointerCount > 1) {
+                    onPinchStart?.call(details.focalPoint);
+                    return;
+                  }
+                  onGrab();
+                },
+                onScaleUpdate: (details) {
+                  if (details.pointerCount > 1) {
+                    onPinchUpdate?.call(details.focalPoint, details.scale);
+                    return;
+                  }
+                  onDragTo(details.focalPoint);
+                },
+                onScaleEnd: (_) => onRelease(),
+                onTap: onGrab,
+                // A hold is free on a card — moving one is a drag — so it opens the
+                // menu, which is how a phone reaches what a right-click reaches.
+                onSecondaryTapUp: (details) {
+                  onGrab();
+                  onMenu(details.globalPosition);
+                },
+                onLongPressStart: (details) {
+                  onGrab();
+                  onMenu(details.globalPosition);
+                },
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    IgnorePointer(
+                      ignoring: spot.isFrame,
                       child: Container(
-                        constraints: BoxConstraints(
-                          maxWidth: math.max(40, spot.width * scale),
-                        ),
-                        padding: EdgeInsets.symmetric(
-                          horizontal: 8 * scale.clamp(0.6, 1.4),
-                          vertical: 4 * scale.clamp(0.6, 1.4),
-                        ),
                         decoration: BoxDecoration(
-                          color: theme.colorScheme.surfaceContainerHighest,
-                          borderRadius: const BorderRadius.only(
-                            topLeft: Radius.circular(4),
-                            bottomRight: Radius.circular(6),
-                          ),
+                          color: spot.isFrame
+                              // Barely there: a frame is a boundary, not a panel,
+                              // and what stands on it has to stay readable.
+                              ? theme.colorScheme.surfaceContainerHighest
+                                    .withValues(alpha: 0.35)
+                              : card.isImage || !spot.hasPaper
+                              // Writing straight on the board, and a picture that
+                              // is its own shape: neither wants a card behind it.
+                              ? Colors.transparent
+                              : canvasColourOf(spot.colour, theme),
+                          borderRadius: BorderRadius.circular(4),
                           border: Border.all(
                             color: selected
                                 ? theme.colorScheme.primary
+                                : spot.isFrame
+                                ? theme.colorScheme.outline
+                                : card.isImage || !spot.hasPaper
+                                ? Colors.transparent
                                 : theme.colorScheme.outlineVariant,
+                            width: selected ? 2 : 1,
                           ),
+                          boxShadow: selected
+                              ? [
+                                  BoxShadow(
+                                    color: theme.colorScheme.primary.withValues(
+                                      alpha: 0.25,
+                                    ),
+                                    blurRadius: 12,
+                                  ),
+                                ]
+                              : null,
                         ),
-                        child: Text(
-                          card.markdown,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelLarge
-                              ?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                                fontWeight: FontWeight.w600,
-                              )
-                              .apply(fontSizeFactor: scale.clamp(0.6, 1.4)),
+                        clipBehavior: Clip.antiAlias,
+                        // The content takes no pointers of its own. Rendered markdown
+                        // carries gesture recognizers for its links and its text, and
+                        // those were winning the arena against the card — so a card
+                        // could be looked at and never moved. On a canvas a card is an
+                        // object you pick up, not a page you interact with.
+                        child: IgnorePointer(
+                          child: spot.isFrame
+                              // A frame shows only its name, at the top left where
+                              // a label goes — the rest of it is the space it
+                              // encloses, and drawing anything there would be
+                              // drawing over what it is holding.
+                              // Nothing: a frame's name is drawn as a handle
+                              // beside it, because the name is the one part of a
+                              // frame you are meant to be able to take hold of.
+                              ? const SizedBox.shrink()
+                              : card.isImage
+                              ? _CanvasImage(reference: card.imagePath!)
+                              // The writing is scaled with the canvas, not left
+                              // at its own size. A card's box is drawn at
+                              // width × zoom, so text that did not scale kept
+                              // full-size glyphs in a shrinking box: zoomed out,
+                              // a sticky note wrapped to one letter a line and
+                              // stretched into a ribbon.
+                              //
+                              // Scaled through the text scaler rather than by
+                              // transforming the widget, so the glyphs are laid
+                              // out at the size they are drawn and stay crisp.
+                              : MediaQuery(
+                                  data: MediaQuery.of(context).copyWith(
+                                    textScaler: _ZoomedText(
+                                      MediaQuery.textScalerOf(context),
+                                      scale.clamp(0.2, 4.0),
+                                    ),
+                                  ),
+                                  child: Padding(
+                                    padding: EdgeInsets.all(
+                                      // A note is a label written on a square, so
+                                      // it wants air around it; an ordinary card
+                                      // is writing and wants the room for it.
+                                      (spot.kind == CanvasSpotKind.sticky
+                                              ? 12
+                                              : 8) *
+                                          scale.clamp(0.5, 1.5),
+                                    ),
+                                    child: NoteView(
+                                      markdown: card.markdown,
+                                      // Centred on a sticky note, the way one
+                                      // written by hand is: what is on it is a
+                                      // label, not a paragraph. Everything else
+                                      // stays left, where writing belongs.
+                                      align: spot.kind == CanvasSpotKind.sticky
+                                          ? WrapAlignment.center
+                                          : null,
+                                    ),
+                                  ),
+                                ),
                         ),
                       ),
                     ),
-                  if (selected)
-                    Positioned(
-                      right: -6,
-                      bottom: -6,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        dragStartBehavior: DragStartBehavior.down,
-                        onPanStart: (_) => onGrab(),
-                        onPanUpdate: (details) => onResize(details.delta),
-                        onPanEnd: (_) => onRelease(),
+                    // A frame's name, and the one part of it you take hold of.
+                    if (spot.isFrame)
+                      Positioned(
+                        left: 0,
+                        top: 0,
                         child: Container(
-                          width: 18,
-                          height: 18,
+                          constraints: BoxConstraints(
+                            maxWidth: math.max(40, spot.width * scale),
+                          ),
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 8 * scale.clamp(0.6, 1.4),
+                            vertical: 4 * scale.clamp(0.6, 1.4),
+                          ),
                           decoration: BoxDecoration(
-                            color: theme.colorScheme.primary,
-                            shape: BoxShape.circle,
+                            color: theme.colorScheme.surfaceContainerHighest,
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(4),
+                              bottomRight: Radius.circular(6),
+                            ),
                             border: Border.all(
-                              color: theme.colorScheme.onPrimary,
-                              width: 2,
+                              color: selected
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.outlineVariant,
                             ),
                           ),
+                          child: Text(
+                            card.markdown,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelLarge
+                                ?.copyWith(
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.w600,
+                                )
+                                .apply(fontSizeFactor: scale.clamp(0.6, 1.4)),
+                          ),
                         ),
                       ),
-                    ),
-                  // Turning it: a handle above the card, the way every tool that
-                  // rotates puts one. Held with shift it steps in fifteens.
-                  if (selected && !spot.locked)
-                    Positioned(
-                      left: 0,
-                      right: 0,
-                      top: -28,
-                      child: Center(
+                    if (selected)
+                      Positioned(
+                        right: -6,
+                        bottom: -6,
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
                           dragStartBehavior: DragStartBehavior.down,
                           onPanStart: (_) => onGrab(),
-                          onPanUpdate: (details) =>
-                              onRotate(details.globalPosition),
+                          onPanUpdate: (details) => onResize(details.delta),
                           onPanEnd: (_) => onRelease(),
                           child: Container(
                             width: 18,
                             height: 18,
                             decoration: BoxDecoration(
-                              color: theme.colorScheme.tertiary,
+                              color: theme.colorScheme.primary,
                               shape: BoxShape.circle,
                               border: Border.all(
                                 color: theme.colorScheme.onPrimary,
                                 width: 2,
                               ),
                             ),
-                            child: Icon(
-                              Icons.rotate_right,
-                              size: 10,
-                              color: theme.colorScheme.onTertiary,
+                          ),
+                        ),
+                      ),
+                    // Turning it: a handle above the card, the way every tool that
+                    // rotates puts one. Held with shift it steps in fifteens.
+                    if (selected && !spot.locked)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        top: -28,
+                        child: Center(
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            dragStartBehavior: DragStartBehavior.down,
+                            onPanStart: (_) => onGrab(),
+                            onPanUpdate: (details) =>
+                                onRotate(details.globalPosition),
+                            onPanEnd: (_) => onRelease(),
+                            child: Container(
+                              width: 18,
+                              height: 18,
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.tertiary,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: theme.colorScheme.onPrimary,
+                                  width: 2,
+                                ),
+                              ),
+                              child: Icon(
+                                Icons.rotate_right,
+                                size: 10,
+                                color: theme.colorScheme.onTertiary,
+                              ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
