@@ -1057,6 +1057,7 @@ class _TextBlock extends StatelessWidget {
             row: row,
             onSetType: onSetType,
             onExtendTo: onExtendTo,
+            onRequestImage: onRequestImage,
             lineHeight: lineHeight,
             // A selected row keeps its handle showing, so a run of them reads
             // as one thing rather than a gap with one mark in it.
@@ -1262,6 +1263,7 @@ class _ParagraphButton extends StatelessWidget {
     required this.row,
     required this.onSetType,
     required this.onExtendTo,
+    required this.onRequestImage,
     required this.lineHeight,
     required this.revealed,
   });
@@ -1269,6 +1271,7 @@ class _ParagraphButton extends StatelessWidget {
   final _Row row;
   final ValueChanged<NoteBlock> onSetType;
   final VoidCallback onExtendTo;
+  final Future<void> Function()? onRequestImage;
   final double lineHeight;
   final bool revealed;
 
@@ -1302,6 +1305,7 @@ class _ParagraphButton extends StatelessWidget {
             final kind = await showBlockTypeMenu(
               buttonContext,
               box.localToGlobal(box.size.bottomLeft(Offset.zero)),
+              onRequestImage: onRequestImage,
             );
             if (kind != null) onSetType(kind);
           },
