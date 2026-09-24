@@ -84,7 +84,7 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
   });
 
-  testWidgets('one finger still moves the card, from where it lands', (
+  testWidgets('one finger pans over a card until it is tapped to select', (
     tester,
   ) async {
     final state = await pumpTouchCanvas(tester);
@@ -92,11 +92,19 @@ void main() {
 
     await tester.drag(onCanvas('One'), const Offset(60, 40));
     await tester.pumpAndSettle();
+    // An unselected card lets the board move underneath a finger.
+    final afterPan = state.layoutFor('list').spotsFor('Board').single;
+    expect(afterPan.x, before.x);
+    expect(afterPan.y, before.y);
 
-    final after = state.layoutFor('list').spotsFor('Board').single;
-    // The whole sixty pixels, not sixty less the slop the recogniser ate.
-    expect(after.x - before.x, closeTo(60, 1));
-    expect(after.y - before.y, closeTo(40, 1));
+    await tester.tap(onCanvas('One'));
+    await tester.pumpAndSettle();
+    await tester.drag(onCanvas('One'), const Offset(60, 40));
+    await tester.pumpAndSettle();
+
+    final afterMove = state.layoutFor('list').spotsFor('Board').single;
+    expect(afterMove.x - before.x, closeTo(60, 1));
+    expect(afterMove.y - before.y, closeTo(40, 1));
     await tester.pump(const Duration(seconds: 3));
   });
 }

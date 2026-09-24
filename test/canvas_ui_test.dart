@@ -56,6 +56,129 @@ Future<List<CanvasSpot>> pumpCanvas(
 
 void main() {
   _addingToACanvas();
+
+  group('new drawing controls', () {
+    testWidgets('bendy arrow is a separate shape tool', (tester) async {
+      CanvasShape? drawn;
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final state = newTestState(FakeLocalStore());
+      await state.init();
+      await tester.pumpWidget(ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: CanvasView(
+              slug: 'list',
+              section: 'Moodboard',
+              cards: const [],
+              spots: const [],
+              onChanged: (_) {},
+              onDrawShape: (shape) => drawn = shape,
+              onPlaceCard: (_, _) {},
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Shapes'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Bendy arrow'));
+      await tester.pumpAndSettle();
+      await tester.dragFrom(const Offset(300, 200), const Offset(120, 60));
+      await tester.pumpAndSettle();
+
+      expect(drawn?.kind, CanvasShapeKind.arrow);
+      expect(drawn?.curved, isTrue);
+    });
+
+    testWidgets('smooth pen can be toggled for future strokes', (tester) async {
+      CanvasShape? drawn;
+      tester.view.physicalSize = const Size(800, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      final state = newTestState(FakeLocalStore());
+      await state.init();
+      await tester.pumpWidget(ChangeNotifierProvider.value(
+        value: state,
+        child: MaterialApp(
+          theme: AppTheme.light(),
+          home: Scaffold(
+            body: CanvasView(
+              slug: 'list',
+              section: 'Moodboard',
+              cards: const [],
+              spots: const [],
+              onChanged: (_) {},
+              onDrawShape: (shape) => drawn = shape,
+              onPlaceCard: (_, _) {},
+            ),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Pen'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Smooth pen off'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Smooth pen on'), findsOneWidget);
+      final gesture = await tester.startGesture(const Offset(300, 200));
+      await gesture.moveBy(const Offset(30, 20));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 10));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 20));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(drawn?.kind, CanvasShapeKind.stroke);
+      expect(drawn?.curved, isTrue);
+    });
+  });
+
+  testWidgets('touch drags pan an unselected card, then move a tapped card',
+      (tester) async {
+    TouchInput.debugOverride = true;
+    addTearDown(() => TouchInput.debugOverride = null);
+    tester.view.physicalSize = const Size(800, 600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    final state = newTestState(FakeLocalStore());
+    await state.init();
+    List<CanvasSpot>? moved;
+    await tester.pumpWidget(ChangeNotifierProvider.value(
+      value: state,
+      child: MaterialApp(
+        theme: AppTheme.light(),
+        home: Scaffold(
+          body: CanvasView(
+            slug: 'list',
+            section: 'Moodboard',
+            cards: [CanvasCards.text('Card')],
+            spots: const [CanvasSpot(x: 100, y: 100, width: 180, ref: 'Card')],
+            onChanged: (spots) => moved = spots,
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final canvas = tester.state<CanvasViewState>(find.byType(CanvasView));
+
+    await tester.drag(find.text('Card'), const Offset(80, 0));
+    await tester.pumpAndSettle();
+    expect(canvas.debugPan.dx, greaterThan(0));
+    expect(moved, isNull);
+
+    await tester.tap(find.text('Card'));
+    await tester.pumpAndSettle();
+    await tester.drag(find.text('Card'), const Offset(60, 0));
+    await tester.pumpAndSettle();
+    expect(moved?.single.x, greaterThan(100));
+  });
   _textOnACard();
   _resizingTheCanvasInAProject();
 
