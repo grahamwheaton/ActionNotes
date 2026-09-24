@@ -112,6 +112,9 @@ class CanvasViewState extends State<CanvasView> {
   /// How heavy a mark the pen and the shapes make.
   double _thickness = 2;
 
+  /// Smooth future pen strokes without changing marks already on the board.
+  bool _smoothPen = false;
+
   /// The mark being drawn, in scene coordinates, before it is committed.
   List<double>? _drawing;
 
@@ -345,6 +348,8 @@ class CanvasViewState extends State<CanvasView> {
         points: List.unmodifiable(drawing),
         colour: _colour,
         thickness: _thickness,
+        curved: tool == CanvasTool.bendyArrow ||
+            (tool == CanvasTool.pen && _smoothPen && drawing.length >= 6),
         from: hold(from),
         to: hold(to),
       ),
@@ -1122,11 +1127,11 @@ class CanvasViewState extends State<CanvasView> {
                         // Only while an arrow is in hand: nothing else on the
                         // canvas cares where the pointer is between gestures, and
                         // a rebuild for every mouse move is not free.
-                        onHover: _tool == CanvasTool.arrow
+                        onHover: _tool.draws == CanvasShapeKind.arrow
                             ? (event) =>
                                   setState(() => _pointer = event.localPosition)
                             : null,
-                        onExit: _tool == CanvasTool.arrow
+                        onExit: _tool.draws == CanvasShapeKind.arrow
                             ? (_) => setState(() => _pointer = null)
                             : null,
                         child: GestureDetector(
@@ -1258,6 +1263,8 @@ class CanvasViewState extends State<CanvasView> {
                         slug: widget.slug,
                         cardKey: _cardKeys.putIfAbsent(index, GlobalKey.new),
                         selected: _selection.contains(index),
+                        touch: touch,
+                        onPan: (delta) => setState(() => _pan += delta),
                         onGrab: () {
                           _focus.requestFocus();
                           _active = index;
@@ -1304,6 +1311,10 @@ class CanvasViewState extends State<CanvasView> {
                                 : _tool.draws,
                             pendingColour: _colour,
                             pendingThickness: _thickness,
+                            pendingCurved: _tool == CanvasTool.bendyArrow ||
+                                (_tool == CanvasTool.pen &&
+                                    _smoothPen &&
+                                    (_drawing?.length ?? 0) >= 6),
                             pan: _pan,
                             scale: _scale,
                             theme: theme,
@@ -1336,7 +1347,7 @@ class CanvasViewState extends State<CanvasView> {
                           ),
                         ),
                     // What an arrow would take hold of, while one is in hand.
-                    if (_tool == CanvasTool.arrow && _pointer != null)
+                    if (_tool.draws == CanvasShapeKind.arrow && _pointer != null)
                       Positioned.fill(
                         child: IgnorePointer(
                           child: CustomPaint(
@@ -1416,6 +1427,9 @@ class CanvasViewState extends State<CanvasView> {
                             thickness: _thickness,
                             onThickness: (value) =>
                                 setState(() => _thickness = value),
+                            smoothPen: _smoothPen,
+                            onSmoothPen: (value) =>
+                                setState(() => _smoothPen = value),
                           ),
                         ),
                       ),
@@ -2161,6 +2175,8 @@ class _CardOnCanvas extends StatelessWidget {
     required this.scale,
     required this.slug,
     required this.selected,
+    required this.touch,
+    required this.onPan,
     required this.cardKey,
     required this.onGrab,
     required this.onMenu,
@@ -2182,6 +2198,8 @@ class _CardOnCanvas extends StatelessWidget {
   final double scale;
   final String slug;
   final bool selected;
+  final bool touch;
+  final ValueChanged<Offset> onPan;
 
   /// On the card's own box, so a marquee can ask where it actually is — a
   /// card's height follows its picture or its text and is not known anywhere
@@ -2282,16 +2300,24 @@ class _CardOnCanvas extends StatelessWidget {
                     onPinchStart?.call(details.focalPoint);
                     return;
                   }
-                  onGrab();
+                  // On touch, an unselected card is part of the surface.
+                  // Tap it first to pick it up for a later drag.
+                  if (!touch || selected) onGrab();
                 },
                 onScaleUpdate: (details) {
                   if (details.pointerCount > 1) {
                     onPinchUpdate?.call(details.focalPoint, details.scale);
                     return;
                   }
-                  onDragTo(details.focalPoint);
+                  if (touch && !selected) {
+                    onPan(details.focalPointDelta);
+                  } else {
+                    onDragTo(details.focalPoint);
+                  }
                 },
-                onScaleEnd: (_) => onRelease(),
+                onScaleEnd: (_) {
+                  if (!touch || selected) onRelease();
+                },
                 onTap: onGrab,
                 // A hold is free on a card — moving one is a drag — so it opens the
                 // menu, which is how a phone reaches what a right-click reaches.
@@ -2757,6 +2783,7 @@ class _MarksPainter extends CustomPainter {
     required this.pendingKind,
     required this.pendingColour,
     required this.pendingThickness,
+    required this.pendingCurved,
     required this.pan,
     required this.scale,
     required this.theme,
@@ -2773,6 +2800,7 @@ class _MarksPainter extends CustomPainter {
   final CanvasShapeKind? pendingKind;
   final CanvasColour pendingColour;
   final double pendingThickness;
+  final bool pendingCurved;
 
   final Offset pan;
   final double scale;
@@ -2915,6 +2943,7 @@ class _MarksPainter extends CustomPainter {
         pendingColour,
         pendingThickness,
         0.7,
+        curved: pendingCurved,
       );
     }
   }
@@ -3034,6 +3063,7 @@ enum CanvasTool {
   frame,
   line,
   arrow,
+  bendyArrow,
   rectangle,
   oval,
   pen,
@@ -3046,6 +3076,7 @@ enum CanvasTool {
     CanvasTool.frame => 'Frame',
     CanvasTool.line => 'Line',
     CanvasTool.arrow => 'Arrow',
+    CanvasTool.bendyArrow => 'Bendy arrow',
     CanvasTool.rectangle => 'Rectangle',
     CanvasTool.oval => 'Oval',
     CanvasTool.pen => 'Pen',
@@ -3059,6 +3090,7 @@ enum CanvasTool {
     CanvasTool.frame => Icons.crop_free,
     CanvasTool.line => Icons.horizontal_rule,
     CanvasTool.arrow => Icons.north_east,
+    CanvasTool.bendyArrow => Icons.gesture,
     CanvasTool.rectangle => Icons.crop_square,
     CanvasTool.oval => Icons.circle_outlined,
     CanvasTool.pen => Icons.draw_outlined,
@@ -3078,6 +3110,7 @@ enum CanvasTool {
   CanvasShapeKind? get draws => switch (this) {
     CanvasTool.line => CanvasShapeKind.line,
     CanvasTool.arrow => CanvasShapeKind.arrow,
+    CanvasTool.bendyArrow => CanvasShapeKind.arrow,
     CanvasTool.rectangle => CanvasShapeKind.rectangle,
     CanvasTool.oval => CanvasShapeKind.oval,
     CanvasTool.pen => CanvasShapeKind.stroke,
@@ -3102,6 +3135,8 @@ class _CanvasTools extends StatelessWidget {
     required this.onColour,
     required this.thickness,
     required this.onThickness,
+    required this.smoothPen,
+    required this.onSmoothPen,
   });
 
   final CanvasTool tool;
@@ -3110,6 +3145,8 @@ class _CanvasTools extends StatelessWidget {
   final ValueChanged<CanvasColour> onColour;
   final double thickness;
   final ValueChanged<double> onThickness;
+  final bool smoothPen;
+  final ValueChanged<bool> onSmoothPen;
 
   /// Fine, ordinary and bold. Three weights rather than a slider: a slider
   /// in a column this narrow is a thing to fight with, and nobody has ever
@@ -3119,6 +3156,7 @@ class _CanvasTools extends StatelessWidget {
   static const _shapes = [
     CanvasTool.line,
     CanvasTool.arrow,
+    CanvasTool.bendyArrow,
     CanvasTool.rectangle,
     CanvasTool.oval,
   ];
@@ -3202,6 +3240,16 @@ class _CanvasTools extends StatelessWidget {
                 ),
                 icon: Icon(option.icon, size: 18),
                 onPressed: () => onTool(option),
+              ),
+            if (tool == CanvasTool.pen)
+              IconButton(
+                tooltip: smoothPen ? 'Smooth pen on' : 'Smooth pen off',
+                visualDensity: VisualDensity.compact,
+                isSelected: smoothPen,
+                selectedIcon: Icon(Icons.auto_fix_high,
+                    size: 18, color: theme.colorScheme.primary),
+                icon: const Icon(Icons.auto_fix_high, size: 18),
+                onPressed: () => onSmoothPen(!smoothPen),
               ),
             // Only while something is being drawn, since a note has no
             // stroke to weigh.
