@@ -109,6 +109,8 @@ class _ProjectNotesViewState extends State<ProjectNotesView> {
                       initialMarkdown: _initial,
                       onChanged: _changed,
                       onPaste: () async => _images.currentState?.paste(),
+                      onRequestImage: () async =>
+                          _images.currentState?.pickImage(),
                       onOpenProject: (slug) =>
                           context.read<AppState>().select(slug),
                     ),
