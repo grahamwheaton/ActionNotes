@@ -1134,7 +1134,7 @@ class _ProjectTile extends StatelessWidget {
               // whether or not a row is selected.
               Container(
                 width: 2,
-                height: pushOnTap ? 40 : 30,
+                height: pushOnTap ? 36 : 30,
                 decoration: BoxDecoration(
                   color: selected
                       ? theme.colorScheme.primary
@@ -1146,9 +1146,9 @@ class _ProjectTile extends StatelessWidget {
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(
                     12,
-                    pushOnTap ? 14 : 7,
+                    pushOnTap ? 8 : 7,
                     10,
-                    pushOnTap ? 14 : 7,
+                    pushOnTap ? 8 : 7,
                   ),
                   child: Row(
                     children: [
