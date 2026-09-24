@@ -1393,6 +1393,36 @@ class _BlockSection extends StatelessWidget {
           }
         },
       ),
+      if (!canvas)
+        ContextMenuAction(
+          label: 'Add an image here',
+          icon: Icons.image_outlined,
+          onSelected: () async {
+            final file = await openFile(
+              acceptedTypeGroups: const [
+                XTypeGroup(
+                  label: 'Images',
+                  extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+                ),
+              ],
+            );
+            if (file == null) return;
+
+            final reference = await state.attachImage(
+              slug,
+              fileName: file.name,
+              bytes: await file.readAsBytes(),
+            );
+            if (reference == null) return;
+
+            final body = block.body.trimRight();
+            await state.setBlockBody(
+              slug,
+              block.title,
+              body.isEmpty ? reference : '$body\n\n$reference',
+            );
+          },
+        ),
       ContextMenuAction(
         label: 'Rename section',
         icon: Icons.drive_file_rename_outline,
@@ -1923,6 +1953,7 @@ class _BlockBodyState extends State<_BlockBody> {
         placeholder: 'Write here…',
         onChanged: _changed,
         onPaste: () async => _images.currentState?.paste(),
+        onRequestImage: () async => _images.currentState?.pickImage(),
         onOpenProject: (slug) => context.read<AppState>().select(slug),
       ),
     );
