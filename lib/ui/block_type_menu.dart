@@ -98,8 +98,9 @@ class BlockTypes {
 /// Opens the block-type menu at [position] and returns the chosen kind.
 Future<NoteBlock?> showBlockTypeMenu(
   BuildContext context,
-  Offset position,
-) async {
+  Offset position, {
+  Future<void> Function()? onRequestImage,
+}) async {
   final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
   if (overlay == null) return null;
 
@@ -124,6 +125,15 @@ Future<NoteBlock?> showBlockTypeMenu(
         child: _ChoiceRow(choice: choice),
       );
 
+  PopupMenuEntry<NoteBlock> imageEntry() => PopupMenuItem<NoteBlock>(
+        onTap: onRequestImage,
+        child: const _ActionChoiceRow(
+          label: 'Image',
+          hint: 'Attach from device',
+          icon: Icons.image_outlined,
+        ),
+      );
+
   return showMenu<NoteBlock>(
     context: context,
     position: RelativeRect.fromLTRB(
@@ -136,6 +146,7 @@ Future<NoteBlock?> showBlockTypeMenu(
     items: [
       header('BASIC BLOCK'),
       ...BlockTypes.basic.map(entry),
+      if (onRequestImage != null) imageEntry(),
       header('HEADER'),
       ...BlockTypes.headers.map(entry),
     ],
@@ -189,6 +200,55 @@ class _ChoiceRow extends StatelessWidget {
           choice.shortcut,
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.outline,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+
+class _ActionChoiceRow extends StatelessWidget {
+  const _ActionChoiceRow({
+    required this.label,
+    required this.hint,
+    required this.icon,
+  });
+
+  final String label;
+  final String hint;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Row(
+      children: [
+        Container(
+          width: 34,
+          height: 34,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Icon(icon, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(label, style: theme.textTheme.bodyMedium),
+              Text(
+                hint,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
           ),
         ),
       ],
