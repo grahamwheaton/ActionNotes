@@ -13,6 +13,7 @@ import 'package:provider/provider.dart';
 import '../markdown/canvas_cards.dart';
 import '../markdown/canvas_placement.dart';
 import '../models/project.dart';
+import '../models/canvas_layout.dart';
 import '../state/app_state.dart';
 import '../storage/canvas_export.dart';
 import 'canvas_view.dart';
@@ -51,21 +52,30 @@ class _CanvasScreenState extends State<CanvasScreen> {
   String get section => widget.section;
 
   bool _dropping = false;
+  int _pendingImages = 0;
+  final _canvas = GlobalKey<CanvasViewState>();
 
   /// Wrapped round the board so it can be drawn to an image — which is what
   /// both exports are built from.
   final _board = GlobalKey();
 
   /// Adds one image from bytes already in hand — a paste, or a dropped file.
-  Future<void> _addBytes(String name, List<int> bytes) async {
+  Future<void> _addBytes(String name, List<int> bytes, {Offset? at}) async {
     final state = context.read<AppState>();
-    final reference = await state.attachImage(
-      slug,
-      fileName: name,
-      bytes: bytes,
-    );
-    if (reference == null) return;
-    await state.addCanvasCard(slug, section, reference);
+    final centre = at ?? _canvas.currentState?.sceneAtViewportCentre() ??
+        Offset(MediaQuery.sizeOf(context).width / 2, MediaQuery.sizeOf(context).height / 2);
+    // Show a card while the attachment is uploading, which may take seconds.
+    setState(() => _pendingImages++);
+    try {
+      final reference = await state.attachImage(slug, fileName: name, bytes: bytes);
+      if (reference == null || !mounted) return;
+      await state.placeCanvasCard(slug, section,
+        markdown: reference,
+        spot: CanvasSpot(x: centre.dx - 130, y: centre.dy - 100, width: 260),
+      );
+    } finally {
+      if (mounted) setState(() => _pendingImages--);
+    }
   }
 
   /// Ctrl+V puts whatever is on the clipboard onto the canvas.
@@ -209,10 +219,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
     }
   }
 
-  Future<void> _addPhoto(BuildContext context) async {
-    final state = context.read<AppState>();
-    final messenger = ScaffoldMessenger.of(context);
-
+  Future<void> _addPhoto(BuildContext context, {Offset? at}) async {
     final files = await openFiles(
       acceptedTypeGroups: const [
         XTypeGroup(
@@ -225,18 +232,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
     // Several at once, because a moodboard is not built one picture at a time.
     for (final file in files) {
-      final reference = await state.attachImage(
-        slug,
-        fileName: file.name,
-        bytes: await file.readAsBytes(),
-      );
-      if (reference == null) {
-        messenger.showSnackBar(
-          SnackBar(content: Text('Could not add ${file.name}.')),
-        );
-        return;
-      }
-      await state.addCanvasCard(slug, section, reference);
+      await _addBytes(file.name, await file.readAsBytes(), at: at);
     }
   }
 
@@ -389,21 +385,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
                         ),
                       )
                     : null,
-                child: cards.isEmpty
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(32),
-                          child: Text(
-                            'Nothing on this canvas yet.\n'
-                            'Add photos from the bar, paste one in, or drop files here.',
-                            textAlign: TextAlign.center,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              color: theme.colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ),
-                      )
-                    : CanvasView(
+                child: Stack(
+                  children: [
+                Positioned.fill(child: CanvasView(
+                        key: _canvas,
                         autofocus: true,
                         slug: slug,
                         section: section,
@@ -443,7 +428,20 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               spot: spot,
                               behind: spot.isFrame,
                             ),
-                      ),
+                        onAddImage: (at) => _addPhoto(context, at: at),
+                      )),
+                if (_pendingImages > 0)
+                  Center(child: IgnorePointer(child: Card(
+                    child: SizedBox(width: 260, height: 195,
+                      child: Column(mainAxisAlignment: MainAxisAlignment.center,
+                        children: [const CircularProgressIndicator(),
+                          const SizedBox(height: 14),
+                          Text(_pendingImages == 1 ? 'Adding image…' :
+                              'Adding $_pendingImages images…')]),
+                    ),
+                  ))),
+                  ],
+                ),
               ),
             ),
           ),

@@ -17,7 +17,7 @@ class ImageActions {
   /// Puts the picture on the clipboard. Returns what to tell the person.
   static Future<String> copy(File file) async {
     try {
-      await Pasteboard.writeImage(await file.readAsBytes() as Uint8List?);
+      await Pasteboard.writeImage(Uint8List.fromList(await file.readAsBytes()));
       return 'Image copied.';
     } catch (_) {
       // Android has no image clipboard through this plugin, and a failure

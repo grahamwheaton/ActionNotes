@@ -335,6 +335,14 @@ void _nodes() {
       );
     });
 
+    test('a tall bendy arrow leaves and arrives vertically', () {
+      const points = [0.0, 0.0, 90.0, 220.0];
+      final path = CanvasMarks.pathThrough(points, curved: true);
+      final start = path.computeMetrics().first.getTangentForOffset(0)!;
+      expect(start.vector.dx.abs(), lessThan(0.01));
+      expect(CanvasMarks.tipAngle(points, curved: true), closeTo(1.5708, 0.01));
+    });
+
     test('a bendy one still passes through every node it was given', () {
       final bendy = CanvasMarks.pathThrough([
         0.0,
