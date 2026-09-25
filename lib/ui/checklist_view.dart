@@ -35,9 +35,11 @@ import 'touch_input.dart';
 /// One project's checklist: open items first, then a collapsible Completed
 /// group at the bottom, mirroring Microsoft To Do's shape.
 class ChecklistView extends StatefulWidget {
-  const ChecklistView({super.key, required this.slug, this.showAppBar = true});
+  const ChecklistView({super.key, required this.slug, this.showAppBar = true,
+    this.openItemText});
 
   final String slug;
+  final String? openItemText;
 
   /// False when embedded in the desktop two-pane layout, which supplies its
   /// own header.
@@ -65,6 +67,12 @@ class _ChecklistViewState extends State<ChecklistView> {
   /// closes a gap, so an index stops meaning the same row the moment the list
   /// changes. Keeping the text means a row that moves keeps its open note.
   final Set<String> _expandedNotes = {};
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.openItemText != null) _expandedNotes.add(widget.openItemText!);
+  }
 
   /// Sections folded away, by name. A canvas is four hundred pixels tall
   /// whatever is on it, so a project with two of them is mostly canvas unless
@@ -1765,6 +1773,21 @@ class _SectionCanvasState extends State<_SectionCanvas> {
                 ),
             onOpenFullScreen: () =>
                 CanvasScreen.open(context, slug: slug, section: section),
+            onOpenLinkedNote: (fileSlug, title) {
+              final state = context.read<AppState>();
+              for (final project in state.projects) {
+                if (project.fileSlug != fileSlug) continue;
+                final index = project.items.indexWhere((item) => item.text == title);
+                if (index < 0) continue;
+                state.select(project.slug);
+                state.revealItem(project.slug, index);
+                state.showNote(project.slug, index);
+                return;
+              }
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('This linked note is unavailable.'),
+              ));
+            },
           ),
         ),
         _CanvasResizeHandle(

@@ -14,6 +14,7 @@ import 'canvas_marks.dart';
 import 'canvas_snap.dart';
 import 'context_menu.dart';
 import 'note_view.dart';
+import 'project_picker.dart';
 import 'theme.dart';
 import 'text_prompt.dart';
 import 'touch_input.dart';
@@ -38,6 +39,7 @@ class CanvasView extends StatefulWidget {
     this.onEditCard,
     this.onPlaceCard,
     this.onAddImage,
+    this.onOpenLinkedNote,
     this.shapes = const [],
     this.onDrawShape,
     this.onEraseShapes,
@@ -79,6 +81,7 @@ class CanvasView extends StatefulWidget {
 
   /// Import an image at this scene point (or the visible centre).
   final void Function(Offset? scene)? onAddImage;
+  final void Function(String slug, String title)? onOpenLinkedNote;
 
   /// What has been drawn on the board, oldest first.
   final List<CanvasShape> shapes;
@@ -160,6 +163,8 @@ class CanvasViewState extends State<CanvasView> {
   /// Everything picked out. A set rather than one index, because moving six
   /// references together is most of what a canvas is for.
   final Set<int> _selection = {};
+  int? _lastLinkedTap;
+  DateTime? _lastLinkedTapAt;
 
   /// The marquee being dragged out, in viewport coordinates, or null.
   Rect? _marquee;
@@ -191,6 +196,9 @@ class CanvasViewState extends State<CanvasView> {
 
   /// The pointer holding the middle button down, while it is panning.
   int? _middlePan;
+  int? _cutPointer;
+  Offset? _cutTo;
+  final Set<int> _cutConnections = {};
   double _scaleAtStart = 1;
   Offset _focalAtStart = Offset.zero;
 
@@ -257,6 +265,7 @@ class CanvasViewState extends State<CanvasView> {
   Offset _toScene(Offset viewportPoint) => (viewportPoint - _pan) / _scale;
 
   Offset sceneAtViewportCentre() => _toScene(_centre());
+  Offset viewportForScene(Offset point) => point * _scale + _pan;
 
   void _chooseTool(CanvasTool tool) {
     setState(() {
@@ -266,6 +275,110 @@ class CanvasViewState extends State<CanvasView> {
       }
       _tool = _tool == tool ? CanvasTool.select : tool;
     });
+  }
+
+  Future<void> _addNoteLink(Offset scene) async {
+    if (widget.onPlaceCard == null) return;
+    final project = await ProjectPicker.show(context, excludeSlug: widget.slug);
+    if (project == null || !mounted) return;
+    final candidates = project.items.where((item) => item.text.isNotEmpty).toList();
+    if (candidates.isEmpty) return;
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Link to a note in ${project.title}'),
+        content: SizedBox(
+          width: 440,
+          height: 360,
+          child: ListView.builder(
+            itemCount: candidates.length,
+            itemBuilder: (context, index) => ListTile(
+              title: Text(candidates[index].title),
+              onTap: () => Navigator.pop(context, candidates[index].text),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (chosen == null || !mounted) return;
+    final title = candidates.firstWhere((item) => item.text == chosen).title;
+    widget.onPlaceCard!(
+      '[${project.title}: $title](${project.fileSlug}.md#note=${Uri.encodeComponent(chosen)})',
+      CanvasSpot(x: scene.dx, y: scene.dy, width: 260),
+    );
+  }
+
+  void _openLinkedCard(int index) {
+    final match = RegExp(r'\]\(([^)]+)\.md#note=([^)]*)\)')
+        .firstMatch(widget.cards[index].markdown);
+    if (match == null) return;
+    widget.onOpenLinkedNote?.call(match.group(1)!, Uri.decodeComponent(match.group(2)!));
+  }
+
+  void _cycleLineTool() {
+    const choices = [CanvasTool.arrow, CanvasTool.bendyArrow, CanvasTool.line];
+    if (_tool == CanvasTool.select || !choices.contains(_tool)) {
+      _chooseTool(_lastLineTool);
+      return;
+    }
+    _chooseTool(choices[(choices.indexOf(_tool) + 1) % choices.length]);
+  }
+
+  void _cutAlong(Offset start, Offset end) {
+    final cards = _cardRects;
+    for (var i = 0; i < widget.shapes.length; i++) {
+      final shape = widget.shapes[i];
+      if (shape.kind != CanvasShapeKind.arrow ||
+          (shape.from == null && shape.to == null)) {
+        continue;
+      }
+      final points = CanvasMarks.pointsOf(shape, cards);
+      for (final metric in CanvasMarks.pathThrough(points, curved: shape.curved)
+          .computeMetrics()) {
+        final count = math.max(1, (metric.length / (6 / _scale)).ceil());
+        var previous = metric.getTangentForOffset(0)?.position;
+        for (var j = 1; j <= count; j++) {
+          final current = metric.getTangentForOffset(metric.length * j / count)
+              ?.position;
+          if (previous != null && current != null &&
+              _segmentsCross(start, end, previous, current)) {
+            _cutConnections.add(i);
+            break;
+          }
+          previous = current;
+        }
+      }
+    }
+  }
+
+  static bool _segmentsCross(Offset a, Offset b, Offset c, Offset d) {
+    double cross(Offset p, Offset q) => p.dx * q.dy - p.dy * q.dx;
+    final direction = b - a;
+    final segment = d - c;
+    final denominator = cross(direction, segment);
+    if (denominator.abs() < 0.00001) return false;
+    final t = cross(c - a, segment) / denominator;
+    final u = cross(c - a, direction) / denominator;
+    return t >= 0 && t <= 1 && u >= 0 && u <= 1;
+  }
+
+  void _finishCut() {
+    final removed = {..._cutConnections};
+    setState(() {
+      _cutPointer = null;
+      _cutTo = null;
+      _cutConnections.clear();
+    });
+    if (removed.isNotEmpty) widget.onEraseShapes?.call(removed);
+  }
+
+  Future<void> _frameSelection() async {
+    if (_selection.isEmpty || widget.onPlaceCard == null) return;
+    var bounds = _sceneRect(_selection.first);
+    for (final index in _selection.skip(1)) {
+      bounds = bounds.expandToInclude(_sceneRect(index));
+    }
+    await _placeFrame(bounds.inflate(32));
   }
 
   Future<void> _showEmptyMenu(Offset scene, Offset global) async {
@@ -278,6 +391,8 @@ class CanvasViewState extends State<CanvasView> {
       items: [
         if (widget.onAddImage != null)
           const PopupMenuItem(value: 'image', child: Text('Image')),
+        if (widget.onPlaceCard != null)
+          const PopupMenuItem(value: 'note-link', child: Text('Link to another note')),
         for (final tool in [CanvasTool.sticky, CanvasTool.text,
           CanvasTool.frame, CanvasTool.rectangle, CanvasTool.oval,
           CanvasTool.line, CanvasTool.arrow, CanvasTool.bendyArrow])
@@ -287,6 +402,10 @@ class CanvasViewState extends State<CanvasView> {
     if (!mounted || selected == null) return;
     if (selected == 'image') {
       widget.onAddImage?.call(scene);
+      return;
+    }
+    if (selected == 'note-link') {
+      _addNoteLink(scene);
       return;
     }
     if (selected is! CanvasTool) return;
@@ -1013,7 +1132,11 @@ class CanvasViewState extends State<CanvasView> {
           LogicalKeyboardKey.keyS => CanvasTool.rectangle,
           _ => CanvasTool.oval,
         };
-        _chooseTool(tool);
+        if (event.logicalKey == LogicalKeyboardKey.keyL) {
+          _cycleLineTool();
+        } else {
+          _chooseTool(tool);
+        }
         return KeyEventResult.handled;
       case LogicalKeyboardKey.equal:
       case LogicalKeyboardKey.add:
@@ -1031,6 +1154,8 @@ class CanvasViewState extends State<CanvasView> {
         }
         if (HardwareKeyboard.instance.isShiftPressed) {
           fit();
+        } else if (_selection.isNotEmpty) {
+          _frameSelection();
         } else {
           _chooseTool(CanvasTool.frame);
         }
@@ -1168,17 +1293,32 @@ class CanvasViewState extends State<CanvasView> {
           // The middle button pans, and never joins the gesture arena, so it
           // works while the left button is drawing a marquee.
           onPointerDown: (event) {
+            if (event.buttons & kSecondaryMouseButton != 0 &&
+                HardwareKeyboard.instance.isShiftPressed &&
+                widget.onEraseShapes != null) {
+              _cutPointer = event.pointer;
+              _cutTo = _toScene(_toLocal(event.position) ?? Offset.zero);
+              return;
+            }
             if (event.buttons & kMiddleMouseButton == 0) return;
             _middlePan = event.pointer;
           },
           onPointerMove: (event) {
+            if (event.pointer == _cutPointer) {
+              final next = _toScene(_toLocal(event.position) ?? Offset.zero);
+              _cutAlong(_cutTo!, next);
+              setState(() => _cutTo = next);
+              return;
+            }
             if (event.pointer != _middlePan) return;
             setState(() => _pan += event.delta);
           },
           onPointerUp: (event) {
+            if (event.pointer == _cutPointer) _finishCut();
             if (event.pointer == _middlePan) _middlePan = null;
           },
           onPointerCancel: (event) {
+            if (event.pointer == _cutPointer) _finishCut();
             if (event.pointer == _middlePan) _middlePan = null;
           },
           child: ClipRect(
@@ -1207,14 +1347,17 @@ class CanvasViewState extends State<CanvasView> {
                       ),
                     Positioned.fill(
                       child: MouseRegion(
+                        cursor: _tool == CanvasTool.select
+                            ? SystemMouseCursors.basic
+                            : SystemMouseCursors.precise,
                         // Only while an arrow is in hand: nothing else on the
                         // canvas cares where the pointer is between gestures, and
                         // a rebuild for every mouse move is not free.
-                        onHover: _tool.draws == CanvasShapeKind.arrow
+                        onHover: _tool != CanvasTool.select
                             ? (event) =>
                                   setState(() => _pointer = event.localPosition)
                             : null,
-                        onExit: _tool.draws == CanvasShapeKind.arrow
+                        onExit: _tool != CanvasTool.select
                             ? (_) => setState(() => _pointer = null)
                             : null,
                         child: GestureDetector(
@@ -1248,6 +1391,7 @@ class CanvasViewState extends State<CanvasView> {
                           // the press lands on the canvas and the mark under it
                           // has to be looked for.
                           onSecondaryTapUp: (details) {
+                            if (HardwareKeyboard.instance.isShiftPressed) return;
                             final scene = _toScene(details.localPosition);
                             final mark = _markNear(scene);
                             if (mark == null) {
@@ -1363,6 +1507,20 @@ class CanvasViewState extends State<CanvasView> {
                           );
                         },
                         onMenu: (at) => _showCardMenu(index, at),
+                        onTapCard: () {
+                          final now = DateTime.now();
+                          if (_lastLinkedTap == index &&
+                              _lastLinkedTapAt != null &&
+                              now.difference(_lastLinkedTapAt!) <
+                                  const Duration(milliseconds: 450)) {
+                            _lastLinkedTap = null;
+                            _lastLinkedTapAt = null;
+                            _openLinkedCard(index);
+                          } else {
+                            _lastLinkedTap = index;
+                            _lastLinkedTapAt = now;
+                          }
+                        },
                         onMove: (delta) => _moveBy(index, delta),
                         onRotate: (at) => _rotateTo(index, at),
                         onResize: (delta) => _resizeBy(index, delta),
@@ -1442,6 +1600,31 @@ class CanvasViewState extends State<CanvasView> {
                               pan: _pan,
                               scale: _scale,
                               colour: theme.colorScheme.tertiary,
+                            ),
+                          ),
+                        ),
+                      ),
+                    if (_tool != CanvasTool.select && _pointer != null)
+                      Positioned(
+                        left: _pointer!.dx + 14,
+                        top: _pointer!.dy + 14,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.surface,
+                              borderRadius: BorderRadius.circular(6),
+                              boxShadow: const [BoxShadow(blurRadius: 4)],
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(4),
+                              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(_tool.icon, size: 17),
+                                if (_tool == CanvasTool.line ||
+                                    _tool == CanvasTool.arrow ||
+                                    _tool == CanvasTool.bendyArrow)
+                                  Text(' ${_tool.label}',
+                                      style: theme.textTheme.labelSmall),
+                              ]),
                             ),
                           ),
                         ),
@@ -2262,6 +2445,7 @@ class _CardOnCanvas extends StatelessWidget {
     required this.cardKey,
     required this.onGrab,
     required this.onMenu,
+    required this.onTapCard,
     required this.onMove,
     required this.onRotate,
     required this.onResize,
@@ -2291,6 +2475,7 @@ class _CardOnCanvas extends StatelessWidget {
 
   /// Right-clicked, or held on a phone: the card's own menu, at the pointer.
   final ValueChanged<Offset> onMenu;
+  final VoidCallback onTapCard;
   final ValueChanged<Offset> onMove;
 
   /// Where the rotation handle has been dragged to, in global coordinates —
@@ -2400,7 +2585,10 @@ class _CardOnCanvas extends StatelessWidget {
                 onScaleEnd: (_) {
                   if (!touch || selected) onRelease();
                 },
-                onTap: onGrab,
+                onTap: () {
+                  onGrab();
+                  onTapCard();
+                },
                 // A hold is free on a card — moving one is a drag — so it opens the
                 // menu, which is how a phone reaches what a right-click reaches.
                 onSecondaryTapUp: (details) {
