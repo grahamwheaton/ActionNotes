@@ -47,19 +47,50 @@ class HomeShell extends StatelessWidget {
   }
 }
 
-class _TwoPaneLayout extends StatelessWidget {
+class _TwoPaneLayout extends StatefulWidget {
   const _TwoPaneLayout();
+
+  @override
+  State<_TwoPaneLayout> createState() => _TwoPaneLayoutState();
+}
+
+class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
+  final List<String> _tabs = [];
+  bool _openedInitialProject = false;
+
+  void _openTab(AppState state, String slug) {
+    if (state.projectBySlug(slug) == null) return;
+    setState(() {
+      if (!_tabs.contains(slug)) _tabs.add(slug);
+    });
+    state.select(slug);
+  }
+
+  void _closeTab(AppState state, String slug) {
+    final at = _tabs.indexOf(slug);
+    if (at < 0) return;
+    setState(() => _tabs.removeAt(at));
+    if (state.selectedSlug == slug) {
+      state.select(_tabs.isEmpty ? null : _tabs[at.clamp(0, _tabs.length - 1)]);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final theme = Theme.of(context);
 
-    // Fall back to the first project so the detail pane is never blank when
-    // there is something to show.
-    final selected =
-        state.projectBySlug(state.selectedSlug ?? '') ??
-        (state.projects.isEmpty ? null : state.projects.first);
+    _tabs.removeWhere((slug) => state.projectBySlug(slug) == null);
+    if (!_openedInitialProject && state.projects.isNotEmpty) {
+      _openedInitialProject = true;
+      _tabs.add(state.projectBySlug(state.selectedSlug ?? '')?.slug ??
+          state.projects.first.slug);
+    }
+    final selected = state.projectBySlug(state.selectedSlug ?? '') ??
+        (_tabs.isEmpty ? null : state.projectBySlug(_tabs.last));
+    if (selected != null && !_tabs.contains(selected.slug)) {
+      _tabs.add(selected.slug);
+    }
 
     return Scaffold(
       body: Row(
@@ -77,11 +108,95 @@ class _TwoPaneLayout extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: selected == null
-                ? const _NoProjectSelected()
-                : _DetailPane(project: selected),
+            child: Column(children: [
+              _ProjectTabs(
+                projects: [
+                  for (final slug in _tabs)
+                    if (state.projectBySlug(slug) case final project?) project,
+                ],
+                available: state.projects,
+                selectedSlug: selected?.slug,
+                onOpen: (slug) => _openTab(state, slug),
+                onClose: (slug) => _closeTab(state, slug),
+              ),
+              Expanded(child: selected == null
+                  ? const _NoProjectSelected()
+                  : _DetailPane(project: selected)),
+            ]),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Projects stay open across sidebar switches. The sidebar's existing drag
+/// gesture can drop a project anywhere on this strip to open its tab.
+class _ProjectTabs extends StatelessWidget {
+  const _ProjectTabs({required this.projects, required this.available,
+    required this.selectedSlug, required this.onOpen, required this.onClose});
+
+  final List<Project> projects;
+  final List<Project> available;
+  final String? selectedSlug;
+  final ValueChanged<String> onOpen;
+  final ValueChanged<String> onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (details) =>
+          available.any((project) => project.slug == details.data),
+      onAcceptWithDetails: (details) => onOpen(details.data),
+      builder: (context, candidates, rejected) => Container(
+        height: 44,
+        decoration: BoxDecoration(
+          color: candidates.isNotEmpty
+              ? theme.colorScheme.primaryContainer
+              : theme.colorScheme.surfaceContainerLow,
+          border: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant)),
+        ),
+        child: Row(children: [
+          Expanded(child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              for (final project in projects)
+                SizedBox(
+                  width: 184,
+                  child: Material(
+                    color: project.slug == selectedSlug
+                        ? theme.colorScheme.surface
+                        : Colors.transparent,
+                    child: Row(children: [
+                      Expanded(child: InkWell(
+                        onTap: () => onOpen(project.slug),
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 14),
+                          child: Text(project.title, maxLines: 1,
+                              overflow: TextOverflow.ellipsis),
+                        ),
+                      )),
+                      IconButton(
+                        tooltip: 'Close ${project.title} tab',
+                        icon: const Icon(Icons.close, size: 16),
+                        onPressed: () => onClose(project.slug),
+                      ),
+                    ]),
+                  ),
+                ),
+            ],
+          )),
+          PopupMenuButton<String>(
+            tooltip: 'Open project tab',
+            icon: const Icon(Icons.add, size: 20),
+            onSelected: onOpen,
+            itemBuilder: (_) => [
+              for (final project in available)
+                PopupMenuItem(value: project.slug, child: Text(project.title)),
+            ],
+          ),
+        ]),
       ),
     );
   }
