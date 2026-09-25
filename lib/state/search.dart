@@ -11,7 +11,7 @@ class TagCount {
 }
 
 /// Where a match was found, so a result can say why it matched.
-enum SearchField { projectTitle, itemText, itemNotes, projectNotes }
+enum SearchField { projectTitle, itemText, itemNotes, projectNotes, blockNotes }
 
 /// One hit, pointing at the project and, where relevant, the item.
 class SearchHit {
@@ -20,6 +20,7 @@ class SearchHit {
     required this.field,
     required this.text,
     this.itemIndex,
+    this.blockTitle,
   });
 
   final Project project;
@@ -30,6 +31,7 @@ class SearchHit {
 
   /// Null when the project itself matched rather than one of its items.
   final int? itemIndex;
+  final String? blockTitle;
 }
 
 /// Searches every project's titles, items and notes.
@@ -99,6 +101,13 @@ class ProjectSearch {
           text: projectNote,
         ));
       }
+      for (final block in project.blocks) {
+        final line = _matchingLine(block.body, needle);
+        if (line != null) {
+          hits.add(SearchHit(project: project, field: SearchField.blockNotes,
+              text: line, blockTitle: block.title));
+        }
+      }
     }
 
     return hits;
@@ -124,6 +133,13 @@ class ProjectSearch {
           itemIndex: index,
         ));
       }
+      for (final block in project.blocks) {
+        if (ItemTags.parseNotes(block.body)
+            .any((found) => found.toLowerCase() == tag.toLowerCase())) {
+          hits.add(SearchHit(project: project, field: SearchField.blockNotes,
+              text: block.title, blockTitle: block.title));
+        }
+      }
     }
 
     return hits;
@@ -141,6 +157,13 @@ class ProjectSearch {
     for (final project in projects) {
       for (final item in project.items) {
         for (final tag in item.tags) {
+          final key = tag.toLowerCase();
+          counts[key] = (counts[key] ?? 0) + 1;
+          spellings.putIfAbsent(key, () => tag);
+        }
+      }
+      for (final block in project.blocks) {
+        for (final tag in ItemTags.parseNotes(block.body)) {
           final key = tag.toLowerCase();
           counts[key] = (counts[key] ?? 0) + 1;
           spellings.putIfAbsent(key, () => tag);

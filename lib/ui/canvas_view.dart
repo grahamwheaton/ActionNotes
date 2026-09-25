@@ -182,6 +182,8 @@ class CanvasViewState extends State<CanvasView> {
   /// each frame, so a card pulled onto a line lets go again when the pointer
   /// keeps moving rather than clinging to it.
   final Map<int, Offset> _dragFrom = {};
+  int? _copyFrom;
+  Offset _copyShift = Offset.zero;
   Offset _dragRaw = Offset.zero;
 
   /// The lines to draw for whatever the drag is currently lined up with.
@@ -333,7 +335,11 @@ class CanvasViewState extends State<CanvasView> {
         continue;
       }
       final points = CanvasMarks.pointsOf(shape, cards);
-      for (final metric in CanvasMarks.pathThrough(points, curved: shape.curved)
+      final start = Offset(points[0], points[1]);
+      final end = Offset(points[points.length - 2], points.last);
+      for (final metric in CanvasMarks.pathThrough(points, curved: shape.curved,
+          fromNormal: CanvasMarks.anchorNormal(shape.from, end - start),
+          toNormal: CanvasMarks.anchorNormal(shape.to, start - end))
           .computeMetrics()) {
         final count = math.max(1, (metric.length / (6 / _scale)).ceil());
         var previous = metric.getTangentForOffset(0)?.position;
@@ -506,18 +512,74 @@ class CanvasViewState extends State<CanvasView> {
       return null;
     }
 
+    final fromAnchor = hold(from);
+    final toAnchor = hold(to);
+    final points = [...drawing];
+    if (kind == CanvasShapeKind.arrow) {
+      final start = fromAnchor == null ? _snapShape(from) : null;
+      final end = toAnchor == null ? _snapShape(to) : null;
+      if (start != null) {
+        points[0] = start.dx;
+        points[1] = start.dy;
+      }
+      if (end != null) {
+        points[points.length - 2] = end.dx;
+        points[points.length - 1] = end.dy;
+      }
+    }
     widget.onDrawShape?.call(
       CanvasShape(
         kind: kind,
-        points: List.unmodifiable(drawing),
+        points: List.unmodifiable(points),
         colour: _colour,
         thickness: _thickness,
         curved: tool == CanvasTool.bendyArrow ||
             (tool == CanvasTool.pen && _smoothPen && drawing.length >= 6),
-        from: hold(from),
-        to: hold(to),
+        from: fromAnchor,
+        to: toAnchor,
       ),
     );
+  }
+
+  /// Drawn shapes do not have card identities, so the endpoint is placed on
+  /// their outline. Card anchors above continue to follow moving cards.
+  Offset? _snapShape(Offset point) {
+    Offset? closest;
+    var distance = 14 / _scale;
+    for (final shape in widget.shapes) {
+      final rect = CanvasMarks.bounds(shape);
+      Offset? at;
+      if (shape.kind == CanvasShapeKind.rectangle) {
+        final x = point.dx.clamp(rect.left, rect.right);
+        final y = point.dy.clamp(rect.top, rect.bottom);
+        final edges = [
+          Offset(rect.left, y), Offset(rect.right, y),
+          Offset(x, rect.top), Offset(x, rect.bottom),
+        ];
+        edges.sort((a, b) =>
+            (a - point).distanceSquared.compareTo((b - point).distanceSquared));
+        at = edges.first;
+      } else if (shape.kind == CanvasShapeKind.oval &&
+          rect.width > 0 && rect.height > 0) {
+        final dx = (point.dx - rect.center.dx) / (rect.width / 2);
+        final dy = (point.dy - rect.center.dy) / (rect.height / 2);
+        final length = math.sqrt(dx * dx + dy * dy);
+        if (length > 0) {
+          at = rect.center + Offset(dx / length * rect.width / 2,
+              dy / length * rect.height / 2);
+        }
+      } else if (shape.kind == CanvasShapeKind.line ||
+          shape.kind == CanvasShapeKind.arrow ||
+          shape.kind == CanvasShapeKind.stroke) {
+        at = CanvasMarks.nearestOn(
+          CanvasMarks.pointsOf(shape, _cardRects), point)?.at;
+      }
+      if (at != null && (at - point).distance < distance) {
+        closest = at;
+        distance = (at - point).distance;
+      }
+    }
+    return closest;
   }
 
   /// Names the box that was just dragged out, and puts a frame there.
@@ -649,6 +711,11 @@ class CanvasViewState extends State<CanvasView> {
   /// A tool's press on empty canvas: put the thing down where it landed.
   Future<void> _useTool(Offset viewportPoint) async {
     final tool = _tool;
+    if (tool == CanvasTool.image) {
+      setState(() => _tool = CanvasTool.select);
+      widget.onAddImage?.call(_toScene(viewportPoint));
+      return;
+    }
     if (tool == CanvasTool.select || widget.onPlaceCard == null) return;
 
     final scene = _toScene(viewportPoint);
@@ -805,12 +872,22 @@ class CanvasViewState extends State<CanvasView> {
     for (final spot in _spots) {
       if (spot.z > top) top = spot.z;
     }
-    final ordered = indices.toList()
+    final moving = indices.toSet();
+    final stuck = <int>{};
+    for (final index in moving) {
+      stuck.addAll(_stuckOn(index));
+    }
+    final ordered = moving.toList()
+      ..sort((a, b) => _spots[a].z.compareTo(_spots[b].z));
+    final notes = stuck.toList()
       ..sort((a, b) => _spots[a].z.compareTo(_spots[b].z));
     if (ordered.isEmpty) return;
 
     setState(() {
       for (final index in ordered) {
+        _spots[index] = _spots[index].copyWith(z: ++top);
+      }
+      for (final index in notes) {
         _spots[index] = _spots[index].copyWith(z: ++top);
       }
     });
@@ -885,18 +962,14 @@ class CanvasViewState extends State<CanvasView> {
     return rects;
   }
 
-  /// What an arrow may take hold of: everything except the frames.
-  ///
-  /// A frame is the space several things stand in, so an arrow dropped inside
-  /// one was taking hold of the frame and snapping out to its edge — pointing
-  /// at the room rather than at anything in it. Holds are still *resolved*
-  /// against every card, frames included, so an arrow drawn before this
-  /// keeps whatever it was holding.
+  /// All cards can receive an arrow, including frames and sticky notes.
+  /// The highest card under the pointer wins over a surrounding frame.
   Map<String, Rect> get _holdTargets {
     final rects = <String, Rect>{};
     final drawable = math.min(widget.cards.length, _spots.length);
-    for (var i = 0; i < drawable; i++) {
-      if (_spots[i].isFrame) continue;
+    final order = [for (var i = 0; i < drawable; i++) i]
+      ..sort((a, b) => _spots[b].z.compareTo(_spots[a].z));
+    for (final i in order) {
       rects.putIfAbsent(widget.cards[i].ref, () => _sceneRect(i));
     }
     return rects;
@@ -1037,8 +1110,19 @@ class CanvasViewState extends State<CanvasView> {
       proposed = proposed == null ? rect : proposed.expandToInclude(rect);
     }
 
-    // Alt turns it off, for the times a card belongs just off the line.
-    final snap = proposed == null || HardwareKeyboard.instance.isAltPressed
+    // Grid snapping follows the dots actually visible at this zoom level.
+    final gridStep = CanvasMarks.backgroundStep(_scale) / _scale;
+    final gridCorrection = proposed != null && widget.settings.snapGrid &&
+            !HardwareKeyboard.instance.isControlPressed &&
+            !(HardwareKeyboard.instance.isAltPressed &&
+                HardwareKeyboard.instance.isShiftPressed)
+        ? Offset(
+            (proposed.left / gridStep).round() * gridStep - proposed.left,
+            (proposed.top / gridStep).round() * gridStep - proposed.top,
+          )
+        : null;
+    final snap = proposed == null || gridCorrection != null ||
+            HardwareKeyboard.instance.isAltPressed
         ? const SnapResult()
         : CanvasSnap.snap(
             moving: proposed,
@@ -1051,7 +1135,8 @@ class CanvasViewState extends State<CanvasView> {
 
     setState(() {
       for (final at in moving) {
-        final from = _dragFrom[at]! + _dragRaw + snap.correction;
+        final from = _dragFrom[at]! + _dragRaw +
+            (gridCorrection ?? snap.correction);
         _spots[at] = _spots[at].copyWith(x: from.dx, y: from.dy);
       }
       _guides = snap.guides;
@@ -1091,9 +1176,10 @@ class CanvasViewState extends State<CanvasView> {
         width: math.max(80, spot.width + delta.dx / _scale),
         // A card's height follows what is in it, so only its width is
         // dragged. A frame is a rectangle, so both corners move.
-        height: spot.height == null
+        height: spot.height == null && spot.kind != CanvasSpotKind.sticky
             ? null
-            : math.max(80, spot.height! + delta.dy / _scale),
+            : math.max(50, (spot.height ?? _sceneSize(index).height) +
+                delta.dy / _scale),
       );
     });
   }
@@ -1183,7 +1269,7 @@ class CanvasViewState extends State<CanvasView> {
           if (HardwareKeyboard.instance.isAltPressed) {
             return KeyEventResult.ignored;
           }
-          widget.onAddImage?.call(null);
+          if (widget.onAddImage != null) _chooseTool(CanvasTool.image);
           return widget.onAddImage == null
               ? KeyEventResult.ignored : KeyEventResult.handled;
         }
@@ -1499,6 +1585,13 @@ class CanvasViewState extends State<CanvasView> {
                           _focus.requestFocus();
                           _active = index;
                           _select(index, additive: _additive);
+                          if (!touch && HardwareKeyboard.instance.isAltPressed &&
+                              !HardwareKeyboard.instance.isShiftPressed &&
+                              widget.onPlaceCard != null) {
+                            _copyFrom = index;
+                            _copyShift = Offset.zero;
+                            return;
+                          }
                           _beginDrag(index);
                           // Raise whatever is now selected, so a group picked up
                           // comes forward together rather than one of it.
@@ -1508,6 +1601,8 @@ class CanvasViewState extends State<CanvasView> {
                         },
                         onMenu: (at) => _showCardMenu(index, at),
                         onTapCard: () {
+                          _copyFrom = null;
+                          _copyShift = Offset.zero;
                           final now = DateTime.now();
                           if (_lastLinkedTap == index &&
                               _lastLinkedTapAt != null &&
@@ -1515,7 +1610,14 @@ class CanvasViewState extends State<CanvasView> {
                                   const Duration(milliseconds: 450)) {
                             _lastLinkedTap = null;
                             _lastLinkedTapAt = null;
-                            _openLinkedCard(index);
+                            final linked = RegExp(r'\]\(([^)]+)\.md#note=([^)]*)\)')
+                                .hasMatch(widget.cards[index].markdown);
+                            if (linked) {
+                              _openLinkedCard(index);
+                            } else if (!widget.cards[index].isImage &&
+                                !_spots[index].isFrame) {
+                              _editCard(index);
+                            }
                           } else {
                             _lastLinkedTap = index;
                             _lastLinkedTapAt = now;
@@ -1525,6 +1627,28 @@ class CanvasViewState extends State<CanvasView> {
                         onRotate: (at) => _rotateTo(index, at),
                         onResize: (delta) => _resizeBy(index, delta),
                         onRelease: () {
+                          final copy = _copyFrom;
+                          final shift = _copyShift;
+                          _copyFrom = null;
+                          _copyShift = Offset.zero;
+                          if (copy != null) {
+                            _active = null;
+                            _dragFocal = null;
+                            if (shift.distance >= 4 / _scale) {
+                              final source = _spots[copy];
+                              widget.onPlaceCard?.call(
+                                widget.cards[copy].markdown,
+                                source.copyWith(
+                                  x: source.x + shift.dx,
+                                  y: source.y + shift.dy,
+                                  z: _spots.map((spot) => spot.z)
+                                      .fold<int>(0, math.max) + 1,
+                                  locked: false,
+                                ),
+                              );
+                            }
+                            return;
+                          }
                           _active = null;
                           _dragFocal = null;
                           _endDrag();
@@ -1535,11 +1659,34 @@ class CanvasViewState extends State<CanvasView> {
                           final from = _dragFocal;
                           if (from == null) return;
                           _dragFocal = at;
+                          if (_copyFrom == index) {
+                            setState(() => _copyShift += (at - from) / _scale);
+                            return;
+                          }
                           _moveBy(index, at - from);
                         },
                         onPinchStart: touch ? _pinchStart : null,
                         onPinchUpdate: touch ? _pinchUpdate : null,
                         near: _nearViewport(_spots[index]),
+                      ),
+                    if (_copyFrom != null && _copyShift != Offset.zero)
+                      Positioned(
+                        left: (_spots[_copyFrom!].x + _copyShift.dx) * _scale + _pan.dx,
+                        top: (_spots[_copyFrom!].y + _copyShift.dy) * _scale + _pan.dy,
+                        child: IgnorePointer(child: Opacity(
+                          opacity: 0.55,
+                          child: Container(
+                            width: _spots[_copyFrom!].width * _scale,
+                            height: _sceneSize(_copyFrom!).height * _scale,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primaryContainer,
+                              border: Border.all(color: theme.colorScheme.primary,
+                                  width: 2),
+                            ),
+                            alignment: Alignment.center,
+                            child: const Icon(Icons.content_copy),
+                          ),
+                        )),
                       ),
                     // Over the cards: an arrow pointing at a reference has to be
                     // on top of it to mean anything. It takes no pointers, so a
@@ -2516,7 +2663,6 @@ class _CardOnCanvas extends StatelessWidget {
     final at = Offset(spot.x, spot.y) * scale + pan;
 
     return Positioned(
-      key: cardKey,
       left: at.dx,
       top: at.dy,
       width: spot.width * scale,
@@ -2605,6 +2751,7 @@ class _CardOnCanvas extends StatelessWidget {
                     IgnorePointer(
                       ignoring: spot.isFrame,
                       child: Container(
+                        key: cardKey,
                         decoration: BoxDecoration(
                           color: spot.isFrame
                               // Barely there: a frame is a boundary, not a panel,
@@ -3002,6 +3149,14 @@ class _CanvasControls extends StatelessWidget {
                       child: Text(option.label),
                     ),
                   const PopupMenuDivider(),
+                  CheckedPopupMenuItem(
+                    checked: settings.snapGrid,
+                    onTap: () => onSettingsChanged!(
+                      settings.copyWith(snapGrid: !settings.snapGrid),
+                    ),
+                    child: const Text('Snap to grid'),
+                  ),
+                  const PopupMenuDivider(),
                   const PopupMenuItem(
                     enabled: false,
                     height: 32,
@@ -3105,6 +3260,8 @@ class _MarksPainter extends CustomPainter {
     double thickness,
     double opacity, {
     bool curved = false,
+    CanvasAnchor? from,
+    CanvasAnchor? to,
   }) {
     if (points.length < 4) return;
 
@@ -3124,22 +3281,29 @@ class _MarksPainter extends CustomPainter {
       ],
     ];
     final last = points.length ~/ 2 - 1;
+    final start = Offset(points[0], points[1]);
+    final end = Offset(points[last * 2], points[last * 2 + 1]);
+    final fromNormal = CanvasMarks.anchorNormal(from, end - start);
+    final toNormal = CanvasMarks.anchorNormal(to, start - end);
 
     switch (kind) {
       case CanvasShapeKind.line:
         canvas.drawPath(
-          CanvasMarks.pathThrough(onGlass, curved: curved),
+          CanvasMarks.pathThrough(onGlass, curved: curved,
+              fromNormal: fromNormal, toNormal: toNormal),
           paint,
         );
       case CanvasShapeKind.arrow:
         canvas.drawPath(
-          CanvasMarks.pathThrough(onGlass, curved: curved),
+          CanvasMarks.pathThrough(onGlass, curved: curved,
+              fromNormal: fromNormal, toNormal: toNormal),
           paint,
         );
         // Pointed along the last stretch of the line, which for a curve is
         // the tangent it arrives on rather than the straight line from where
         // it started.
-        _head(canvas, onGlass, curved, paint);
+        _head(canvas, onGlass, curved, paint,
+            fromNormal: fromNormal, toNormal: toNormal);
       case CanvasShapeKind.rectangle:
         canvas.drawRect(
           Rect.fromPoints(_at(points, 0), _at(points, last)),
@@ -3164,13 +3328,16 @@ class _MarksPainter extends CustomPainter {
   /// The size comes from the arrow's own length, not from the two points its
   /// direction was worked out between — reading it off those is what once
   /// left every head half a pixel long, and so invisible.
-  void _head(Canvas canvas, List<double> onGlass, bool curved, Paint paint) {
+  void _head(Canvas canvas, List<double> onGlass, bool curved, Paint paint,
+      {Offset? fromNormal, Offset? toNormal}) {
     final length = CanvasMarks.headLength(
-      CanvasMarks.lengthOf(onGlass, curved: curved),
+      CanvasMarks.lengthOf(onGlass, curved: curved,
+          fromNormal: fromNormal, toNormal: toNormal),
     );
     if (length <= 0) return;
 
-    final angle = CanvasMarks.tipAngle(onGlass, curved: curved);
+    final angle = CanvasMarks.tipAngle(onGlass, curved: curved,
+        fromNormal: fromNormal, toNormal: toNormal);
     final count = onGlass.length ~/ 2;
     final tip = Offset(onGlass[(count - 1) * 2], onGlass[(count - 1) * 2 + 1]);
     const spread = 0.5;
@@ -3201,6 +3368,8 @@ class _MarksPainter extends CustomPainter {
         shape.thickness,
         rubbed.contains(i) ? 0.2 : 1,
         curved: shape.curved,
+        from: shape.from,
+        to: shape.to,
       );
     }
 
@@ -3328,6 +3497,7 @@ class _HoldsPainter extends CustomPainter {
 /// What the next press on the canvas will do.
 enum CanvasTool {
   select,
+  image,
   sticky,
   text,
   frame,
@@ -3341,6 +3511,7 @@ enum CanvasTool {
 
   String get label => switch (this) {
     CanvasTool.select => 'Select',
+    CanvasTool.image => 'Image',
     CanvasTool.sticky => 'Sticky note',
     CanvasTool.text => 'Text',
     CanvasTool.frame => 'Frame',
@@ -3355,6 +3526,7 @@ enum CanvasTool {
 
   IconData get icon => switch (this) {
     CanvasTool.select => Icons.near_me_outlined,
+    CanvasTool.image => Icons.image_outlined,
     CanvasTool.sticky => Icons.sticky_note_2_outlined,
     CanvasTool.text => Icons.title,
     CanvasTool.frame => Icons.crop_free,
@@ -3368,7 +3540,8 @@ enum CanvasTool {
   };
 
   /// Placed by pressing once and saying what it says.
-  bool get places => this == CanvasTool.sticky || this == CanvasTool.text;
+  bool get places => this == CanvasTool.sticky || this == CanvasTool.text ||
+      this == CanvasTool.image;
 
   /// Worked by dragging something out rather than by pressing once. A frame
   /// is a box you draw, the way it is in every tool that has frames — its

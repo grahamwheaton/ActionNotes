@@ -244,7 +244,31 @@ class CanvasMarks {
   /// between them have no curve to describe, so they are bowed the way a node
   /// editor bows a connection. Vertical connections leave and arrive
   /// vertically; horizontal ones leave and arrive sideways.
-  static Path pathThrough(List<double> points, {required bool curved}) {
+  static Offset? anchorNormal(CanvasAnchor? anchor, Offset toward) {
+    if (anchor == null) return null;
+    if (anchor.ax == 0 && anchor.ay > 0 && anchor.ay < 1) {
+      return const Offset(-1, 0);
+    }
+    if (anchor.ax == 1 && anchor.ay > 0 && anchor.ay < 1) {
+      return const Offset(1, 0);
+    }
+    if (anchor.ay == 0 && anchor.ax > 0 && anchor.ax < 1) {
+      return const Offset(0, -1);
+    }
+    if (anchor.ay == 1 && anchor.ax > 0 && anchor.ax < 1) {
+      return const Offset(0, 1);
+    }
+    if (anchor.ax == 0.5 && anchor.ay == 0.5) return null;
+    // A corner can leave by either side. Use the axis heading towards the
+    // other end, so both ends still meet the box at a right angle.
+    if (toward.dx.abs() >= toward.dy.abs()) {
+      return Offset(anchor.ax == 0 ? -1 : 1, 0);
+    }
+    return Offset(0, anchor.ay == 0 ? -1 : 1);
+  }
+
+  static Path pathThrough(List<double> points, {required bool curved,
+    Offset? fromNormal, Offset? toNormal}) {
     final path = Path();
     final count = points.length ~/ 2;
     if (count < 2) return path;
@@ -265,7 +289,14 @@ class CanvasMarks {
       final b = at(1);
       final dx = b.dx - a.dx;
       final dy = b.dy - a.dy;
-      if (dy.abs() > dx.abs()) {
+      if (fromNormal != null || toNormal != null) {
+        final reach = math.max(40.0, math.min(260.0, (b - a).distance / 2));
+        final axis = dy.abs() > dx.abs()
+            ? Offset(0, dy.sign) : Offset(dx.sign, 0);
+        final start = a + (fromNormal ?? axis) * reach;
+        final finish = b + (toNormal ?? -axis) * reach;
+        path.cubicTo(start.dx, start.dy, finish.dx, finish.dy, b.dx, b.dy);
+      } else if (dy.abs() > dx.abs()) {
         final reach = (dy.abs() / 2).clamp(40.0, 260.0) * dy.sign;
         path.cubicTo(a.dx, a.dy + reach, b.dx, b.dy - reach, b.dx, b.dy);
       } else {
@@ -282,10 +313,18 @@ class CanvasMarks {
       final p3 = at(i + 2 >= count ? count - 1 : i + 2);
 
       path.cubicTo(
-        p1.dx + (p2.dx - p0.dx) / 6,
-        p1.dy + (p2.dy - p0.dy) / 6,
-        p2.dx - (p3.dx - p1.dx) / 6,
-        p2.dy - (p3.dy - p1.dy) / 6,
+        i == 0 && fromNormal != null
+            ? p1.dx + fromNormal.dx * math.min(100, (p2 - p1).distance / 2)
+            : p1.dx + (p2.dx - p0.dx) / 6,
+        i == 0 && fromNormal != null
+            ? p1.dy + fromNormal.dy * math.min(100, (p2 - p1).distance / 2)
+            : p1.dy + (p2.dy - p0.dy) / 6,
+        i == count - 2 && toNormal != null
+            ? p2.dx + toNormal.dx * math.min(100, (p2 - p1).distance / 2)
+            : p2.dx - (p3.dx - p1.dx) / 6,
+        i == count - 2 && toNormal != null
+            ? p2.dy + toNormal.dy * math.min(100, (p2 - p1).distance / 2)
+            : p2.dy - (p3.dy - p1.dy) / 6,
         p2.dx,
         p2.dy,
       );
@@ -298,11 +337,13 @@ class CanvasMarks {
   /// Read off the path's own tangent, so a curve's head points along the way
   /// it actually comes in rather than at the straight line from where it
   /// started — which on a bendy arrow is nowhere near the same direction.
-  static double tipAngle(List<double> points, {required bool curved}) {
+  static double tipAngle(List<double> points, {required bool curved,
+    Offset? fromNormal, Offset? toNormal}) {
     final count = points.length ~/ 2;
     if (count < 2) return 0;
 
-    for (final metric in pathThrough(points, curved: curved).computeMetrics()) {
+    for (final metric in pathThrough(points, curved: curved,
+        fromNormal: fromNormal, toNormal: toNormal).computeMetrics()) {
       if (metric.length <= 0) continue;
       final tip = metric.getTangentForOffset(metric.length);
       if (tip != null) {
@@ -316,9 +357,11 @@ class CanvasMarks {
   }
 
   /// How long a line is along its own path.
-  static double lengthOf(List<double> points, {required bool curved}) {
+  static double lengthOf(List<double> points, {required bool curved,
+    Offset? fromNormal, Offset? toNormal}) {
     var total = 0.0;
-    for (final metric in pathThrough(points, curved: curved).computeMetrics()) {
+    for (final metric in pathThrough(points, curved: curved,
+        fromNormal: fromNormal, toNormal: toNormal).computeMetrics()) {
       total += metric.length;
     }
     return total;

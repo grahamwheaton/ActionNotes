@@ -99,7 +99,7 @@ void main() {
       await settle(tester);
     });
 
-    testWidgets('holding alt drags past the line without settling on it', (
+    testWidgets('holding shift and alt drags past the line without snapping', (
       tester,
     ) async {
       final state = await pumpCanvas(
@@ -112,11 +112,33 @@ void main() {
       );
 
       await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
       await tester.drag(onCanvas('Two'), const Offset(-395, 0));
       await tester.pumpAndSettle();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
 
       expect(spotsOf(state)[1].x, closeTo(105, 0.5));
+      await settle(tester);
+    });
+
+    testWidgets('alt drag copies a card and leaves the original in place', (
+      tester,
+    ) async {
+      final state = await pumpCanvas(tester, spots: const [
+        CanvasSpot(x: 100, y: 100, width: 120, ref: 'One'),
+        CanvasSpot(x: 500, y: 400, width: 120, ref: 'Two'),
+        CanvasSpot(x: 900, y: 700, width: 120, ref: 'Three'),
+      ]);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.drag(onCanvas('Two'), const Offset(-200, 0));
+      await tester.pumpAndSettle();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+
+      expect(spotsOf(state), hasLength(4));
+      expect(spotsOf(state)[1].x, 500);
+      expect(spotsOf(state).last.x, closeTo(300, 0.5));
       await settle(tester);
     });
   });

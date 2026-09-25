@@ -301,6 +301,23 @@ void _nodes() {
   });
 
   group('a bendy mark', () {
+    test('a held end meets its card perpendicular to the touched edge', () {
+      const right = CanvasAnchor(ref: 'a', ax: 1, ay: 0.5);
+      const top = CanvasAnchor(ref: 'b', ax: 0.5, ay: 0);
+      const points = [0.0, 0.0, 180.0, 160.0];
+      final path = CanvasMarks.pathThrough(points, curved: true,
+        fromNormal: CanvasMarks.anchorNormal(right, const Offset(180, 160)),
+        toNormal: CanvasMarks.anchorNormal(top, const Offset(-180, -160)),
+      );
+      final metric = path.computeMetrics().first;
+      final start = metric.getTangentForOffset(0)!.vector;
+      final end = metric.getTangentForOffset(metric.length)!.vector;
+      expect(start.dx, greaterThan(0));
+      expect(start.dy.abs(), lessThan(0.01));
+      expect(end.dx.abs(), lessThan(0.01));
+      expect(end.dy, greaterThan(0));
+    });
+
     test('a straight one goes corner to corner and no further', () {
       final path = CanvasMarks.pathThrough([
         0.0,

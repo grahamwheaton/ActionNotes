@@ -97,4 +97,16 @@ void main() {
   test('nothing matches an absent term', () {
     expect(ProjectSearch.run(projects, 'zebra'), isEmpty);
   });
+
+  test('tags in note sections appear in the tag index and search', () {
+    final project = Project(slug: 'notes', title: 'Notes', blocks: const [
+      ProjectBlock(title: 'Ideas', body: 'A useful [canvas] thought\n- [ ] task'),
+    ]);
+    expect(ProjectSearch.tags([project]).map((entry) => entry.tag), ['canvas']);
+    final hit = ProjectSearch.run([project], '[canvas]').single;
+    expect(hit.field, SearchField.blockNotes);
+    expect(hit.blockTitle, 'Ideas');
+    expect(ProjectSearch.run([project], 'useful').single.field,
+        SearchField.blockNotes);
+  });
 }
