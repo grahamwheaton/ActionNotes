@@ -1113,7 +1113,9 @@ class CanvasViewState extends State<CanvasView> {
     // Grid snapping follows the dots actually visible at this zoom level.
     final gridStep = CanvasMarks.backgroundStep(_scale) / _scale;
     final gridCorrection = proposed != null && widget.settings.snapGrid &&
-            !HardwareKeyboard.instance.isControlPressed
+            !HardwareKeyboard.instance.isControlPressed &&
+            !(HardwareKeyboard.instance.isAltPressed &&
+                HardwareKeyboard.instance.isShiftPressed)
         ? Offset(
             (proposed.left / gridStep).round() * gridStep - proposed.left,
             (proposed.top / gridStep).round() * gridStep - proposed.top,
@@ -1584,6 +1586,7 @@ class CanvasViewState extends State<CanvasView> {
                           _active = index;
                           _select(index, additive: _additive);
                           if (!touch && HardwareKeyboard.instance.isAltPressed &&
+                              !HardwareKeyboard.instance.isShiftPressed &&
                               widget.onPlaceCard != null) {
                             _copyFrom = index;
                             _copyShift = Offset.zero;

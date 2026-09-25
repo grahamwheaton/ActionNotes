@@ -99,7 +99,7 @@ void main() {
       await settle(tester);
     });
 
-    testWidgets('holding alt drags past the line without settling on it', (
+    testWidgets('holding shift and alt drags past the line without snapping', (
       tester,
     ) async {
       final state = await pumpCanvas(
@@ -112,8 +112,10 @@ void main() {
       );
 
       await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
       await tester.drag(onCanvas('Two'), const Offset(-395, 0));
       await tester.pumpAndSettle();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
 
       expect(spotsOf(state)[1].x, closeTo(105, 0.5));
