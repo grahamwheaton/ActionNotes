@@ -17,6 +17,7 @@ import 'update_banner.dart';
 import 'shortcuts_sheet.dart';
 import 'settings_screen.dart';
 import 'text_prompt.dart';
+import 'touch_input.dart';
 
 /// Wide windows get a sidebar of projects beside the open checklist; narrow
 /// ones keep the phone behaviour of pushing the checklist onto the stack.
@@ -56,23 +57,115 @@ class _TwoPaneLayout extends StatefulWidget {
 
 class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
   final List<String> _tabs = [];
+  final List<String> _rightTabs = [];
+  String? _active;
+  String? _rightActive;
+  String? _lastSelected;
+  int _focused = 0;
+  bool _split = false;
+  bool _sidebarCollapsed = false;
   bool _openedInitialProject = false;
 
-  void _openTab(AppState state, String slug) {
+  List<String> _forPane(int pane) => pane == 0 ? _tabs : _rightTabs;
+  String? _activeFor(int pane) => pane == 0 ? _active : _rightActive;
+
+  void _setActive(int pane, String? slug) {
+    if (pane == 0) _active = slug;
+    else _rightActive = slug;
+  }
+
+  void _show(AppState state, int pane, String slug, {bool newTab = false}) {
     if (state.projectBySlug(slug) == null) return;
+    final tabs = _forPane(pane);
     setState(() {
-      if (!_tabs.contains(slug)) _tabs.add(slug);
+      if (!tabs.contains(slug)) {
+        if (newTab || tabs.isEmpty || _activeFor(pane) == null) {
+          tabs.add(slug);
+        } else {
+          final at = tabs.indexOf(_activeFor(pane)!);
+          if (at < 0) tabs.add(slug);
+          else tabs[at] = slug;
+        }
+      }
+      _setActive(pane, slug);
+      _focused = pane;
     });
+    _lastSelected = slug;
     state.select(slug);
   }
 
-  void _closeTab(AppState state, String slug) {
-    final at = _tabs.indexOf(slug);
+  void _closeTab(AppState state, int pane, String slug) {
+    final tabs = _forPane(pane);
+    final at = tabs.indexOf(slug);
     if (at < 0) return;
-    setState(() => _tabs.removeAt(at));
-    if (state.selectedSlug == slug) {
-      state.select(_tabs.isEmpty ? null : _tabs[at.clamp(0, _tabs.length - 1)]);
+    setState(() {
+      tabs.removeAt(at);
+      if (_activeFor(pane) == slug) {
+        _setActive(pane, tabs.isEmpty ? null : tabs[at.clamp(0, tabs.length - 1)]);
+      }
+    });
+    if (_focused == pane) {
+      _lastSelected = _activeFor(pane);
+      state.select(_lastSelected);
     }
+  }
+
+  void _focus(AppState state, int pane) {
+    if (_focused == pane) return;
+    setState(() => _focused = pane);
+    _lastSelected = _activeFor(pane);
+    state.select(_lastSelected);
+  }
+
+  void _toggleSplit(AppState state) {
+    setState(() {
+      _split = !_split;
+      if (_split) {
+        _rightActive = _active;
+        _rightTabs
+          ..clear()
+          ..addAll([if (_active != null) _active!]);
+      } else {
+        _rightTabs.clear();
+        _rightActive = null;
+        _focused = 0;
+      }
+    });
+    _lastSelected = _activeFor(_focused);
+    state.select(_lastSelected);
+  }
+
+  Widget _pane(AppState state, ThemeData theme, int pane) {
+    final active = _activeFor(pane);
+    final project = state.projectBySlug(active ?? '');
+    return Expanded(child: Listener(
+      onPointerDown: (_) => _focus(state, pane),
+      child: DecoratedBox(
+        decoration: BoxDecoration(border: pane == 1
+            ? Border(left: BorderSide(color: theme.colorScheme.outlineVariant))
+            : null),
+        child: Column(children: [
+          _ProjectTabs(
+            projects: [
+              for (final slug in _forPane(pane))
+                if (state.projectBySlug(slug) case final found?) found,
+            ],
+            available: state.projects,
+            selectedSlug: active,
+            onOpen: (slug) => _show(state, pane, slug, newTab: true),
+            onClose: (slug) => _closeTab(state, pane, slug),
+            onToggleSidebar: pane == 0 ? () => setState(
+                () => _sidebarCollapsed = !_sidebarCollapsed) : null,
+            sidebarCollapsed: _sidebarCollapsed,
+            onToggleSplit: () => _toggleSplit(state),
+            split: _split,
+          ),
+          Expanded(child: project == null
+              ? const _NoProjectSelected()
+              : _DetailPane(project: project)),
+        ]),
+      ),
+    ));
   }
 
   @override
@@ -81,21 +174,31 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
     final theme = Theme.of(context);
 
     _tabs.removeWhere((slug) => state.projectBySlug(slug) == null);
+    _rightTabs.removeWhere((slug) => state.projectBySlug(slug) == null);
     if (!_openedInitialProject && state.projects.isNotEmpty) {
       _openedInitialProject = true;
-      _tabs.add(state.projectBySlug(state.selectedSlug ?? '')?.slug ??
-          state.projects.first.slug);
+      _active = state.projectBySlug(state.selectedSlug ?? '')?.slug ??
+          state.projects.first.slug;
+      _tabs.add(_active!);
+      _lastSelected = state.selectedSlug;
     }
-    final selected = state.projectBySlug(state.selectedSlug ?? '') ??
-        (_tabs.isEmpty ? null : state.projectBySlug(_tabs.last));
-    if (selected != null && !_tabs.contains(selected.slug)) {
-      _tabs.add(selected.slug);
+    if (state.selectedSlug != _lastSelected &&
+        state.projectBySlug(state.selectedSlug ?? '') != null) {
+      final slug = state.selectedSlug!;
+      final tabs = _forPane(_focused);
+      if (!tabs.contains(slug)) {
+        final at = tabs.indexOf(_activeFor(_focused) ?? '');
+        if (at < 0) tabs.add(slug);
+        else tabs[at] = slug;
+      }
+      _setActive(_focused, slug);
+      _lastSelected = slug;
     }
 
     return Scaffold(
       body: Row(
         children: [
-          SizedBox(
+          if (!_sidebarCollapsed) SizedBox(
             width: 280,
             child: DecoratedBox(
               decoration: BoxDecoration(
@@ -104,26 +207,16 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
                   right: BorderSide(color: theme.colorScheme.outlineVariant),
                 ),
               ),
-              child: ProjectSidebar(selectedSlug: selected?.slug),
+              child: ProjectSidebar(
+                selectedSlug: _activeFor(_focused),
+                onSelect: (slug) => _show(state, _focused, slug),
+                onOpenInNewTab: (slug) => _show(state, _focused, slug,
+                    newTab: true),
+              ),
             ),
           ),
-          Expanded(
-            child: Column(children: [
-              _ProjectTabs(
-                projects: [
-                  for (final slug in _tabs)
-                    if (state.projectBySlug(slug) case final project?) project,
-                ],
-                available: state.projects,
-                selectedSlug: selected?.slug,
-                onOpen: (slug) => _openTab(state, slug),
-                onClose: (slug) => _closeTab(state, slug),
-              ),
-              Expanded(child: selected == null
-                  ? const _NoProjectSelected()
-                  : _DetailPane(project: selected)),
-            ]),
-          ),
+          _pane(state, theme, 0),
+          if (_split) _pane(state, theme, 1),
         ],
       ),
     );
@@ -134,13 +227,19 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
 /// gesture can drop a project anywhere on this strip to open its tab.
 class _ProjectTabs extends StatelessWidget {
   const _ProjectTabs({required this.projects, required this.available,
-    required this.selectedSlug, required this.onOpen, required this.onClose});
+    required this.selectedSlug, required this.onOpen, required this.onClose,
+    required this.onToggleSidebar, required this.sidebarCollapsed,
+    required this.onToggleSplit, required this.split});
 
   final List<Project> projects;
   final List<Project> available;
   final String? selectedSlug;
   final ValueChanged<String> onOpen;
   final ValueChanged<String> onClose;
+  final VoidCallback? onToggleSidebar;
+  final bool sidebarCollapsed;
+  final VoidCallback onToggleSplit;
+  final bool split;
 
   @override
   Widget build(BuildContext context) {
@@ -158,6 +257,12 @@ class _ProjectTabs extends StatelessWidget {
           border: Border(bottom: BorderSide(color: theme.colorScheme.outlineVariant)),
         ),
         child: Row(children: [
+          if (onToggleSidebar != null)
+            IconButton(
+              tooltip: sidebarCollapsed ? 'Show projects' : 'Hide projects',
+              icon: Icon(sidebarCollapsed ? Icons.menu_open : Icons.menu),
+              onPressed: onToggleSidebar,
+            ),
           Expanded(child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
@@ -195,6 +300,12 @@ class _ProjectTabs extends StatelessWidget {
               for (final project in available)
                 PopupMenuItem(value: project.slug, child: Text(project.title)),
             ],
+          ),
+          IconButton(
+            tooltip: split ? 'Close split view' : 'Split view right',
+            icon: Icon(split ? Icons.vertical_split : Icons.view_column_outlined,
+                size: 20),
+            onPressed: onToggleSplit,
           ),
         ]),
       ),
@@ -338,12 +449,16 @@ class ProjectSidebar extends StatefulWidget {
     super.key,
     required this.selectedSlug,
     this.pushOnTap = false,
+    this.onSelect,
+    this.onOpenInNewTab,
   });
 
   final String? selectedSlug;
 
   /// True on a phone, where tapping a project opens it as a new screen.
   final bool pushOnTap;
+  final ValueChanged<String>? onSelect;
+  final ValueChanged<String>? onOpenInNewTab;
 
   @override
   State<ProjectSidebar> createState() => _ProjectSidebarState();
@@ -410,6 +525,8 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
                     filtered: filtering ? projects : null,
                     selectedSlug: widget.selectedSlug,
                     pushOnTap: widget.pushOnTap,
+                    onSelect: widget.onSelect,
+                    onOpenInNewTab: widget.onOpenInNewTab,
                   ),
                 ),
         ),
@@ -430,6 +547,8 @@ class _ProjectList extends StatelessWidget {
     required this.filtered,
     required this.selectedSlug,
     required this.pushOnTap,
+    this.onSelect,
+    this.onOpenInNewTab,
   });
 
   /// The matches, when something is typed in the box — in which case the
@@ -437,6 +556,8 @@ class _ProjectList extends StatelessWidget {
   final List<Project>? filtered;
   final String? selectedSlug;
   final bool pushOnTap;
+  final ValueChanged<String>? onSelect;
+  final ValueChanged<String>? onOpenInNewTab;
 
   @override
   Widget build(BuildContext context) {
@@ -452,6 +573,8 @@ class _ProjectList extends StatelessWidget {
           project: matches[index],
           selected: matches[index].slug == selectedSlug,
           pushOnTap: pushOnTap,
+          onSelect: onSelect,
+          onOpenInNewTab: onOpenInNewTab,
         ),
       );
     }
@@ -469,6 +592,8 @@ class _ProjectList extends StatelessWidget {
               project: loose[index],
               selected: loose[index].slug == selectedSlug,
               pushOnTap: pushOnTap,
+              onSelect: onSelect,
+              onOpenInNewTab: onOpenInNewTab,
             ),
           ),
         // The end of the ungrouped run, so something can be dragged out of a
@@ -486,6 +611,8 @@ class _ProjectList extends StatelessWidget {
                   project: state.projectsIn(group)[index],
                   selected: state.projectsIn(group)[index].slug == selectedSlug,
                   pushOnTap: pushOnTap,
+                  onSelect: onSelect,
+                  onOpenInNewTab: onOpenInNewTab,
                 ),
               ),
           if (!group.collapsed)
@@ -805,49 +932,42 @@ class _DropBeforeState extends State<_DropBefore> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        DragTarget<String>(
-          onWillAcceptWithDetails: (_) {
-            setState(() => _over = true);
-            return true;
-          },
-          onLeave: (_) => setState(() => _over = false),
-          onAcceptWithDetails: (details) {
-            setState(() => _over = false);
-            context.read<AppState>().placeProject(
-              details.data,
-              group: widget.group,
-              at: widget.at,
-            );
-          },
-          builder: (context, candidate, rejected) => Container(
+    return DragTarget<String>(
+      onWillAcceptWithDetails: (_) => true,
+      onMove: (details) {
+        if (!_over) setState(() => _over = true);
+      },
+      onLeave: (_) => setState(() => _over = false),
+      onAcceptWithDetails: (details) {
+        setState(() => _over = false);
+        context.read<AppState>().placeProject(
+          details.data,
+          group: widget.group,
+          at: widget.at,
+        );
+      },
+      builder: (context, candidate, rejected) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
             height: _over ? 10 : (widget.tall ? 28 : 6),
             margin: const EdgeInsets.symmetric(horizontal: 10),
             decoration: BoxDecoration(
               color: _over
                   ? theme.colorScheme.primary
                   : (widget.tall
-                        ? theme.colorScheme.outlineVariant.withValues(
-                            alpha: 0.25,
-                          )
+                        ? theme.colorScheme.outlineVariant.withValues(alpha: 0.25)
                         : Colors.transparent),
               borderRadius: BorderRadius.circular(3),
             ),
             alignment: Alignment.center,
             child: widget.tall && !_over
-                ? Text(
-                    'Drop a project here',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  )
+                ? Text('Drop a project here', style: theme.textTheme.labelSmall)
                 : null,
           ),
-        ),
-        if (widget.child != null) widget.child!,
-      ],
+          if (widget.child != null) widget.child!,
+        ],
+      ),
     );
   }
 }
@@ -1123,11 +1243,15 @@ class _ProjectTile extends StatelessWidget {
     required this.project,
     required this.selected,
     required this.pushOnTap,
+    this.onSelect,
+    this.onOpenInNewTab,
   });
 
   final Project project;
   final bool selected;
   final bool pushOnTap;
+  final ValueChanged<String>? onSelect;
+  final ValueChanged<String>? onOpenInNewTab;
 
   @override
   Widget build(BuildContext context) {
@@ -1177,6 +1301,12 @@ class _ProjectTile extends StatelessWidget {
         icon: Icons.folder_outlined,
         onSelected: () => _moveToGroup(context, project),
       ),
+      if (onOpenInNewTab != null)
+        ContextMenuAction(
+          label: 'New tab',
+          icon: Icons.tab_outlined,
+          onSelected: () => onOpenInNewTab!(project.slug),
+        ),
       ContextMenuAction(
         label: 'Delete',
         icon: Icons.delete_outline,
@@ -1191,27 +1321,38 @@ class _ProjectTile extends StatelessWidget {
       // menu — one gesture cannot do both. The menu is on a button, which is
       // the same bargain the checklist rows made.
       longPress: false,
-      child: LongPressDraggable<String>(
+      child: (TouchInput.isPrimary
+          ? LongPressDraggable<String>(
+              data: project.slug,
+              dragAnchorStrategy: pointerDragAnchorStrategy,
+              feedback: _dragFeedback(theme),
+              childWhenDragging: Opacity(opacity: 0.35,
+                  child: _tile(context, theme, titleStyle, open, actions)),
+              child: _tile(context, theme, titleStyle, open, actions),
+            )
+          : Draggable<String>(
         data: project.slug,
         dragAnchorStrategy: pointerDragAnchorStrategy,
         // What is being carried, small and under the finger, rather than a
         // full-width row covering the list it is being dropped into.
-        feedback: Material(
-          elevation: 4,
-          borderRadius: BorderRadius.circular(6),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Text(project.title, style: theme.textTheme.bodyMedium),
-          ),
-        ),
+        feedback: _dragFeedback(theme),
         childWhenDragging: Opacity(
           opacity: 0.35,
           child: _tile(context, theme, titleStyle, open, actions),
         ),
         child: _tile(context, theme, titleStyle, open, actions),
-      ),
+      )),
     );
   }
+
+  Widget _dragFeedback(ThemeData theme) => Material(
+    elevation: 4,
+    borderRadius: BorderRadius.circular(6),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Text(project.title, style: theme.textTheme.bodyMedium),
+    ),
+  );
 
   Widget _tile(
     BuildContext context,
@@ -1239,7 +1380,8 @@ class _ProjectTile extends StatelessWidget {
                 ),
               );
             } else {
-              state.select(project.slug);
+              if (onSelect != null) onSelect!(project.slug);
+              else state.select(project.slug);
             }
           },
           child: Row(
@@ -1249,7 +1391,7 @@ class _ProjectTile extends StatelessWidget {
               // whether or not a row is selected.
               Container(
                 width: 2,
-                height: pushOnTap ? 36 : 30,
+                  height: pushOnTap ? 24 : 22,
                 decoration: BoxDecoration(
                   color: selected
                       ? theme.colorScheme.primary
@@ -1261,9 +1403,9 @@ class _ProjectTile extends StatelessWidget {
                 child: Padding(
                   padding: EdgeInsets.fromLTRB(
                     12,
-                    pushOnTap ? 8 : 7,
+                    pushOnTap ? 4 : 3,
                     10,
-                    pushOnTap ? 8 : 7,
+                    pushOnTap ? 4 : 3,
                   ),
                   child: Row(
                     children: [

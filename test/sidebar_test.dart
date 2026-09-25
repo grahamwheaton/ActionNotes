@@ -51,24 +51,30 @@ Finder sidebarText(String text) => find.descendant(
     );
 
 void main() {
-  testWidgets('desktop project tabs keep sidebar switches open and can close',
+  testWidgets('sidebar selection reuses the active tab; split panes can close',
       (tester) async {
     final state = await withProjects(tester, FakeLocalStore());
-    state.select('house-move');
+    await tester.tap(sidebarText('House move'));
     await tester.pumpAndSettle();
-    state.select('groceries');
+    await tester.tap(sidebarText('Garden'));
     await tester.pumpAndSettle();
-    state.select('garden');
-    await tester.pumpAndSettle();
-
-    expect(find.byTooltip('Close House move tab'), findsOneWidget);
-    expect(find.byTooltip('Close Groceries tab'), findsOneWidget);
     expect(find.byTooltip('Close Garden tab'), findsOneWidget);
+    expect(find.byTooltip('Close House move tab'), findsNothing);
 
-    await tester.tap(find.byTooltip('Close Garden tab'));
+    await tester.tap(find.byTooltip('Split view right'));
     await tester.pumpAndSettle();
-    expect(state.selectedSlug, 'house-move');
-    expect(find.byTooltip('Close Garden tab'), findsNothing);
+    expect(find.byTooltip('Close split view'), findsNWidgets(2));
+    await tester.tap(find.byTooltip('Close split view').first);
+    await tester.pumpAndSettle();
+    expect(state.selectedSlug, 'garden');
+    expect(find.byTooltip('Close split view'), findsNothing);
+
+    await tester.tap(find.byTooltip('Hide projects'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProjectSidebar), findsNothing);
+    await tester.tap(find.byTooltip('Show projects'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProjectSidebar), findsOneWidget);
   });
 
   testWidgets('dragging a sidebar project into the tabs opens it',
@@ -76,7 +82,6 @@ void main() {
     final state = await withProjects(tester, FakeLocalStore());
     final gesture = await tester.startGesture(
         tester.getCenter(sidebarText('Garden')));
-    await tester.pump(const Duration(milliseconds: 600));
     await gesture.moveTo(tester.getCenter(find.byTooltip('Open project tab')));
     await tester.pump();
     await gesture.up();
