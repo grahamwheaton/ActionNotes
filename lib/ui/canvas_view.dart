@@ -163,6 +163,8 @@ class CanvasViewState extends State<CanvasView> {
   /// Everything picked out. A set rather than one index, because moving six
   /// references together is most of what a canvas is for.
   final Set<int> _selection = {};
+  int? _lastLinkedTap;
+  DateTime? _lastLinkedTapAt;
 
   /// The marquee being dragged out, in viewport coordinates, or null.
   Rect? _marquee;
@@ -1505,7 +1507,20 @@ class CanvasViewState extends State<CanvasView> {
                           );
                         },
                         onMenu: (at) => _showCardMenu(index, at),
-                        onOpenLink: () => _openLinkedCard(index),
+                        onTapCard: () {
+                          final now = DateTime.now();
+                          if (_lastLinkedTap == index &&
+                              _lastLinkedTapAt != null &&
+                              now.difference(_lastLinkedTapAt!) <
+                                  const Duration(milliseconds: 450)) {
+                            _lastLinkedTap = null;
+                            _lastLinkedTapAt = null;
+                            _openLinkedCard(index);
+                          } else {
+                            _lastLinkedTap = index;
+                            _lastLinkedTapAt = now;
+                          }
+                        },
                         onMove: (delta) => _moveBy(index, delta),
                         onRotate: (at) => _rotateTo(index, at),
                         onResize: (delta) => _resizeBy(index, delta),
@@ -2430,7 +2445,7 @@ class _CardOnCanvas extends StatelessWidget {
     required this.cardKey,
     required this.onGrab,
     required this.onMenu,
-    required this.onOpenLink,
+    required this.onTapCard,
     required this.onMove,
     required this.onRotate,
     required this.onResize,
@@ -2460,7 +2475,7 @@ class _CardOnCanvas extends StatelessWidget {
 
   /// Right-clicked, or held on a phone: the card's own menu, at the pointer.
   final ValueChanged<Offset> onMenu;
-  final VoidCallback onOpenLink;
+  final VoidCallback onTapCard;
   final ValueChanged<Offset> onMove;
 
   /// Where the rotation handle has been dragged to, in global coordinates —
@@ -2570,8 +2585,10 @@ class _CardOnCanvas extends StatelessWidget {
                 onScaleEnd: (_) {
                   if (!touch || selected) onRelease();
                 },
-                onTap: onGrab,
-                onDoubleTap: onOpenLink,
+                onTap: () {
+                  onGrab();
+                  onTapCard();
+                },
                 // A hold is free on a card — moving one is a drag — so it opens the
                 // menu, which is how a phone reaches what a right-click reaches.
                 onSecondaryTapUp: (details) {
