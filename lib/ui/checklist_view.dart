@@ -144,7 +144,7 @@ class _ChecklistViewState extends State<ChecklistView> {
     );
   }
 
-  void _flushNotes(String itemText) {
+  Future<void> _flushNotes(String itemText) async {
     _noteTimers.remove(itemText)?.cancel();
     final markdown = _pendingNotes.remove(itemText);
     if (markdown == null) return;
@@ -161,11 +161,17 @@ class _ChecklistViewState extends State<ChecklistView> {
 
     // Wikilinks become portable markdown on the way out, as they do when the
     // note is saved from its own screen.
-    _state.setItemNotes(
+    await _state.setItemNotes(
       widget.slug,
       index,
       ProjectLinks.normalize(markdown, _state.projects),
     );
+  }
+
+  Future<void> _flushAllNotes() async {
+    for (final itemText in _pendingNotes.keys.toList()) {
+      await _flushNotes(itemText);
+    }
   }
 
   /// Held so a note still in hand can be written while this view is going
@@ -176,10 +182,12 @@ class _ChecklistViewState extends State<ChecklistView> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _state = context.read<AppState>();
+    _state.registerEditorSave(_flushAllNotes);
   }
 
   @override
   void dispose() {
+    _state.unregisterEditorSave(_flushAllNotes);
     for (final itemText in _pendingNotes.keys.toList()) {
       _flushNotes(itemText);
     }
@@ -1913,10 +1921,12 @@ class _BlockBodyState extends State<_BlockBody> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _state = context.read<AppState>();
+    _state.registerEditorSave(_persist);
   }
 
   @override
   void dispose() {
+    _state.unregisterEditorSave(_persist);
     _autosave?.cancel();
     _persist();
     super.dispose();
@@ -1928,11 +1938,12 @@ class _BlockBodyState extends State<_BlockBody> {
     _autosave = Timer(const Duration(milliseconds: 700), _persist);
   }
 
-  void _persist() {
+  Future<void> _persist() async {
+    _autosave?.cancel();
     final markdown = _pending;
     _pending = null;
     if (markdown == null) return;
-    _state.setBlockBody(
+    await _state.setBlockBody(
       widget.slug,
       widget.title,
       ProjectLinks.normalize(markdown, _state.projects),

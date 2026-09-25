@@ -51,10 +51,12 @@ class _ProjectNotesViewState extends State<ProjectNotesView> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _state = context.read<AppState>();
+    _state.registerEditorSave(_persist);
   }
 
   @override
   void dispose() {
+    _state.unregisterEditorSave(_persist);
     _autosave?.cancel();
     _persist();
     super.dispose();
@@ -66,11 +68,12 @@ class _ProjectNotesViewState extends State<ProjectNotesView> {
     _autosave = Timer(const Duration(milliseconds: 700), _persist);
   }
 
-  void _persist() {
+  Future<void> _persist() async {
+    _autosave?.cancel();
     final markdown = _pending;
     _pending = null;
     if (markdown == null) return;
-    _state.setNotes(
+    await _state.setNotes(
       widget.slug,
       ProjectLinks.normalize(markdown, _state.projects),
     );

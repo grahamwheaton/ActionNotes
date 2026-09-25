@@ -11,6 +11,8 @@ class AvailableUpdate {
     required this.pageUrl,
     this.downloadUrl,
     this.downloadName,
+    this.downloadDigest,
+    this.downloadSize,
   });
 
   /// As the tag reads, without the `v`.
@@ -25,6 +27,10 @@ class AvailableUpdate {
   /// Windows — or null if the release has none.
   final String? downloadUrl;
   final String? downloadName;
+
+  /// GitHub's SHA-256 of the uploaded asset, fetched over HTTPS.
+  final String? downloadDigest;
+  final int? downloadSize;
 }
 
 /// Asks GitHub whether there is a newer release than the running build.
@@ -38,8 +44,8 @@ class UpdateCheck {
     this.repo = 'ActionNotes',
     http.Client? client,
     String? platformSuffix,
-  })  : _client = client ?? http.Client(),
-        _platformSuffix = platformSuffix ?? _suffixForPlatform();
+  }) : _client = client ?? http.Client(),
+       _platformSuffix = platformSuffix ?? _suffixForPlatform();
 
   final String owner;
   final String repo;
@@ -77,6 +83,8 @@ class UpdateCheck {
 
       String? url;
       String? name;
+      String? digest;
+      int? size;
       final suffix = _platformSuffix;
       if (suffix != null) {
         for (final asset in (json['assets'] as List? ?? const [])) {
@@ -85,6 +93,8 @@ class UpdateCheck {
           if (assetName.endsWith(suffix)) {
             name = assetName;
             url = asset['browser_download_url'] as String?;
+            digest = asset['digest'] as String?;
+            size = asset['size'] as int?;
             break;
           }
         }
@@ -93,10 +103,13 @@ class UpdateCheck {
       return AvailableUpdate(
         version: version,
         notes: json['body'] as String? ?? '',
-        pageUrl: json['html_url'] as String? ??
+        pageUrl:
+            json['html_url'] as String? ??
             'https://github.com/$owner/$repo/releases/latest',
         downloadUrl: url,
         downloadName: name,
+        downloadDigest: digest,
+        downloadSize: size,
       );
     } catch (_) {
       return null;

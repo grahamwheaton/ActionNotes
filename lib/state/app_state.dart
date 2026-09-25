@@ -343,6 +343,65 @@ class AppState extends ChangeNotifier {
     return _update;
   }
 
+  // Editors register their debounced writes so a restart never outruns typing.
+  final Set<Future<void> Function()> _editorSaves = {};
+  bool _preparingUpdate = false;
+  int _layoutWrites = 0;
+  int _localWrites = 0;
+
+  void registerEditorSave(Future<void> Function() save) =>
+      _editorSaves.add(save);
+  void unregisterEditorSave(Future<void> Function() save) =>
+      _editorSaves.remove(save);
+
+  Future<void> prepareForUpdate() async {
+    _preparingUpdate = true;
+    stopWatching();
+    for (final timer in _pendingPushes.values) {
+      timer.cancel();
+    }
+    _pendingPushes.clear();
+    for (final timer in _layoutTimers.values) {
+      timer.cancel();
+    }
+    _layoutTimers.clear();
+    try {
+      // Let writes already in progress settle, without starting another sync.
+      // A slow/offline sync cancels the restart instead of risking local data.
+      await (() async {
+        await _syncChain;
+        while (_pushing.isNotEmpty || _layoutWrites > 0 || _localWrites > 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      })().timeout(const Duration(seconds: 30));
+      for (final save in _editorSaves.toList()) {
+        await save();
+      }
+      for (final project in _projects) {
+        await _localStore.save(project, sourceId: project.sourceId);
+        final layout = _layouts[project.slug];
+        if (layout != null) {
+          await _localStore.saveLayout(
+            project.fileSlug,
+            layout,
+            sourceId: project.sourceId,
+          );
+        }
+      }
+    } catch (_) {
+      resumeAfterUpdate();
+      rethrow;
+    }
+  }
+
+  void resumeAfterUpdate() {
+    _preparingUpdate = false;
+    startWatching();
+    for (final project in _projects.where((project) => project.dirty)) {
+      _schedulePush(project.slug);
+    }
+  }
+
   /// Stops the banner offering the same version again.
   void dismissUpdate() {
     if (_update == null) return;
@@ -581,6 +640,7 @@ class AppState extends ChangeNotifier {
   /// At most one waits: past that, the one already waiting has not started
   /// yet and so will pick up whatever has changed by the time it does.
   Future<void> sync() {
+    if (_preparingUpdate) return Future.value();
     if (_queuedSyncs >= 2) return _syncChain;
 
     _queuedSyncs++;
@@ -1902,6 +1962,15 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _pushLayout(String slug) async {
+    _layoutWrites++;
+    try {
+      await _writeLayout(slug);
+    } finally {
+      _layoutWrites--;
+    }
+  }
+
+  Future<void> _writeLayout(String slug) async {
     _layoutTimers.remove(slug)?.cancel();
     final layout = layoutFor(slug);
     await _localStore.saveLayout(
@@ -1980,7 +2049,12 @@ class AppState extends ChangeNotifier {
 
     _projects = _projects.map((p) => p.slug == slug ? updated : p).toList()
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-    await _localStore.save(updated, sourceId: updated.sourceId);
+    _localWrites++;
+    try {
+      await _localStore.save(updated, sourceId: updated.sourceId);
+    } finally {
+      _localWrites--;
+    }
     notifyListeners();
     _schedulePush(slug);
   }
@@ -1995,6 +2069,7 @@ class AppState extends ChangeNotifier {
   /// sync happened to carry it, which is how two people editing the same list
   /// ended up in a conflict nobody caused.
   void _schedulePush(String slug) {
+    if (_preparingUpdate) return;
     if (!_configFor(slug).isComplete) return;
     if (projectBySlug(slug)?.isShared ?? false) _sharedActivity();
 
@@ -2028,46 +2103,48 @@ class AppState extends ChangeNotifier {
     if (project == null || !project.dirty) return;
 
     _pushing.add(slug);
-    final Project pushed;
     try {
-      pushed = await _syncService.push(_configFor(project.slug), project);
+      final pushed = await _syncService.push(_configFor(project.slug), project);
+
+      if (pushed.dirty) return; // Still pending; the next sync will retry.
+
+      // An image dropped from a note leaves its file behind, so tidy up once
+      // the note itself has landed.
+      unawaited(
+        _syncService.pruneAttachments(
+          _configFor(pushed.slug),
+          pushed,
+          // A picture this device still holds but the repo has lost goes back
+          // up. That is how the ones the old sweep deleted return: whoever
+          // added them still has them, and everybody else has a broken square.
+          recover: (path) async {
+            final file = await attachments.cached(path);
+            return file?.readAsBytes();
+          },
+        ),
+      );
+
+      final latest = projectBySlug(slug);
+      if (latest == null) return;
+
+      // The write landed, so GitHub's copy has this SHA whatever has been
+      // edited here since. Keeping the old one is what made a later push look
+      // like a conflict. What the edits do change is whether there is still
+      // something to send.
+      final editedWhilePushing = latest.updated != project.updated;
+      final settled = latest.copyWith(
+        sha: pushed.sha,
+        dirty: editedWhilePushing,
+      );
+
+      _projects = _projects.map((p) => p.slug == slug ? settled : p).toList();
+      await _localStore.save(settled, sourceId: settled.sourceId);
+      notifyListeners();
+
+      if (editedWhilePushing) _schedulePush(slug);
     } finally {
       _pushing.remove(slug);
     }
-
-    if (pushed.dirty) return; // Still pending; the next sync will retry.
-
-    // An image dropped from a note leaves its file behind, so tidy up once
-    // the note itself has landed.
-    unawaited(
-      _syncService.pruneAttachments(
-        _configFor(pushed.slug),
-        pushed,
-        // A picture this device still holds but the repo has lost goes back
-        // up. That is how the ones the old sweep deleted return: whoever
-        // added them still has them, and everybody else has a broken square.
-        recover: (path) async {
-          final file = await attachments.cached(path);
-          return file?.readAsBytes();
-        },
-      ),
-    );
-
-    final latest = projectBySlug(slug);
-    if (latest == null) return;
-
-    // The write landed, so GitHub's copy has this SHA whatever has been
-    // edited here since. Keeping the old one is what made a later push look
-    // like a conflict. What the edits do change is whether there is still
-    // something to send.
-    final editedWhilePushing = latest.updated != project.updated;
-    final settled = latest.copyWith(sha: pushed.sha, dirty: editedWhilePushing);
-
-    _projects = _projects.map((p) => p.slug == slug ? settled : p).toList();
-    await _localStore.save(settled, sourceId: settled.sourceId);
-    notifyListeners();
-
-    if (editedWhilePushing) _schedulePush(slug);
   }
 
   /// A file name nothing in [sourceId] is already using.

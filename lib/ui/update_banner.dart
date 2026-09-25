@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -6,16 +8,7 @@ import '../state/app_state.dart';
 import '../storage/update_check.dart';
 import '../storage/update_installer.dart';
 
-/// Offers the newer release when there is one.
-///
-/// Where the system can install the file — Android — this fetches it and
-/// hands it over, so the update is one tap here and then Android's own
-/// "update this app?" prompt. That prompt cannot be skipped and should not
-/// be: Android will not replace an installed app without the person agreeing.
-///
-/// Everywhere else it is still a link. The Windows release is a zip to unpack
-/// wherever you keep it, which is not something an app can do to itself while
-/// it is running, so opening the download is the honest offer there.
+/// Installs on Android, or verifies, saves and restarts into a Windows update.
 class UpdateBanner extends StatefulWidget {
   const UpdateBanner({super.key, this.installer});
 
@@ -66,25 +59,85 @@ class _UpdateBannerState extends State<UpdateBanner> {
       // Not a dead end: the release page still works, so say what happened
       // and leave the other way open rather than only apologising.
       messenger.showSnackBar(
-        const SnackBar(content: Text('Could not download the update.')),
+        SnackBar(
+          content: Text(
+            _installer.lastError ?? 'Could not download the update.',
+          ),
+          action: SnackBarAction(
+            label: 'Release page',
+            onPressed: () => _openPage(update),
+          ),
+        ),
       );
       return;
     }
 
-    final handed = await _installer.install(file);
+    if (!mounted) return;
+    final state = context.read<AppState>();
+    final navigator = Navigator.of(context, rootNavigator: true);
+    DialogRoute<void>? saving;
+    var handed = false;
+    String? problem;
+    try {
+      if (_installer.restartsApp) {
+        FocusManager.instance.primaryFocus?.unfocus();
+        saving = DialogRoute<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => const PopScope(
+            canPop: false,
+            child: AlertDialog(
+              title: Text('Preparing update'),
+              content: Row(
+                children: [
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  SizedBox(width: 16),
+                  Expanded(
+                    child: Text('Saving your notes and preparing to restart…'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+        unawaited(navigator.push(saving));
+        await state.prepareForUpdate();
+      }
+      handed = await _installer.install(file);
+      if (!handed) problem = _installer.lastError;
+    } catch (_) {
+      problem =
+          'Your notes could not finish saving. The app has stayed open. '
+          'Please try the update again.';
+    } finally {
+      if (saving != null) {
+        state.resumeAfterUpdate();
+        navigator.removeRoute(saving);
+      }
+    }
     if (!mounted) return;
     setState(() => _progress = null);
-
     if (!handed) {
       messenger.showSnackBar(
-        const SnackBar(content: Text('Could not open the downloaded update.')),
+        SnackBar(
+          content: Text(problem ?? 'Could not open the downloaded update.'),
+          action: SnackBarAction(
+            label: 'Release page',
+            onPressed: () => _openPage(update),
+          ),
+        ),
       );
-      return;
     }
-    // Android takes it from here. The banner stays until the new build
-    // actually runs, because an update offered and not taken is still an
-    // update waiting.
   }
+
+  Future<void> _openPage(AvailableUpdate update) => launchUrl(
+    Uri.parse(update.pageUrl),
+    mode: LaunchMode.externalApplication,
+  ).then((_) {});
 
   @override
   Widget build(BuildContext context) {
@@ -138,7 +191,9 @@ class _UpdateBannerState extends State<UpdateBanner> {
                 onPressed: () => installs ? _install(update) : _open(update),
                 child: Text(
                   installs
-                      ? 'Install'
+                      ? (_installer.restartsApp
+                            ? 'Update and restart'
+                            : 'Install')
                       : update.downloadUrl == null
                       ? 'Open'
                       : 'Download',

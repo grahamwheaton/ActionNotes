@@ -8,6 +8,7 @@ import 'package:actionnotes/storage/update_check.dart';
 import 'package:actionnotes/storage/update_installer.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:actionnotes/ui/update_banner.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -126,6 +127,75 @@ void main() {
 
       expect(file, isNull);
     });
+
+    test(
+      'Windows downloads require and verify the published checksum',
+      () async {
+        final into = tempDirectory();
+        final body = utf8.encode('a release zip');
+        AvailableUpdate windows({String? digest, int? size}) => AvailableUpdate(
+          version: '0.24.0',
+          notes: '',
+          pageUrl: 'https://example.com/release',
+          downloadUrl: 'https://example.com/app-windows.zip',
+          downloadName: 'app-windows.zip',
+          downloadDigest: digest,
+          downloadSize: size,
+        );
+        final installer = installerFor(serving(body), into);
+        expect(await installer.fetch(windows()), isNull);
+        expect(
+          await installer.fetch(windows(digest: 'sha256:${'0' * 64}')),
+          isNull,
+        );
+        expect(Directory('${into.path}/updates').listSync(), isEmpty);
+        expect(
+          await installer.fetch(
+            windows(
+              digest: 'sha256:${sha256.convert(body)}',
+              size: body.length + 1,
+            ),
+          ),
+          isNull,
+        );
+        expect(
+          await installer.fetch(
+            windows(
+              digest: 'sha256:${sha256.convert(body)}',
+              size: body.length,
+            ),
+          ),
+          isNotNull,
+        );
+      },
+    );
+
+    test(
+      'rejects traversal filenames and removes interrupted downloads',
+      () async {
+        final into = tempDirectory();
+        const unsafe = AvailableUpdate(
+          version: '1',
+          notes: '',
+          pageUrl: '',
+          downloadUrl: 'https://example.com/app.apk',
+          downloadName: '../escape.apk',
+        );
+        expect(await installerFor(serving([1]), into).fetch(unsafe), isNull);
+        final broken = MockClient.streaming(
+          (_, __) async => http.StreamedResponse(
+            Stream<List<int>>.multi((controller) {
+              controller.add([1, 2]);
+              controller.addError(const SocketException('disconnected'));
+              controller.close();
+            }),
+            200,
+          ),
+        );
+        expect(await installerFor(broken, into).fetch(anUpdate), isNull);
+        expect(Directory('${into.path}/updates').listSync(), isEmpty);
+      },
+    );
 
     test('tidying takes the downloads away', () async {
       final into = tempDirectory();
@@ -283,6 +353,28 @@ void main() {
       expect(find.text('Install'), findsOneWidget);
     });
 
+    testWidgets(
+      'Windows offers restart, saves first, and reports a blocked helper',
+      (tester) async {
+        final installer = _FakeWindowsInstaller();
+        final state = await pumpBanner(tester, installer: installer);
+        var saved = false;
+        state.registerEditorSave(() async {
+          saved = true;
+        });
+        expect(find.text('Update and restart'), findsOneWidget);
+        await tester.tap(find.text('Update and restart'));
+        await tester.pump();
+        installer.finish();
+        await tester.pumpAndSettle();
+        expect(saved, isTrue);
+        expect(find.text('Windows blocked the updater.'), findsOneWidget);
+        expect(find.text('Update and restart'), findsOneWidget);
+        await tester.pumpWidget(const SizedBox());
+        state.dispose();
+      },
+    );
+
     testWidgets('a release with no file for this platform opens the page', (
       tester,
     ) async {
@@ -300,6 +392,9 @@ void main() {
 /// that finish — so the downloading is tested on its own above, and here the
 /// banner is driven directly through the steps it has to show.
 class _FakeInstaller extends UpdateInstaller {
+  @override
+  bool get restartsApp => false;
+
   _FakeInstaller()
     : super(client: MockClient((_) async => http.Response('', 404)));
 
@@ -330,5 +425,16 @@ class _FakeInstaller extends UpdateInstaller {
   Future<bool> install(File file) async {
     handed = file.path;
     return true;
+  }
+}
+
+class _FakeWindowsInstaller extends _FakeInstaller {
+  @override
+  bool get restartsApp => true;
+
+  @override
+  Future<bool> install(File file) async {
+    lastError = 'Windows blocked the updater.';
+    return false;
   }
 }

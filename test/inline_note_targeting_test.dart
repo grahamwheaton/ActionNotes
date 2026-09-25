@@ -41,9 +41,9 @@ Future<AppState> pumpChecklist(
 
 /// The inline note's own text field, rather than the add-item bar.
 Finder inlineNoteField() => find.descendant(
-      of: find.byType(NoteBlocksEditor),
-      matching: find.byType(TextField),
-    );
+  of: find.byType(NoteBlocksEditor),
+  matching: find.byType(TextField),
+);
 
 /// Opens the inline note editor on the row showing [itemText].
 Future<void> openNotesOn(WidgetTester tester, String itemText) async {
@@ -59,8 +59,28 @@ Future<void> openNotesOn(WidgetTester tester, String itemText) async {
 
 void main() {
   group('an inline note edit still in hand', () {
-    testWidgets('is written to its own item after a new item is added',
-        (tester) async {
+    testWidgets('is saved immediately before an update', (tester) async {
+      final store = FakeLocalStore();
+      final state = await pumpChecklist(tester, store);
+      await openNotesOn(tester, 'Second');
+      await tester.enterText(
+        inlineNoteField().first,
+        'last edit before restart',
+      );
+      await state.prepareForUpdate();
+      expect(
+        store.saved['list']!.items
+            .firstWhere((item) => item.text == 'Second')
+            .notes,
+        'last edit before restart',
+      );
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+
+    testWidgets('is written to its own item after a new item is added', (
+      tester,
+    ) async {
       final store = FakeLocalStore();
       final state = await pumpChecklist(tester, store);
 
@@ -83,8 +103,9 @@ void main() {
       expect(byText['Newest'], isEmpty, reason: 'Newest was never edited');
     });
 
-    testWidgets('survives the row moving, rather than being misfiled',
-        (tester) async {
+    testWidgets('survives the row moving, rather than being misfiled', (
+      tester,
+    ) async {
       final store = FakeLocalStore();
       final state = await pumpChecklist(tester, store);
 
@@ -104,8 +125,9 @@ void main() {
       expect(byText['Second'], 'second note');
     });
 
-    testWidgets('is dropped, not misfiled, when its item is deleted',
-        (tester) async {
+    testWidgets('is dropped, not misfiled, when its item is deleted', (
+      tester,
+    ) async {
       final store = FakeLocalStore();
       final state = await pumpChecklist(tester, store);
 

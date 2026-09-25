@@ -265,10 +265,22 @@ jobs:
             signing.txt
           if-no-files-found: error
 
+  windows-updater:
+    name: Windows updater recovery tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build standalone updater and test apps
+        run: |
+          cmake -S windows/updater -B build/updater -A x64 -DACTIONNOTES_UPDATER_TESTS=ON
+          cmake --build build/updater --config Release
+      - name: Verify replacement, restart and rollback
+        run: python windows/updater/tests/test_updater.py build/updater/Release -v
+
   windows:
     name: Windows build
     runs-on: windows-latest
-    needs: check
+    needs: [check, windows-updater]
     # Twice the rate of Linux, so only when there is a release to put it in.
     if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
     steps:

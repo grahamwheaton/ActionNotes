@@ -1,0 +1,22 @@
+cmake_minimum_required(VERSION 3.15)
+project(actionnotes_updater LANGUAGES CXX)
+add_executable(actionnotes_updater WIN32 main.cpp)
+target_compile_features(actionnotes_updater PRIVATE cxx_std_17)
+target_compile_definitions(actionnotes_updater PRIVATE UNICODE _UNICODE NOMINMAX)
+target_compile_options(actionnotes_updater PRIVATE /W4 /WX /EHsc)
+# The helper must run by itself while the Flutter bundle is being replaced.
+set_property(TARGET actionnotes_updater PROPERTY
+  MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+target_link_libraries(actionnotes_updater PRIVATE shell32)
+
+option(ACTIONNOTES_UPDATER_TESTS "Build native updater test fixtures" OFF)
+if(ACTIONNOTES_UPDATER_TESTS)
+  foreach(fixture updater_test_app updater_test_bad_app)
+    add_executable(${fixture} WIN32 tests/app.cpp)
+    target_compile_features(${fixture} PRIVATE cxx_std_17)
+    target_compile_definitions(${fixture} PRIVATE UNICODE _UNICODE)
+    set_property(TARGET ${fixture} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+    target_link_libraries(${fixture} PRIVATE shell32)
+  endforeach()
+  target_compile_definitions(updater_test_bad_app PRIVATE FAIL_START)
+endif()
