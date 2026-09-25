@@ -54,6 +54,8 @@ void main() {
   testWidgets('desktop project tabs keep sidebar switches open and can close',
       (tester) async {
     final state = await withProjects(tester, FakeLocalStore());
+    state.select('house-move');
+    await tester.pumpAndSettle();
     state.select('groceries');
     await tester.pumpAndSettle();
     state.select('garden');
