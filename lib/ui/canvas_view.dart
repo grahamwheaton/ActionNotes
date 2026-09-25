@@ -3261,7 +3261,8 @@ class _CanvasTools extends StatelessWidget {
     final shape = _shapes.contains(tool) ? tool : CanvasTool.rectangle;
     final line = _lines.contains(tool) ? tool : CanvasTool.arrow;
 
-    return Material(
+    return SingleChildScrollView(
+      child: Material(
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.95),
       borderRadius: BorderRadius.circular(20),
       elevation: 2,
@@ -3426,6 +3427,7 @@ class _CanvasTools extends StatelessWidget {
             ],
           ],
         ),
+      ),
       ),
     );
   }
