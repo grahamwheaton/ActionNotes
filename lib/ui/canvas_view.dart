@@ -198,6 +198,7 @@ class CanvasViewState extends State<CanvasView> {
 
   /// The pointer holding the middle button down, while it is panning.
   int? _middlePan;
+  int? _rightPan;
   int? _cutPointer;
   Offset? _cutTo;
   final Set<int> _cutConnections = {};
@@ -1386,6 +1387,10 @@ class CanvasViewState extends State<CanvasView> {
               _cutTo = _toScene(_toLocal(event.position) ?? Offset.zero);
               return;
             }
+            if (event.buttons & kSecondaryMouseButton != 0) {
+              _rightPan = event.pointer;
+              return;
+            }
             if (event.buttons & kMiddleMouseButton == 0) return;
             _middlePan = event.pointer;
           },
@@ -1396,16 +1401,18 @@ class CanvasViewState extends State<CanvasView> {
               setState(() => _cutTo = next);
               return;
             }
-            if (event.pointer != _middlePan) return;
+            if (event.pointer != _middlePan && event.pointer != _rightPan) return;
             setState(() => _pan += event.delta);
           },
           onPointerUp: (event) {
             if (event.pointer == _cutPointer) _finishCut();
             if (event.pointer == _middlePan) _middlePan = null;
+            if (event.pointer == _rightPan) _rightPan = null;
           },
           onPointerCancel: (event) {
             if (event.pointer == _cutPointer) _finishCut();
             if (event.pointer == _middlePan) _middlePan = null;
+            if (event.pointer == _rightPan) _rightPan = null;
           },
           child: ClipRect(
             child: LayoutBuilder(
@@ -3612,6 +3619,21 @@ class _CanvasTools extends StatelessWidget {
     CanvasTool.frame,
   ];
 
+  static String _hint(CanvasTool option) => switch (option) {
+    CanvasTool.select => 'Select',
+    CanvasTool.sticky => 'Sticky note (C)',
+    CanvasTool.text => 'Note (N)',
+    CanvasTool.frame => 'Frame (F)',
+    CanvasTool.rectangle => 'Rectangle (S)',
+    CanvasTool.oval => 'Oval (O)',
+    CanvasTool.line => 'Line (L cycles)',
+    CanvasTool.arrow => 'Arrow (L cycles)',
+    CanvasTool.bendyArrow => 'Bendy arrow (L cycles)',
+    CanvasTool.image => 'Image (I)',
+    CanvasTool.pen => 'Pen',
+    CanvasTool.eraser => 'Eraser',
+  };
+
   /// Whether what is armed is coloured by the swatches: a note is drawn on a
   /// colour, and a mark is drawn in one.
   bool get _colouring => tool == CanvasTool.sticky || tool.draws != null;
@@ -3634,7 +3656,7 @@ class _CanvasTools extends StatelessWidget {
           children: [
             for (final option in _own)
               IconButton(
-                tooltip: option.label,
+                tooltip: _hint(option),
                 visualDensity: VisualDensity.compact,
                 isSelected: tool == option,
                 selectedIcon: Icon(
@@ -3649,7 +3671,7 @@ class _CanvasTools extends StatelessWidget {
             // right-clicked, offers the others — so the common case is one
             // press and the rest is one more.
             PopupMenuButton<CanvasTool>(
-              tooltip: 'Shapes',
+              tooltip: 'Shapes (S rectangle, O oval)',
               position: PopupMenuPosition.under,
               iconSize: 18,
               icon: Icon(
@@ -3675,7 +3697,7 @@ class _CanvasTools extends StatelessWidget {
               ],
             ),
             PopupMenuButton<CanvasTool>(
-              tooltip: 'Lines',
+              tooltip: 'Lines (L cycles)',
               position: PopupMenuPosition.under,
               iconSize: 18,
               icon: Icon(line.icon, size: 18,
@@ -3695,7 +3717,7 @@ class _CanvasTools extends StatelessWidget {
             ),
             for (final option in [CanvasTool.pen, CanvasTool.eraser])
               IconButton(
-                tooltip: option.label,
+                tooltip: _hint(option),
                 visualDensity: VisualDensity.compact,
                 isSelected: tool == option,
                 selectedIcon: Icon(

@@ -62,11 +62,18 @@ class SidebarLayout {
   /// Puts [slug] into [group] — or, with a null group, back among the loose
   /// ones — at [at], or at the end when that is null.
   SidebarLayout place(String slug, {String? group, int? at}) {
+    // Drop positions are measured before taking the dragged row out. Moving
+    // it down within the same list shifts those positions left by one.
+    final current = group == null
+        ? loose
+        : groups.where((one) => one.name == group).firstOrNull?.slugs;
+    final oldAt = current?.indexOf(slug) ?? -1;
+    final targetAt = at != null && oldAt >= 0 && oldAt < at ? at - 1 : at;
     final cleared = without(slug);
 
     if (group == null) {
       final next = [...cleared.loose];
-      next.insert(at?.clamp(0, next.length) ?? next.length, slug);
+      next.insert(targetAt?.clamp(0, next.length) ?? next.length, slug);
       return SidebarLayout(groups: cleared.groups, loose: next, sha: sha);
     }
 
@@ -74,10 +81,11 @@ class SidebarLayout {
       groups: [
         for (final one in cleared.groups)
           if (one.name == group)
-            one.copyWith(
-              slugs: [...one.slugs]
-                ..insert(at?.clamp(0, one.slugs.length) ?? one.slugs.length, slug),
-            )
+            one.copyWith(slugs: [
+              ...one.slugs.take(targetAt?.clamp(0, one.slugs.length) ?? one.slugs.length),
+              slug,
+              ...one.slugs.skip(targetAt?.clamp(0, one.slugs.length) ?? one.slugs.length),
+            ])
           else
             one,
       ],

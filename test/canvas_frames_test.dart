@@ -97,7 +97,7 @@ void main() {
     ) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Frame'));
+      await tester.tap(find.byTooltip('Frame (F)'));
       await tester.pumpAndSettle();
       await tester.dragFrom(const Offset(500, 300), const Offset(240, 160));
       await tester.pumpAndSettle();
@@ -127,7 +127,7 @@ void main() {
       final state = await pumpBoard(tester);
       final before = spotsOf(state).length;
 
-      await tester.tap(find.byTooltip('Frame'));
+      await tester.tap(find.byTooltip('Frame (F)'));
       await tester.pumpAndSettle();
       await tester.tapAt(const Offset(500, 300));
       await tester.pumpAndSettle();
@@ -356,7 +356,7 @@ void _theSideTools() {
     ) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Sticky note'));
+      await tester.tap(find.byTooltip('Sticky note (C)'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Pink'));
       await tester.pumpAndSettle();
@@ -382,7 +382,7 @@ void _theSideTools() {
     ) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Text'));
+      await tester.tap(find.byTooltip('Note (N)'));
       await tester.pumpAndSettle();
       await tester.tapAt(const Offset(700, 500));
       await tester.pumpAndSettle();
@@ -410,7 +410,7 @@ void _theSideTools() {
         spots: const [CanvasSpot(x: 200, y: 150, width: 400, ref: 'One')],
       );
 
-      await tester.tap(find.byTooltip('Text'));
+      await tester.tap(find.byTooltip('Note (N)'));
       await tester.pumpAndSettle();
 
       // On top of the card. With a tool in hand the press is the tool's, not
@@ -438,7 +438,7 @@ void _theSideTools() {
       final state = await pumpBoard(tester);
       final before = spotsOf(state).length;
 
-      await tester.tap(find.byTooltip('Sticky note'));
+      await tester.tap(find.byTooltip('Sticky note (C)'));
       await tester.pumpAndSettle();
       await tester.tapAt(const Offset(700, 500));
       await tester.pumpAndSettle();
@@ -478,7 +478,7 @@ void _drawingOnTheBoard() {
     testWidgets('dragging with a shape armed leaves a mark', (tester) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Shapes'));
+      await tester.tap(find.byTooltip('Shapes (S rectangle, O oval)'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Rectangle').last);
       await tester.pumpAndSettle();
@@ -499,7 +499,7 @@ void _drawingOnTheBoard() {
     testWidgets('a press that goes nowhere is not a mark', (tester) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Lines'));
+      await tester.tap(find.byTooltip('Lines (L cycles)'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Line').last);
       await tester.pumpAndSettle();
@@ -577,7 +577,7 @@ void _drawingOnTheBoard() {
         ],
       );
 
-      await tester.tap(find.byTooltip('Lines'));
+      await tester.tap(find.byTooltip('Lines (L cycles)'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();
@@ -614,7 +614,7 @@ void _drawingOnTheBoard() {
         spots: const [CanvasSpot(x: 300, y: 200, width: 400, ref: 'One')],
       );
 
-      await tester.tap(find.byTooltip('Lines'));
+      await tester.tap(find.byTooltip('Lines (L cycles)'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();
@@ -645,7 +645,7 @@ void _drawingOnTheBoard() {
         spots: const [CanvasSpot(x: 400, y: 300, width: 120, ref: 'One')],
       );
 
-      await tester.tap(find.byTooltip('Lines'));
+      await tester.tap(find.byTooltip('Lines (L cycles)'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Line').last);
       await tester.pumpAndSettle();
@@ -671,7 +671,7 @@ void _drawingOnTheBoard() {
         'its own menu', (tester) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Lines'));
+      await tester.tap(find.byTooltip('Lines (L cycles)'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();
@@ -715,7 +715,7 @@ void _drawingOnTheBoard() {
         spots: const [CanvasSpot(x: 300, y: 200, width: 200, ref: 'One')],
       );
 
-      await tester.tap(find.byTooltip('Lines'));
+      await tester.tap(find.byTooltip('Lines (L cycles)'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();
@@ -773,7 +773,7 @@ void _drawingOnTheBoard() {
         ],
       );
 
-      await tester.tap(find.byTooltip('Lines'));
+      await tester.tap(find.byTooltip('Lines (L cycles)'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();

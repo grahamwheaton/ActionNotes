@@ -31,6 +31,16 @@ void main() {
       expect(SidebarLayout.parse('{"groups":[{}]}').groups, isEmpty);
     });
 
+    test('reordering within one group preserves the intended drop position', () {
+      const arranged = SidebarLayout(groups: [
+        ProjectGroup(name: 'Work', slugs: ['a', 'b', 'c']),
+      ]);
+      expect(arranged.place('a', group: 'Work', at: 3).groups.single.slugs,
+          ['b', 'c', 'a']);
+      expect(arranged.place('c', group: 'Work', at: 1).groups.single.slugs,
+          ['a', 'c', 'b']);
+    });
+
     test('a project can only be in one place at a time', () {
       final moved = layout.place('quote', group: 'Home', at: 0);
 
