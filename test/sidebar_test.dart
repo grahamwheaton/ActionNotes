@@ -51,6 +51,41 @@ Finder sidebarText(String text) => find.descendant(
     );
 
 void main() {
+  testWidgets('desktop project tabs keep sidebar switches open and can close',
+      (tester) async {
+    final state = await withProjects(tester, FakeLocalStore());
+    state.select('house-move');
+    await tester.pumpAndSettle();
+    state.select('groceries');
+    await tester.pumpAndSettle();
+    state.select('garden');
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('Close House move tab'), findsOneWidget);
+    expect(find.byTooltip('Close Groceries tab'), findsOneWidget);
+    expect(find.byTooltip('Close Garden tab'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Close Garden tab'));
+    await tester.pumpAndSettle();
+    expect(state.selectedSlug, 'house-move');
+    expect(find.byTooltip('Close Garden tab'), findsNothing);
+  });
+
+  testWidgets('dragging a sidebar project into the tabs opens it',
+      (tester) async {
+    final state = await withProjects(tester, FakeLocalStore());
+    final gesture = await tester.startGesture(
+        tester.getCenter(sidebarText('Garden')));
+    await tester.pump(const Duration(milliseconds: 600));
+    await gesture.moveTo(tester.getCenter(find.byTooltip('Open project tab')));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(state.selectedSlug, 'garden');
+    expect(find.byTooltip('Close Garden tab'), findsOneWidget);
+  });
+
   testWidgets('the sidebar lists every project to begin with', (tester) async {
     final store = FakeLocalStore();
     await withProjects(tester, store);
