@@ -67,7 +67,7 @@ void main() {
 
     await tester.tap(find.byTooltip('Close Garden tab'));
     await tester.pumpAndSettle();
-    expect(state.selectedSlug, 'groceries');
+    expect(state.selectedSlug, 'house-move');
     expect(find.byTooltip('Close Garden tab'), findsNothing);
   });
 
