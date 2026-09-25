@@ -110,6 +110,7 @@ void main() {
             height: 640,
             background: CanvasBackground.grid,
             dark: true,
+            snapGrid: true,
           ),
         },
       );
@@ -119,6 +120,7 @@ void main() {
       expect(settings.height, 640);
       expect(settings.background, CanvasBackground.grid);
       expect(settings.dark, isTrue);
+      expect(settings.snapGrid, isTrue);
     });
 
     test('a layout file written before this reads back unchanged', () {

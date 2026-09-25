@@ -135,6 +135,7 @@ class _HitTile extends StatelessWidget {
         SearchField.itemText => hit.project.title,
         SearchField.itemNotes => '${hit.project.title} · note',
         SearchField.projectNotes => '${hit.project.title} · project note',
+        SearchField.blockNotes => '${hit.project.title} · ${hit.blockTitle}',
       };
 
   @override

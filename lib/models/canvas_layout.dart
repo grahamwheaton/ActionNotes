@@ -223,6 +223,7 @@ class CanvasSettings {
     this.height = defaultHeight,
     this.background = CanvasBackground.dots,
     this.dark,
+    this.snapGrid = false,
   });
 
   /// How tall the canvas is drawn inside a project, in logical pixels. A
@@ -237,6 +238,7 @@ class CanvasSettings {
   /// existed. Set, the canvas keeps its own light or dark regardless — a
   /// moodboard is often worth looking at on the opposite one.
   final bool? dark;
+  final bool snapGrid;
 
   static const defaultHeight = 420.0;
   static const minHeight = 160.0;
@@ -247,23 +249,27 @@ class CanvasSettings {
   bool get isStandard =>
       height == defaultHeight &&
       background == CanvasBackground.dots &&
-      dark == null;
+      dark == null &&
+      !snapGrid;
 
   CanvasSettings copyWith({
     double? height,
     CanvasBackground? background,
     bool? dark,
     bool clearDark = false,
+    bool? snapGrid,
   }) => CanvasSettings(
     height: height ?? this.height,
     background: background ?? this.background,
     dark: clearDark ? null : (dark ?? this.dark),
+    snapGrid: snapGrid ?? this.snapGrid,
   );
 
   Map<String, dynamic> toJson() => {
     if (height != defaultHeight) 'h': height,
     if (background != CanvasBackground.dots) 'bg': background.name,
     if (dark != null) 'dark': dark,
+    if (snapGrid) 'snapGrid': true,
   };
 
   static CanvasSettings fromJson(Map<String, dynamic> json) => CanvasSettings(
@@ -272,6 +278,7 @@ class CanvasSettings {
         : defaultHeight,
     background: CanvasBackground.byName(json['bg'] as String?),
     dark: json['dark'] is bool ? json['dark'] as bool : null,
+    snapGrid: json['snapGrid'] == true,
   );
 
   @override
@@ -279,10 +286,11 @@ class CanvasSettings {
       other is CanvasSettings &&
       other.height == height &&
       other.background == background &&
-      other.dark == dark;
+      other.dark == dark &&
+      other.snapGrid == snapGrid;
 
   @override
-  int get hashCode => Object.hash(height, background, dark);
+  int get hashCode => Object.hash(height, background, dark, snapGrid);
 }
 
 /// What is drawn under the cards on a canvas.
