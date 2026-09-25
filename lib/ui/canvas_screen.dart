@@ -17,6 +17,7 @@ import '../models/canvas_layout.dart';
 import '../state/app_state.dart';
 import '../storage/canvas_export.dart';
 import 'canvas_view.dart';
+import 'checklist_view.dart';
 
 /// A canvas on a screen of its own.
 ///
@@ -53,6 +54,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
   bool _dropping = false;
   int _pendingImages = 0;
+  final List<Offset> _pendingPositions = [];
   final _canvas = GlobalKey<CanvasViewState>();
 
   /// Wrapped round the board so it can be drawn to an image — which is what
@@ -65,7 +67,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
     final centre = at ?? _canvas.currentState?.sceneAtViewportCentre() ??
         Offset(MediaQuery.sizeOf(context).width / 2, MediaQuery.sizeOf(context).height / 2);
     // Show a card while the attachment is uploading, which may take seconds.
-    setState(() => _pendingImages++);
+    setState(() {
+      _pendingImages++;
+      _pendingPositions.add(centre);
+    });
     try {
       final reference = await state.attachImage(slug, fileName: name, bytes: bytes);
       if (reference == null || !mounted) return;
@@ -74,7 +79,10 @@ class _CanvasScreenState extends State<CanvasScreen> {
         spot: CanvasSpot(x: centre.dx - 130, y: centre.dy - 100, width: 260),
       );
     } finally {
-      if (mounted) setState(() => _pendingImages--);
+      if (mounted) setState(() {
+        _pendingImages--;
+        _pendingPositions.remove(centre);
+      });
     }
   }
 
@@ -220,6 +228,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   }
 
   Future<void> _addPhoto(BuildContext context, {Offset? at}) async {
+    final placement = at ?? _canvas.currentState?.sceneAtViewportCentre();
     final files = await openFiles(
       acceptedTypeGroups: const [
         XTypeGroup(
@@ -232,7 +241,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
 
     // Several at once, because a moodboard is not built one picture at a time.
     for (final file in files) {
-      await _addBytes(file.name, await file.readAsBytes(), at: at);
+      await _addBytes(file.name, await file.readAsBytes(), at: placement);
     }
   }
 
@@ -244,6 +253,23 @@ class _CanvasScreenState extends State<CanvasScreen> {
     );
     if (text == null || text.trim().isEmpty) return;
     await state.addCanvasCard(slug, section, text.trim());
+  }
+
+  void _openLinkedNote(String fileSlug, String title) {
+    final state = context.read<AppState>();
+    for (final project in state.projects) {
+      if (project.fileSlug != fileSlug) continue;
+      final index = project.items.indexWhere((item) => item.text == title);
+      if (index < 0) continue;
+      state.revealItem(project.slug, index);
+      Navigator.of(context).push(MaterialPageRoute<void>(
+        builder: (_) => ChecklistView(slug: project.slug),
+      ));
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('This linked note is unavailable.')),
+    );
   }
 
   @override
@@ -429,17 +455,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
                               behind: spot.isFrame,
                             ),
                         onAddImage: (at) => _addPhoto(context, at: at),
+                        onOpenLinkedNote: _openLinkedNote,
                       )),
-                if (_pendingImages > 0)
-                  Center(child: IgnorePointer(child: Card(
-                    child: SizedBox(width: 260, height: 195,
-                      child: Column(mainAxisAlignment: MainAxisAlignment.center,
-                        children: [const CircularProgressIndicator(),
-                          const SizedBox(height: 14),
-                          Text(_pendingImages == 1 ? 'Adding image…' :
-                              'Adding $_pendingImages images…')]),
-                    ),
-                  ))),
+                for (final position in _pendingPositions)
+                  Positioned(
+                    left: (_canvas.currentState?.viewportForScene(position).dx ??
+                            MediaQuery.sizeOf(context).width / 2) - 130,
+                    top: (_canvas.currentState?.viewportForScene(position).dy ??
+                            MediaQuery.sizeOf(context).height / 2) - 100,
+                    child: IgnorePointer(child: Card(
+                      child: SizedBox(width: 260, height: 200,
+                        child: Column(mainAxisAlignment: MainAxisAlignment.center,
+                          children: [const CircularProgressIndicator(),
+                            const SizedBox(height: 14),
+                            Text(_pendingImages == 1 ? 'Adding image…' :
+                                'Adding $_pendingImages images…')]),
+                      ),
+                    )),
+                  ),
                   ],
                 ),
               ),

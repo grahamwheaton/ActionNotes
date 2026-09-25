@@ -1765,6 +1765,20 @@ class _SectionCanvasState extends State<_SectionCanvas> {
                 ),
             onOpenFullScreen: () =>
                 CanvasScreen.open(context, slug: slug, section: section),
+            onOpenLinkedNote: (fileSlug, title) {
+              final state = context.read<AppState>();
+              for (final project in state.projects) {
+                if (project.fileSlug != fileSlug) continue;
+                final index = project.items.indexWhere((item) => item.text == title);
+                if (index < 0) continue;
+                state.select(project.slug);
+                state.revealItem(project.slug, index);
+                return;
+              }
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text('This linked note is unavailable.'),
+              ));
+            },
           ),
         ),
         _CanvasResizeHandle(
