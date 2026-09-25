@@ -22,6 +22,12 @@ import '../storage/settings_store.dart';
 import '../storage/sync_service.dart';
 import '../storage/update_check.dart';
 
+/// A restart must wait until the user resolves an unsaved draft or failed sync.
+class UpdatePreparationException implements Exception {
+  const UpdatePreparationException(this.message);
+  final String message;
+}
+
 /// Which item's notes the desktop layout is editing in its detail pane.
 ///
 /// The index is into the project's own item list, which is what every other
@@ -343,6 +349,83 @@ class AppState extends ChangeNotifier {
     return _update;
   }
 
+  // Editors register their debounced writes so a restart never outruns typing.
+  final Set<Future<void> Function()> _editorSaves = {};
+  bool _preparingUpdate = false;
+  int _layoutWrites = 0;
+  int _localWrites = 0;
+  final Set<String> _pendingLayoutUpdates = {};
+
+  void registerEditorSave(Future<void> Function() save) =>
+      _editorSaves.add(save);
+  void unregisterEditorSave(Future<void> Function() save) =>
+      _editorSaves.remove(save);
+
+  Future<void> prepareForUpdate() async {
+    _preparingUpdate = true;
+    stopWatching();
+    for (final timer in _pendingPushes.values) {
+      timer.cancel();
+    }
+    _pendingPushes.clear();
+    for (final timer in _layoutTimers.values) {
+      timer.cancel();
+    }
+    _layoutTimers.clear();
+    try {
+      // Let writes already in progress settle, without starting another sync.
+      // A slow/offline sync cancels the restart instead of risking local data.
+      await (() async {
+        await _syncChain;
+        while (_pushing.isNotEmpty || _layoutWrites > 0 || _localWrites > 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+      })().timeout(const Duration(seconds: 30));
+      for (final save in _editorSaves.toList()) {
+        await save();
+      }
+      for (final slug in _pendingLayoutUpdates.toList()) {
+        try {
+          await _writeLayout(
+            slug,
+            requireRemoteSave: true,
+          ).timeout(const Duration(seconds: 30));
+        } on Object {
+          throw const UpdatePreparationException(
+            'Canvas changes could not finish syncing. The app has stayed open. '
+            'Reconnect and try the update again.',
+          );
+        }
+      }
+      for (final project in _projects) {
+        await _localStore.save(project, sourceId: project.sourceId);
+        final layout = _layouts[project.slug];
+        if (layout != null) {
+          await _localStore.saveLayout(
+            project.fileSlug,
+            layout,
+            sourceId: project.sourceId,
+          );
+        }
+      }
+    } catch (_) {
+      resumeAfterUpdate();
+      rethrow;
+    }
+  }
+
+  void resumeAfterUpdate() {
+    _preparingUpdate = false;
+    startWatching();
+    for (final slug in _pendingLayoutUpdates) {
+      _layoutTimers[slug]?.cancel();
+      _layoutTimers[slug] = Timer(_pushDelay, () => _pushLayout(slug));
+    }
+    for (final project in _projects.where((project) => project.dirty)) {
+      _schedulePush(project.slug);
+    }
+  }
+
   /// Stops the banner offering the same version again.
   void dismissUpdate() {
     if (_update == null) return;
@@ -535,6 +618,7 @@ class AppState extends ChangeNotifier {
   /// appear — the one moment the delay is most obvious, since it is when
   /// somebody is watching to see whether this works at all.
   void startWatching() {
+    if (_preparingUpdate) return;
     if (sharedSources.isNotEmpty) _lastSharedChange = DateTime.now();
     _watchAtCurrentRate();
   }
@@ -581,6 +665,7 @@ class AppState extends ChangeNotifier {
   /// At most one waits: past that, the one already waiting has not started
   /// yet and so will pick up whatever has changed by the time it does.
   Future<void> sync() {
+    if (_preparingUpdate) return Future.value();
     if (_queuedSyncs >= 2) return _syncChain;
 
     _queuedSyncs++;
@@ -725,7 +810,11 @@ class AppState extends ChangeNotifier {
       combined.addAll(result.merged);
       // An arrangement that arrived is what makes a section a canvas rather
       // than a list, so it goes in alongside the projects it belongs to.
-      _layouts.addAll(result.layouts);
+      for (final entry in result.layouts.entries) {
+        if (!_pendingLayoutUpdates.contains(entry.key)) {
+          _layouts[entry.key] = entry.value;
+        }
+      }
       if (result.error != null) {
         problems.add(
           source.isMine ? result.error! : '${source.name}: ${result.error!}',
@@ -1890,6 +1979,7 @@ class AppState extends ChangeNotifier {
 
     // Settled for a moment first: dragging a card across a canvas would
     // otherwise be a commit per frame.
+    _pendingLayoutUpdates.add(slug);
     _layoutTimers[slug]?.cancel();
     _layoutTimers[slug] = Timer(_pushDelay, () => _pushLayout(slug));
   }
@@ -1902,6 +1992,19 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _pushLayout(String slug) async {
+    _pendingLayoutUpdates.add(slug);
+    _layoutWrites++;
+    try {
+      await _writeLayout(slug);
+    } finally {
+      _layoutWrites--;
+    }
+  }
+
+  Future<void> _writeLayout(
+    String slug, {
+    bool requireRemoteSave = false,
+  }) async {
     _layoutTimers.remove(slug)?.cancel();
     final layout = layoutFor(slug);
     await _localStore.saveLayout(
@@ -1920,6 +2023,9 @@ class AppState extends ChangeNotifier {
       // Adopt the SHA whatever else has happened in the meantime, the same as
       // a project push does: throwing it away is what made every later write
       // fail against a SHA GitHub had already moved past.
+      if (layoutFor(slug).toJsonString() == layout.toJsonString()) {
+        _pendingLayoutUpdates.remove(slug);
+      }
       _layouts[slug] = layoutFor(slug).copyWith(sha: pushed.sha);
       await _localStore.saveLayout(
         _fileSlug(slug),
@@ -1927,6 +2033,7 @@ class AppState extends ChangeNotifier {
         sourceId: sourceOf(slug).id,
       );
     } catch (_) {
+      if (requireRemoteSave) rethrow;
       // An arrangement is worth no interruption. It is saved on the device and
       // the next change will try again.
     }
@@ -1980,7 +2087,12 @@ class AppState extends ChangeNotifier {
 
     _projects = _projects.map((p) => p.slug == slug ? updated : p).toList()
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-    await _localStore.save(updated, sourceId: updated.sourceId);
+    _localWrites++;
+    try {
+      await _localStore.save(updated, sourceId: updated.sourceId);
+    } finally {
+      _localWrites--;
+    }
     notifyListeners();
     _schedulePush(slug);
   }
@@ -1995,6 +2107,7 @@ class AppState extends ChangeNotifier {
   /// sync happened to carry it, which is how two people editing the same list
   /// ended up in a conflict nobody caused.
   void _schedulePush(String slug) {
+    if (_preparingUpdate) return;
     if (!_configFor(slug).isComplete) return;
     if (projectBySlug(slug)?.isShared ?? false) _sharedActivity();
 
@@ -2028,46 +2141,48 @@ class AppState extends ChangeNotifier {
     if (project == null || !project.dirty) return;
 
     _pushing.add(slug);
-    final Project pushed;
     try {
-      pushed = await _syncService.push(_configFor(project.slug), project);
+      final pushed = await _syncService.push(_configFor(project.slug), project);
+
+      if (pushed.dirty) return; // Still pending; the next sync will retry.
+
+      // An image dropped from a note leaves its file behind, so tidy up once
+      // the note itself has landed.
+      unawaited(
+        _syncService.pruneAttachments(
+          _configFor(pushed.slug),
+          pushed,
+          // A picture this device still holds but the repo has lost goes back
+          // up. That is how the ones the old sweep deleted return: whoever
+          // added them still has them, and everybody else has a broken square.
+          recover: (path) async {
+            final file = await attachments.cached(path);
+            return file?.readAsBytes();
+          },
+        ),
+      );
+
+      final latest = projectBySlug(slug);
+      if (latest == null) return;
+
+      // The write landed, so GitHub's copy has this SHA whatever has been
+      // edited here since. Keeping the old one is what made a later push look
+      // like a conflict. What the edits do change is whether there is still
+      // something to send.
+      final editedWhilePushing = latest.updated != project.updated;
+      final settled = latest.copyWith(
+        sha: pushed.sha,
+        dirty: editedWhilePushing,
+      );
+
+      _projects = _projects.map((p) => p.slug == slug ? settled : p).toList();
+      await _localStore.save(settled, sourceId: settled.sourceId);
+      notifyListeners();
+
+      if (editedWhilePushing) _schedulePush(slug);
     } finally {
       _pushing.remove(slug);
     }
-
-    if (pushed.dirty) return; // Still pending; the next sync will retry.
-
-    // An image dropped from a note leaves its file behind, so tidy up once
-    // the note itself has landed.
-    unawaited(
-      _syncService.pruneAttachments(
-        _configFor(pushed.slug),
-        pushed,
-        // A picture this device still holds but the repo has lost goes back
-        // up. That is how the ones the old sweep deleted return: whoever
-        // added them still has them, and everybody else has a broken square.
-        recover: (path) async {
-          final file = await attachments.cached(path);
-          return file?.readAsBytes();
-        },
-      ),
-    );
-
-    final latest = projectBySlug(slug);
-    if (latest == null) return;
-
-    // The write landed, so GitHub's copy has this SHA whatever has been
-    // edited here since. Keeping the old one is what made a later push look
-    // like a conflict. What the edits do change is whether there is still
-    // something to send.
-    final editedWhilePushing = latest.updated != project.updated;
-    final settled = latest.copyWith(sha: pushed.sha, dirty: editedWhilePushing);
-
-    _projects = _projects.map((p) => p.slug == slug ? settled : p).toList();
-    await _localStore.save(settled, sourceId: settled.sourceId);
-    notifyListeners();
-
-    if (editedWhilePushing) _schedulePush(slug);
   }
 
   /// A file name nothing in [sourceId] is already using.

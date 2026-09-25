@@ -103,10 +103,12 @@ class _NoteEditorState extends State<NoteEditor> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _state = context.read<AppState>();
+    _state!.registerEditorSave(_persist);
   }
 
   @override
   void dispose() {
+    _state?.unregisterEditorSave(_persist);
     _autosave?.cancel();
     // A pane is taken away by whatever changes the detail side — choosing
     // another project, the item being deleted — and none of those routes
@@ -144,6 +146,7 @@ class _NoteEditorState extends State<NoteEditor> {
   /// Writes the note. Called by Save and by leaving the screen, so a note is
   /// never lost to pressing back.
   Future<void> _persist() async {
+    _autosave?.cancel();
     final state = context.read<AppState>();
     // Rewrite any wikilinks that survived into portable markdown, so the file
     // stays readable on GitHub.

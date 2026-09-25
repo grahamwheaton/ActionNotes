@@ -1,24 +1,15 @@
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 
 import 'update_check.dart';
+import 'windows_updater.dart';
 
-/// Fetches a release's file and hands it to the system to install.
-///
-/// Until now Download handed the URL to the browser, so the last two taps
-/// belonged to the browser rather than to the app. This fetches the file
-/// itself and hands it straight to Android's package installer: one tap, then
-/// Android's own "update this app?" prompt, which is the one prompt that
-/// should be there.
-///
-/// It cannot be quieter than that, and should not be. Android will not
-/// replace an installed app without the person agreeing, and it will not
-/// replace one signed with a different key at all — which is why this was
-/// worth building only once releases were signed with the upload key and a
-/// signed build had proved it could replace another.
+/// Downloads and verifies a release before handing it to Android's installer
+/// or staging a Windows update and restart.
 class UpdateInstaller {
   UpdateInstaller({
     http.Client? client,
@@ -26,20 +17,31 @@ class UpdateInstaller {
     Future<bool> Function(String path)? open,
   }) : _client = client ?? http.Client(),
        _directory = directory ?? getApplicationSupportDirectory,
-       _open = open ?? _handToSystem;
+       _open = open;
 
   final http.Client _client;
   final Future<Directory> Function() _directory;
-  final Future<bool> Function(String path) _open;
+  final Future<bool> Function(String path)? _open;
 
-  /// Whether handing a file to the system means anything here.
-  ///
-  /// Android has a package installer that takes an APK. On Windows the
-  /// release is a zip to unpack wherever you want it, which is not something
-  /// an app can do to itself while it is running, so there the link stands.
-  static bool get supportedHere => Platform.isAndroid;
+  String? lastError;
+  bool get restartsApp => Platform.isWindows;
 
-  static Future<bool> _handToSystem(String path) async {
+  static bool get supportedHere => Platform.isAndroid || Platform.isWindows;
+
+  Future<bool> _handToSystem(String path) async {
+    if (Platform.isWindows) {
+      final updater = WindowsUpdater();
+      final stage = await updater.stage(File(path));
+      if (!await updater.launch(stage)) {
+        lastError =
+            'Windows could not start the updater. Check antivirus '
+            'notifications and try again.';
+        return false;
+      }
+      // The caller has awaited all editor buffers and local saves. The native
+      // helper has acknowledged readiness and waits for this process to exit.
+      exit(0);
+    }
     final result = await OpenFilex.open(path);
     return result.type == ResultType.done;
   }
@@ -53,14 +55,30 @@ class UpdateInstaller {
     AvailableUpdate update, {
     void Function(double progress)? onProgress,
   }) async {
+    lastError = null;
+    File? file;
     final url = update.downloadUrl;
     final name = update.downloadName;
     if (url == null || name == null) return null;
+    if (!RegExp(r'^[A-Za-z0-9][A-Za-z0-9._-]*$').hasMatch(name) ||
+        Uri.tryParse(url)?.scheme != 'https') {
+      lastError = 'The update download is not valid.';
+      return null;
+    }
+    final digest = update.downloadDigest;
+    if ((name.endsWith('.zip') || digest != null) &&
+        (digest == null ||
+            !RegExp(r'^sha256:[a-fA-F0-9]{64}$').hasMatch(digest))) {
+      lastError =
+          'This release has no valid verification checksum. '
+          'Open its release page to download it manually.';
+      return null;
+    }
 
     try {
-      final response = await _client.send(
-        http.Request('GET', Uri.parse(url))..followRedirects = true,
-      );
+      final response = await _client
+          .send(http.Request('GET', Uri.parse(url))..followRedirects = true)
+          .timeout(const Duration(seconds: 30));
       if (response.statusCode != 200) return null;
 
       final directory = await _directory();
@@ -68,7 +86,7 @@ class UpdateInstaller {
       // never mistaken for another, and written beside the app's own data
       // rather than into shared storage — nothing else has any business with
       // it and it is deleted on the way out.
-      final file = File('${directory.path}/updates/$name');
+      file = File('${directory.path}/updates/$name');
       await file.parent.create(recursive: true);
 
       final total = response.contentLength ?? 0;
@@ -76,9 +94,14 @@ class UpdateInstaller {
       final sink = file.openWrite();
 
       try {
-        await for (final chunk in response.stream) {
-          sink.add(chunk);
+        await for (final chunk in response.stream.timeout(
+          const Duration(seconds: 30),
+        )) {
           written += chunk.length;
+          if (written > 256 * 1024 * 1024) {
+            throw const FormatException('Update download is too large.');
+          }
+          sink.add(chunk);
           if (total > 0) onProgress?.call((written / total).clamp(0.0, 1.0));
         }
       } finally {
@@ -88,14 +111,31 @@ class UpdateInstaller {
       // A truncated download is worse than none: Android would refuse it with
       // a message about a corrupt package rather than about a lost
       // connection.
-      if (total > 0 && written != total) {
+      if (written == 0 ||
+          (total > 0 && written != total) ||
+          (update.downloadSize != null && written != update.downloadSize)) {
         await file.delete();
         return null;
       }
 
+      if (digest != null) {
+        final actual = await sha256.bind(file.openRead()).first;
+        if ('sha256:$actual' != digest.toLowerCase()) {
+          lastError = 'The download failed verification. Please try again.';
+          await file.delete();
+          return null;
+        }
+      }
       onProgress?.call(1);
       return file;
     } on Object {
+      if (file != null && await file.exists()) {
+        try {
+          await file.delete();
+        } on Object {
+          /* Best effort cleanup. */
+        }
+      }
       return null;
     }
   }
@@ -103,8 +143,11 @@ class UpdateInstaller {
   /// Hands the file to the system, and says whether it took it.
   Future<bool> install(File file) async {
     try {
-      return await _open(file.path);
+      return await (_open ?? _handToSystem)(file.path);
     } on Object {
+      lastError ??=
+          'The update could not be prepared. Check that the app '
+          'folder is writable and that antivirus has not blocked it.';
       return false;
     }
   }

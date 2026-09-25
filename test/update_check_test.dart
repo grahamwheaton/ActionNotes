@@ -7,10 +7,7 @@ import 'package:http/testing.dart';
 
 import 'support/fakes.dart';
 
-String releaseJson({
-  required String tag,
-  List<String> assets = const [],
-}) {
+String releaseJson({required String tag, List<String> assets = const []}) {
   return jsonEncode({
     'tag_name': tag,
     'body': 'Notes for $tag',
@@ -20,6 +17,8 @@ String releaseJson({
         {
           'name': name,
           'browser_download_url': 'https://example.com/$name',
+          'digest': 'sha256:${'a' * 64}',
+          'size': 123,
         },
     ],
   });
@@ -76,6 +75,8 @@ void main() {
       expect(update!.version, '0.9.0');
       expect(update.downloadName, 'actionnotes-v0.9.0.apk');
       expect(update.downloadUrl, endsWith('.apk'));
+      expect(update.downloadDigest, 'sha256:${'a' * 64}');
+      expect(update.downloadSize, 123);
       expect(update.notes, contains('v0.9.0'));
     });
 
@@ -99,18 +100,20 @@ void main() {
       expect(await checker.latest('0.8.0'), isNull);
     });
 
-    test('a release without an asset for this platform still offers the page',
-        () async {
-      final checker = checkerFor(
-        releaseJson(tag: 'v0.9.0', assets: ['actionnotes-v0.9.0.apk']),
-        suffix: '-linux.tar.gz',
-      );
+    test(
+      'a release without an asset for this platform still offers the page',
+      () async {
+        final checker = checkerFor(
+          releaseJson(tag: 'v0.9.0', assets: ['actionnotes-v0.9.0.apk']),
+          suffix: '-linux.tar.gz',
+        );
 
-      final update = await checker.latest('0.8.0');
+        final update = await checker.latest('0.8.0');
 
-      expect(update!.downloadUrl, isNull);
-      expect(update.pageUrl, contains('releases/tag/v0.9.0'));
-    });
+        expect(update!.downloadUrl, isNull);
+        expect(update.pageUrl, contains('releases/tag/v0.9.0'));
+      },
+    );
 
     // An update check is a convenience: it must never be the reason the app
     // shows an error.

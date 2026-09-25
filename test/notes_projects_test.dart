@@ -132,6 +132,28 @@ void main() {
       );
     });
 
+    testWidgets('an update saves typing before the autosave delay', (
+      tester,
+    ) async {
+      final store = FakeLocalStore();
+      final state = await pumpProject(tester, store);
+      await state.setMode('list', ProjectMode.notes);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find
+            .descendant(
+              of: find.byType(NoteBlocksEditor),
+              matching: find.byType(TextField),
+            )
+            .first,
+        'typed just before restart',
+      );
+      await state.prepareForUpdate();
+      expect(store.saved['list']!.notes, contains('typed just before restart'));
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+
     testWidgets('the menu offers the way back to a checklist', (tester) async {
       final state = await pumpProject(tester, FakeLocalStore());
       await state.setMode('list', ProjectMode.notes);

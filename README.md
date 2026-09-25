@@ -312,18 +312,24 @@ Windows DPAPI) via `flutter_secure_storage`, not in plain preferences.
 
 ## Updating
 
-The app checks the repo's latest release when it starts and offers a one-tap
-download beside the projects. What it deliberately does not do is install it
-for you:
+The app checks GitHub for a newer release when it starts.
 
-- **Android** will not install a package without you agreeing, and it refuses
-  outright to replace a build signed with a different key. CI mints a fresh
-  debug key per run, so **until a release keystore is configured** every
-  update means uninstalling the old app first. Setting that up (below) is what
-  turns updating into a normal install-over-the-top.
-- **Windows** builds are a portable zip, and a program cannot tidily replace
-  its own running executable. The download lands in your browser; unzip it
-  over the old folder with the app closed.
+- **Windows (0.24.0 onward):** choose **Update and restart**. The app downloads
+  the Windows ZIP, verifies GitHub's SHA-256 and asset size, saves pending notes
+  and canvas positions, and restarts into the update. No browser download or
+  manual extraction is needed after this first upgrade. The app folder must be
+  writable by your account; administrator access is not requested.
+- **Android:** choose **Install**. The APK is downloaded in the app, then
+  Android asks you to approve installing it. Releases use the project's upload
+  key so they can update an existing release installation.
+
+The Windows updater replaces only the executable, bundled DLLs and `data/`;
+notes, credentials and settings stay in their existing locations. A native
+helper waits for the running app to close and keeps the previous files in an
+`.actionnotes-update-*/backup` folder inside the app folder. If replacement or
+startup fails, it restores the old files and explains the failure when the old
+app reopens. A failed download or save leaves the running app open. Antivirus
+can still block an update; this feature does not bypass Windows security.
 
 There is also a **single-file portable** on each release,
 `actionnotes-<tag>-portable.exe`: the same build wrapped in an NSIS
@@ -334,7 +340,8 @@ the plugin DLLs and `data/` from disk — so this unpacks the folder to
 app from there; later runs find it already unpacked and start at once. It is
 per-user, so it never asks for admin. Some antivirus dislikes a program that
 unpacks and launches another; the zip is the one to fall back on. It makes
-copying easier, not updating.
+copying easier. Updates made inside the app keep using that same extracted
+folder, so the original portable launcher opens the updated app too.
 
 ## Building
 
