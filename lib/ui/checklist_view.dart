@@ -169,6 +169,11 @@ class _ChecklistViewState extends State<ChecklistView> {
   }
 
   Future<void> _flushAllNotes() async {
+    if (_newItemController.text.trim().isNotEmpty) {
+      throw const UpdatePreparationException(
+        'There is text waiting in the add box. Add it or clear it before restarting.',
+      );
+    }
     for (final itemText in _pendingNotes.keys.toList()) {
       await _flushNotes(itemText);
     }

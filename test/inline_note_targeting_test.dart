@@ -59,6 +59,20 @@ Future<void> openNotesOn(WidgetTester tester, String itemText) async {
 
 void main() {
   group('an inline note edit still in hand', () {
+    testWidgets('an unsubmitted task prevents an update from discarding it', (
+      tester,
+    ) async {
+      final state = await pumpChecklist(tester, FakeLocalStore());
+      await tester.enterText(find.byType(TextField).last, 'unfinished task');
+      await expectLater(
+        state.prepareForUpdate(),
+        throwsA(isA<UpdatePreparationException>()),
+      );
+      expect(find.text('unfinished task'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      state.dispose();
+    });
+
     testWidgets('is saved immediately before an update', (tester) async {
       final store = FakeLocalStore();
       final state = await pumpChecklist(tester, store);

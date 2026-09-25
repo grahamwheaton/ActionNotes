@@ -22,6 +22,12 @@ import '../storage/settings_store.dart';
 import '../storage/sync_service.dart';
 import '../storage/update_check.dart';
 
+/// A restart must wait until the user resolves an unsaved draft or failed sync.
+class UpdatePreparationException implements Exception {
+  const UpdatePreparationException(this.message);
+  final String message;
+}
+
 /// Which item's notes the desktop layout is editing in its detail pane.
 ///
 /// The index is into the project's own item list, which is what every other
@@ -348,6 +354,7 @@ class AppState extends ChangeNotifier {
   bool _preparingUpdate = false;
   int _layoutWrites = 0;
   int _localWrites = 0;
+  final Set<String> _pendingLayoutUpdates = {};
 
   void registerEditorSave(Future<void> Function() save) =>
       _editorSaves.add(save);
@@ -377,6 +384,19 @@ class AppState extends ChangeNotifier {
       for (final save in _editorSaves.toList()) {
         await save();
       }
+      for (final slug in _pendingLayoutUpdates.toList()) {
+        try {
+          await _writeLayout(
+            slug,
+            requireRemoteSave: true,
+          ).timeout(const Duration(seconds: 30));
+        } on Object {
+          throw const UpdatePreparationException(
+            'Canvas changes could not finish syncing. The app has stayed open. '
+            'Reconnect and try the update again.',
+          );
+        }
+      }
       for (final project in _projects) {
         await _localStore.save(project, sourceId: project.sourceId);
         final layout = _layouts[project.slug];
@@ -397,6 +417,10 @@ class AppState extends ChangeNotifier {
   void resumeAfterUpdate() {
     _preparingUpdate = false;
     startWatching();
+    for (final slug in _pendingLayoutUpdates) {
+      _layoutTimers[slug]?.cancel();
+      _layoutTimers[slug] = Timer(_pushDelay, () => _pushLayout(slug));
+    }
     for (final project in _projects.where((project) => project.dirty)) {
       _schedulePush(project.slug);
     }
@@ -594,6 +618,7 @@ class AppState extends ChangeNotifier {
   /// appear — the one moment the delay is most obvious, since it is when
   /// somebody is watching to see whether this works at all.
   void startWatching() {
+    if (_preparingUpdate) return;
     if (sharedSources.isNotEmpty) _lastSharedChange = DateTime.now();
     _watchAtCurrentRate();
   }
@@ -785,7 +810,11 @@ class AppState extends ChangeNotifier {
       combined.addAll(result.merged);
       // An arrangement that arrived is what makes a section a canvas rather
       // than a list, so it goes in alongside the projects it belongs to.
-      _layouts.addAll(result.layouts);
+      for (final entry in result.layouts.entries) {
+        if (!_pendingLayoutUpdates.contains(entry.key)) {
+          _layouts[entry.key] = entry.value;
+        }
+      }
       if (result.error != null) {
         problems.add(
           source.isMine ? result.error! : '${source.name}: ${result.error!}',
@@ -1950,6 +1979,7 @@ class AppState extends ChangeNotifier {
 
     // Settled for a moment first: dragging a card across a canvas would
     // otherwise be a commit per frame.
+    _pendingLayoutUpdates.add(slug);
     _layoutTimers[slug]?.cancel();
     _layoutTimers[slug] = Timer(_pushDelay, () => _pushLayout(slug));
   }
@@ -1962,6 +1992,7 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _pushLayout(String slug) async {
+    _pendingLayoutUpdates.add(slug);
     _layoutWrites++;
     try {
       await _writeLayout(slug);
@@ -1970,7 +2001,10 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> _writeLayout(String slug) async {
+  Future<void> _writeLayout(
+    String slug, {
+    bool requireRemoteSave = false,
+  }) async {
     _layoutTimers.remove(slug)?.cancel();
     final layout = layoutFor(slug);
     await _localStore.saveLayout(
@@ -1989,6 +2023,9 @@ class AppState extends ChangeNotifier {
       // Adopt the SHA whatever else has happened in the meantime, the same as
       // a project push does: throwing it away is what made every later write
       // fail against a SHA GitHub had already moved past.
+      if (layoutFor(slug).toJsonString() == layout.toJsonString()) {
+        _pendingLayoutUpdates.remove(slug);
+      }
       _layouts[slug] = layoutFor(slug).copyWith(sha: pushed.sha);
       await _localStore.saveLayout(
         _fileSlug(slug),
@@ -1996,6 +2033,7 @@ class AppState extends ChangeNotifier {
         sourceId: sourceOf(slug).id,
       );
     } catch (_) {
+      if (requireRemoteSave) rethrow;
       // An arrangement is worth no interruption. It is saved on the device and
       // the next change will try again.
     }

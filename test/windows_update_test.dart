@@ -1,6 +1,10 @@
 import 'dart:io';
 
 import 'package:actionnotes/storage/windows_updater.dart';
+import 'package:actionnotes/storage/sync_service.dart';
+import 'package:actionnotes/storage/github_client.dart';
+import 'package:actionnotes/state/app_state.dart';
+import 'package:http/testing.dart';
 import 'package:actionnotes/models/canvas_layout.dart';
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -89,6 +93,35 @@ void main() {
       expect(store.saved['list']!.notes, 'last typed words');
       expect(store.layouts['list']!.spotsFor('Board').first.x, 25);
       state.unregisterEditorSave(saveEditor);
+      state.dispose();
+    },
+  );
+
+  test(
+    'a pending canvas upload must succeed before an update can restart',
+    () async {
+      final store = FakeLocalStore();
+      final sync = SyncService(
+        localStore: store,
+        clientFactory: (config) => GitHubClient(
+          config,
+          client: MockClient((_) async => stubResponse('offline', 503)),
+        ),
+      );
+      final state = newTestState(store, config: testConfig, syncService: sync);
+      await state.init();
+      await state.sync();
+      await state.createProject('List');
+      await state.addBlock('list', 'Board');
+      await state.setCanvas('list', 'Board', true);
+      await state.setCanvasSpots('list', 'Board', const [
+        CanvasSpot(x: 33, y: 44),
+      ]);
+      await expectLater(
+        state.prepareForUpdate(),
+        throwsA(isA<UpdatePreparationException>()),
+      );
+      expect(store.layouts['list']!.spotsFor('Board').first.x, 33);
       state.dispose();
     },
   );

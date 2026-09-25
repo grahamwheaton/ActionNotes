@@ -141,9 +141,18 @@ int Run(const fs::path& requested_install, const fs::path& requested_stage,
                     Lower((install / L"actionnotes.exe").wstring()),
             "The updater was not started by this ActionNotes installation.");
     fs::create_directory(backup);
+    Require(!fs::exists(stage / L"cancel"), "The update was cancelled.");
     Marker(stage / L"ready", "ready");
-    Require(WaitForSingleObject(parent, 120000) == WAIT_OBJECT_0,
-            "ActionNotes did not close. The update was cancelled.");
+    bool exited = false;
+    for (int attempt = 0; attempt < 1200; ++attempt) {
+      Require(!fs::exists(stage / L"cancel"), "The update was cancelled.");
+      if (WaitForSingleObject(parent, 100) == WAIT_OBJECT_0) {
+        exited = true;
+        break;
+      }
+    }
+    Require(exited, "ActionNotes did not close. The update was cancelled.");
+    Require(!fs::exists(stage / L"cancel"), "The update was cancelled.");
     CloseHandle(parent);
     parent = nullptr;
     parent_closed = true;
@@ -172,7 +181,7 @@ int Run(const fs::path& requested_install, const fs::path& requested_stage,
     CloseHandle(child);
     child = nullptr;
     Marker(stage / L"complete", "The updated app started successfully.");
-    // Keep the backup until the next update: it also gives manual recovery
+    // Keep the backup for manual recovery: it gives the previous version
     // a known location if the machine shuts down during a replacement.
     ReleaseMutex(mutex);
     CloseHandle(mutex);

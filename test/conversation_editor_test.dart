@@ -45,8 +45,9 @@ Future<AppState> openNote(
 Finder composer() => find.widgetWithText(TextField, 'Write a message');
 
 void main() {
-  testWidgets('a note with signed messages opens as a conversation',
-      (tester) async {
+  testWidgets('a note with signed messages opens as a conversation', (
+    tester,
+  ) async {
     await openNote(
       tester,
       FakeLocalStore(),
@@ -60,8 +61,27 @@ void main() {
     expect(find.byType(NoteBlocksEditor), findsNothing);
   });
 
-  testWidgets('an ordinary note opens as the editor it always was',
-      (tester) async {
+  testWidgets('an update keeps an unsent message in the open app', (
+    tester,
+  ) async {
+    final state = await openNote(
+      tester,
+      FakeLocalStore(),
+      notes: '**Claude**\nDone.',
+    );
+    await tester.enterText(composer(), 'Unsent reply');
+    await expectLater(
+      state.prepareForUpdate(),
+      throwsA(isA<UpdatePreparationException>()),
+    );
+    expect(find.text('Unsent reply'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
+  testWidgets('an ordinary note opens as the editor it always was', (
+    tester,
+  ) async {
     await openNote(tester, FakeLocalStore(), notes: 'Just a note.');
 
     expect(find.byType(NoteBlocksEditor), findsOneWidget);
@@ -91,8 +111,9 @@ void main() {
     expect(messages.map((m) => m.speaker), ['Claude', 'grahamwheaton']);
   });
 
-  testWidgets('the composer empties, so a message cannot be sent twice',
-      (tester) async {
+  testWidgets('the composer empties, so a message cannot be sent twice', (
+    tester,
+  ) async {
     final state = await openNote(tester, FakeLocalStore(), notes: '**c**\nhi');
 
     await tester.enterText(composer(), 'One message');
@@ -129,8 +150,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ConversationView), findsOneWidget);
-    expect(state.projects.single.items.single.notes,
-        contains('A message from the chat'));
+    expect(
+      state.projects.single.items.single.notes,
+      contains('A message from the chat'),
+    );
   });
 
   testWidgets('a plain note can be turned into a conversation', (tester) async {
@@ -156,8 +179,9 @@ void main() {
     expect(notes, contains('**graham** ·'));
   });
 
-  testWidgets('an empty note says what the conversation is for',
-      (tester) async {
+  testWidgets('an empty note says what the conversation is for', (
+    tester,
+  ) async {
     await openNote(tester, FakeLocalStore(), notes: '');
 
     await tester.tap(find.byTooltip('Conversation'));

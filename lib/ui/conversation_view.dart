@@ -32,9 +32,26 @@ class ConversationView extends StatefulWidget {
 class _ConversationViewState extends State<ConversationView> {
   final _composer = TextEditingController();
   final _scroll = ScrollController();
+  late AppState _state;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _state = context.read<AppState>();
+    _state.registerEditorSave(_checkDraft);
+  }
+
+  Future<void> _checkDraft() async {
+    if (_composer.text.trim().isNotEmpty) {
+      throw const UpdatePreparationException(
+        'There is an unsent message. Send it or clear it before restarting.',
+      );
+    }
+  }
 
   @override
   void dispose() {
+    _state.unregisterEditorSave(_checkDraft);
     _composer.dispose();
     _scroll.dispose();
     super.dispose();
@@ -44,11 +61,13 @@ class _ConversationViewState extends State<ConversationView> {
     final said = _composer.text.trim();
     if (said.isEmpty) return;
 
-    widget.onSend(NoteConversation.append(
-      widget.markdown,
-      speaker: context.read<AppState>().me,
-      body: said,
-    ));
+    widget.onSend(
+      NoteConversation.append(
+        widget.markdown,
+        speaker: context.read<AppState>().me,
+        body: said,
+      ),
+    );
     _composer.clear();
 
     // A new message goes to the bottom, which is where the eye already is in
@@ -130,7 +149,8 @@ class _Bubble extends StatelessWidget {
     if (at == null) return null;
     final local = at.toLocal();
     final today = DateTime.now();
-    final sameDay = local.year == today.year &&
+    final sameDay =
+        local.year == today.year &&
         local.month == today.month &&
         local.day == today.day;
 
@@ -292,11 +312,13 @@ class _InlineConversationState extends State<InlineConversation> {
     final said = _composer.text.trim();
     if (said.isEmpty) return;
 
-    widget.onSend(NoteConversation.append(
-      widget.markdown,
-      speaker: context.read<AppState>().me,
-      body: said,
-    ));
+    widget.onSend(
+      NoteConversation.append(
+        widget.markdown,
+        speaker: context.read<AppState>().me,
+        body: said,
+      ),
+    );
     _composer.clear();
   }
 

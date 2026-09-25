@@ -101,7 +101,7 @@ class WindowsUpdater {
   }
 
   Future<bool> launch(Directory stage) async {
-    final process = await Process.start(p.join(stage.path, 'updater.exe'), [
+    await Process.start(p.join(stage.path, 'updater.exe'), [
       p.dirname(executable),
       stage.path,
       '$pid',
@@ -113,7 +113,9 @@ class WindowsUpdater {
       if (await failed.exists()) return false;
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
-    Process.killPid(process.pid);
+    // A helper delayed by antivirus must not apply the update when the user
+    // later closes the app normally. Cancel through its private stage folder.
+    await File(p.join(stage.path, 'cancel')).writeAsString('cancel', flush: true);
     return false;
   }
 

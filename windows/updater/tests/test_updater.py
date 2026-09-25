@@ -121,6 +121,15 @@ class UpdaterTest(unittest.TestCase):
         self.assertFalse((self.stage / 'ready').exists())
         self.assertEqual((self.root / 'data/app.so').read_bytes(), b'old')
 
+    def test_cancelled_handshake_does_not_update_on_later_exit(self):
+        self.start(wait_ready=False)
+        wait_for(self.stage / 'ready')
+        (self.stage / 'cancel').write_text('cancel')
+        self.assertEqual(self.helper.wait(timeout=10), 1)
+        self.assertIsNone(self.parent.poll())
+        self.assertEqual((self.root / 'data/app.so').read_bytes(), b'old')
+        self.assertFalse((self.stage / 'complete').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

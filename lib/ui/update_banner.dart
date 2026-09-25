@@ -109,6 +109,8 @@ class _UpdateBannerState extends State<UpdateBanner> {
       }
       handed = await _installer.install(file);
       if (!handed) problem = _installer.lastError;
+    } on UpdatePreparationException catch (error) {
+      problem = error.message;
     } catch (_) {
       problem =
           'Your notes could not finish saving. The app has stayed open. '
