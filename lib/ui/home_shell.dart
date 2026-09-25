@@ -70,8 +70,11 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
   String? _activeFor(int pane) => pane == 0 ? _active : _rightActive;
 
   void _setActive(int pane, String? slug) {
-    if (pane == 0) _active = slug;
-    else _rightActive = slug;
+    if (pane == 0) {
+      _active = slug;
+    } else {
+      _rightActive = slug;
+    }
   }
 
   void _show(AppState state, int pane, String slug, {bool newTab = false}) {
@@ -83,8 +86,11 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
           tabs.add(slug);
         } else {
           final at = tabs.indexOf(_activeFor(pane)!);
-          if (at < 0) tabs.add(slug);
-          else tabs[at] = slug;
+          if (at < 0) {
+            tabs.add(slug);
+          } else {
+            tabs[at] = slug;
+          }
         }
       }
       _setActive(pane, slug);
@@ -188,8 +194,11 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
       final tabs = _forPane(_focused);
       if (!tabs.contains(slug)) {
         final at = tabs.indexOf(_activeFor(_focused) ?? '');
-        if (at < 0) tabs.add(slug);
-        else tabs[at] = slug;
+        if (at < 0) {
+          tabs.add(slug);
+        } else {
+          tabs[at] = slug;
+        }
       }
       _setActive(_focused, slug);
       _lastSelected = slug;
@@ -1380,8 +1389,11 @@ class _ProjectTile extends StatelessWidget {
                 ),
               );
             } else {
-              if (onSelect != null) onSelect!(project.slug);
-              else state.select(project.slug);
+              if (onSelect != null) {
+                onSelect!(project.slug);
+              } else {
+                state.select(project.slug);
+              }
             }
           },
           child: Row(
