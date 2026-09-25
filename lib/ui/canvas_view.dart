@@ -327,14 +327,23 @@ class CanvasViewState extends State<CanvasView> {
     for (var i = 0; i < widget.shapes.length; i++) {
       final shape = widget.shapes[i];
       if (shape.kind != CanvasShapeKind.arrow ||
-          (shape.from == null && shape.to == null)) continue;
+          (shape.from == null && shape.to == null)) {
+        continue;
+      }
       final points = CanvasMarks.pointsOf(shape, cards);
-      for (var j = 2; j < points.length; j += 2) {
-        final a = Offset(points[j - 2], points[j - 1]);
-        final b = Offset(points[j], points[j + 1]);
-        if (_segmentsCross(start, end, a, b)) {
-          _cutConnections.add(i);
-          break;
+      for (final metric in CanvasMarks.pathThrough(points, curved: shape.curved)
+          .computeMetrics()) {
+        final count = math.max(1, (metric.length / (6 / _scale)).ceil());
+        var previous = metric.getTangentForOffset(0)?.position;
+        for (var j = 1; j <= count; j++) {
+          final current = metric.getTangentForOffset(metric.length * j / count)
+              ?.position;
+          if (previous != null && current != null &&
+              _segmentsCross(start, end, previous, current)) {
+            _cutConnections.add(i);
+            break;
+          }
+          previous = current;
         }
       }
     }

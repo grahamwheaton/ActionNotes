@@ -79,10 +79,12 @@ class _CanvasScreenState extends State<CanvasScreen> {
         spot: CanvasSpot(x: centre.dx - 130, y: centre.dy - 100, width: 260),
       );
     } finally {
-      if (mounted) setState(() {
-        _pendingImages--;
-        _pendingPositions.remove(centre);
-      });
+      if (mounted) {
+        setState(() {
+          _pendingImages--;
+          _pendingPositions.remove(centre);
+        });
+      }
     }
   }
 
