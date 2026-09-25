@@ -37,6 +37,7 @@ class CanvasView extends StatefulWidget {
     this.onDuplicateCard,
     this.onEditCard,
     this.onPlaceCard,
+    this.onAddImage,
     this.shapes = const [],
     this.onDrawShape,
     this.onEraseShapes,
@@ -76,6 +77,9 @@ class CanvasView extends StatefulWidget {
   /// the canvas is not the viewer's to add to.
   final void Function(String markdown, CanvasSpot spot)? onPlaceCard;
 
+  /// Import an image at this scene point (or the visible centre).
+  final void Function(Offset? scene)? onAddImage;
+
   /// What has been drawn on the board, oldest first.
   final List<CanvasShape> shapes;
 
@@ -107,6 +111,7 @@ class CanvasViewState extends State<CanvasView> {
   /// moment it has placed one thing: a tool that stays armed puts a second
   /// sticky note down the next time you meant to click something.
   CanvasTool _tool = CanvasTool.select;
+  CanvasTool _lastLineTool = CanvasTool.arrow;
   CanvasColour _colour = CanvasColour.yellow;
 
   /// How heavy a mark the pen and the shapes make.
@@ -250,6 +255,46 @@ class CanvasViewState extends State<CanvasView> {
 
   /// Scene coordinates for a point in the viewport.
   Offset _toScene(Offset viewportPoint) => (viewportPoint - _pan) / _scale;
+
+  Offset sceneAtViewportCentre() => _toScene(_centre());
+
+  void _chooseTool(CanvasTool tool) {
+    setState(() {
+      if (tool == CanvasTool.line || tool == CanvasTool.arrow ||
+          tool == CanvasTool.bendyArrow) {
+        _lastLineTool = tool;
+      }
+      _tool = _tool == tool ? CanvasTool.select : tool;
+    });
+  }
+
+  Future<void> _showEmptyMenu(Offset scene, Offset global) async {
+    final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (overlay == null) return;
+    final selected = await showMenu<Object>(
+      context: context,
+      position: RelativeRect.fromLTRB(global.dx, global.dy,
+          overlay.size.width - global.dx, overlay.size.height - global.dy),
+      items: [
+        if (widget.onAddImage != null)
+          const PopupMenuItem(value: 'image', child: Text('Image')),
+        for (final tool in [CanvasTool.sticky, CanvasTool.text,
+          CanvasTool.frame, CanvasTool.rectangle, CanvasTool.oval,
+          CanvasTool.line, CanvasTool.arrow, CanvasTool.bendyArrow])
+          PopupMenuItem(value: tool, child: Text(tool.label)),
+      ],
+    );
+    if (!mounted || selected == null) return;
+    if (selected == 'image') {
+      widget.onAddImage?.call(scene);
+      return;
+    }
+    if (selected is! CanvasTool) return;
+    _chooseTool(selected);
+    if (selected.places) {
+      _useTool(scene * _scale + _pan);
+    }
+  }
 
   void _drawStart(Offset viewportPoint) {
     final scene = _toScene(viewportPoint);
@@ -937,12 +982,39 @@ class CanvasViewState extends State<CanvasView> {
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
+    final modified = HardwareKeyboard.instance.isControlPressed ||
+        HardwareKeyboard.instance.isMetaPressed;
+    if (modified && event.logicalKey == LogicalKeyboardKey.keyC) {
+      if (_selection.length != 1) return KeyEventResult.ignored;
+      final index = _selection.single;
+      if (!widget.cards[index].isImage) return KeyEventResult.ignored;
+      _withFile(index, ImageActions.copy);
+      return KeyEventResult.handled;
+    }
+
     final box = _viewport.currentContext?.findRenderObject() as RenderBox?;
     final centre = box == null
         ? Offset.zero
         : Offset(box.size.width / 2, box.size.height / 2);
 
     switch (event.logicalKey) {
+      case LogicalKeyboardKey.keyC:
+      case LogicalKeyboardKey.keyN:
+      case LogicalKeyboardKey.keyL:
+      case LogicalKeyboardKey.keyS:
+      case LogicalKeyboardKey.keyO:
+        if (modified || HardwareKeyboard.instance.isAltPressed) {
+          return KeyEventResult.ignored;
+        }
+        final tool = switch (event.logicalKey) {
+          LogicalKeyboardKey.keyC => CanvasTool.sticky,
+          LogicalKeyboardKey.keyN => CanvasTool.text,
+          LogicalKeyboardKey.keyL => _lastLineTool,
+          LogicalKeyboardKey.keyS => CanvasTool.rectangle,
+          _ => CanvasTool.oval,
+        };
+        _chooseTool(tool);
+        return KeyEventResult.handled;
       case LogicalKeyboardKey.equal:
       case LogicalKeyboardKey.add:
         _zoomAround(centre, 1.2);
@@ -954,7 +1026,14 @@ class CanvasViewState extends State<CanvasView> {
         setState(() => _scale = 1);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyF:
-        fit();
+        if (modified || HardwareKeyboard.instance.isAltPressed) {
+          return KeyEventResult.ignored;
+        }
+        if (HardwareKeyboard.instance.isShiftPressed) {
+          fit();
+        } else {
+          _chooseTool(CanvasTool.frame);
+        }
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyZ:
         // Plain Z zooms to what is selected; with a modifier it is undo, and
@@ -975,9 +1054,13 @@ class CanvasViewState extends State<CanvasView> {
         });
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyI:
-        if (!HardwareKeyboard.instance.isControlPressed &&
-            !HardwareKeyboard.instance.isMetaPressed) {
-          return KeyEventResult.ignored;
+        if (!modified) {
+          if (HardwareKeyboard.instance.isAltPressed) {
+            return KeyEventResult.ignored;
+          }
+          widget.onAddImage?.call(null);
+          return widget.onAddImage == null
+              ? KeyEventResult.ignored : KeyEventResult.handled;
         }
         setState(() {
           final inverted = <int>{
@@ -1167,8 +1250,11 @@ class CanvasViewState extends State<CanvasView> {
                           onSecondaryTapUp: (details) {
                             final scene = _toScene(details.localPosition);
                             final mark = _markNear(scene);
-                            if (mark == null) return;
-                            _showMarkMenu(mark, scene, details.globalPosition);
+                            if (mark == null) {
+                              _showEmptyMenu(scene, details.globalPosition);
+                            } else {
+                              _showMarkMenu(mark, scene, details.globalPosition);
+                            }
                           },
                           onLongPressStart: (details) {
                             final scene = _toScene(details.localPosition);
@@ -1417,11 +1503,7 @@ class CanvasViewState extends State<CanvasView> {
                           child: _CanvasTools(
                             tool: _tool,
                             colour: _colour,
-                            onTool: (tool) => setState(
-                              () => _tool = _tool == tool
-                                  ? CanvasTool.select
-                                  : tool,
-                            ),
+                            onTool: _chooseTool,
                             onColour: (colour) =>
                                 setState(() => _colour = colour),
                             thickness: _thickness,
@@ -3124,9 +3206,7 @@ enum CanvasTool {
 /// the zoom controls, and a board is usually wider than it is tall, so the
 /// side is the edge with room to spare.
 ///
-/// The four shapes share one button. Ten buttons in a column is taller than a
-/// phone, and a shape is picked rarely enough that one more press to reach it
-/// is a fair trade for the column fitting on the screen at all.
+/// Shapes and lines each have a menu, keeping the column compact.
 class _CanvasTools extends StatelessWidget {
   const _CanvasTools({
     required this.tool,
@@ -3153,10 +3233,13 @@ class _CanvasTools extends StatelessWidget {
   /// wanted a line exactly 3.4 wide.
   static const _weights = [1.0, 2.0, 5.0];
 
-  static const _shapes = [
+  static const _lines = [
     CanvasTool.line,
     CanvasTool.arrow,
     CanvasTool.bendyArrow,
+  ];
+
+  static const _shapes = [
     CanvasTool.rectangle,
     CanvasTool.oval,
   ];
@@ -3175,9 +3258,11 @@ class _CanvasTools extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final shape = _shapes.contains(tool) ? tool : CanvasTool.arrow;
+    final shape = _shapes.contains(tool) ? tool : CanvasTool.rectangle;
+    final line = _lines.contains(tool) ? tool : CanvasTool.arrow;
 
-    return Material(
+    return SingleChildScrollView(
+      child: Material(
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.95),
       borderRadius: BorderRadius.circular(20),
       elevation: 2,
@@ -3225,6 +3310,25 @@ class _CanvasTools extends StatelessWidget {
                         Text(option.label),
                       ],
                     ),
+                  ),
+              ],
+            ),
+            PopupMenuButton<CanvasTool>(
+              tooltip: 'Lines',
+              position: PopupMenuPosition.under,
+              iconSize: 18,
+              icon: Icon(line.icon, size: 18,
+                color: _lines.contains(tool) ? theme.colorScheme.primary : null),
+              onSelected: onTool,
+              itemBuilder: (_) => [
+                for (final option in _lines)
+                  PopupMenuItem(
+                    value: option,
+                    child: Row(children: [
+                      Icon(option.icon, size: 18),
+                      const SizedBox(width: 10),
+                      Text(option.label),
+                    ]),
                   ),
               ],
             ),
@@ -3323,6 +3427,7 @@ class _CanvasTools extends StatelessWidget {
             ],
           ],
         ),
+      ),
       ),
     );
   }

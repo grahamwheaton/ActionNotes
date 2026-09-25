@@ -499,7 +499,7 @@ void _drawingOnTheBoard() {
     testWidgets('a press that goes nowhere is not a mark', (tester) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Shapes'));
+      await tester.tap(find.byTooltip('Lines'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Line').last);
       await tester.pumpAndSettle();
@@ -577,7 +577,7 @@ void _drawingOnTheBoard() {
         ],
       );
 
-      await tester.tap(find.byTooltip('Shapes'));
+      await tester.tap(find.byTooltip('Lines'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();
@@ -614,7 +614,7 @@ void _drawingOnTheBoard() {
         spots: const [CanvasSpot(x: 300, y: 200, width: 400, ref: 'One')],
       );
 
-      await tester.tap(find.byTooltip('Shapes'));
+      await tester.tap(find.byTooltip('Lines'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();
@@ -645,7 +645,7 @@ void _drawingOnTheBoard() {
         spots: const [CanvasSpot(x: 400, y: 300, width: 120, ref: 'One')],
       );
 
-      await tester.tap(find.byTooltip('Shapes'));
+      await tester.tap(find.byTooltip('Lines'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Line').last);
       await tester.pumpAndSettle();
@@ -671,7 +671,7 @@ void _drawingOnTheBoard() {
         'its own menu', (tester) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Shapes'));
+      await tester.tap(find.byTooltip('Lines'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();
@@ -715,7 +715,7 @@ void _drawingOnTheBoard() {
         spots: const [CanvasSpot(x: 300, y: 200, width: 200, ref: 'One')],
       );
 
-      await tester.tap(find.byTooltip('Shapes'));
+      await tester.tap(find.byTooltip('Lines'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();
@@ -773,7 +773,7 @@ void _drawingOnTheBoard() {
         ],
       );
 
-      await tester.tap(find.byTooltip('Shapes'));
+      await tester.tap(find.byTooltip('Lines'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Arrow').last);
       await tester.pumpAndSettle();

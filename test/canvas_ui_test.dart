@@ -84,7 +84,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Shapes'));
+      await tester.tap(find.byTooltip('Lines'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Bendy arrow'));
       await tester.pumpAndSettle();

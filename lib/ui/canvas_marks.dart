@@ -242,8 +242,8 @@ class CanvasMarks {
   /// A smoothed line is a Catmull-Rom spline through its own points,
   /// converted to the cubics a path is made of. Two points with nothing
   /// between them have no curve to describe, so they are bowed the way a node
-  /// editor bows a connection: the tangents leave sideways, which is what
-  /// makes a noodle read as a cable rather than as a bent wire.
+  /// editor bows a connection. Vertical connections leave and arrive
+  /// vertically; horizontal ones leave and arrive sideways.
   static Path pathThrough(List<double> points, {required bool curved}) {
     final path = Path();
     final count = points.length ~/ 2;
@@ -263,8 +263,15 @@ class CanvasMarks {
     if (count == 2) {
       final a = at(0);
       final b = at(1);
-      final reach = ((b.dx - a.dx).abs() / 2).clamp(40.0, 260.0);
-      path.cubicTo(a.dx + reach, a.dy, b.dx - reach, b.dy, b.dx, b.dy);
+      final dx = b.dx - a.dx;
+      final dy = b.dy - a.dy;
+      if (dy.abs() > dx.abs()) {
+        final reach = (dy.abs() / 2).clamp(40.0, 260.0) * dy.sign;
+        path.cubicTo(a.dx, a.dy + reach, b.dx, b.dy - reach, b.dx, b.dy);
+      } else {
+        final reach = (dx.abs() / 2).clamp(40.0, 260.0) * dx.sign;
+        path.cubicTo(a.dx + reach, a.dy, b.dx - reach, b.dy, b.dx, b.dy);
+      }
       return path;
     }
 
