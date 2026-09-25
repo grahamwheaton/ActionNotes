@@ -263,7 +263,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
       if (index < 0) continue;
       state.revealItem(project.slug, index);
       Navigator.of(context).push(MaterialPageRoute<void>(
-        builder: (_) => ChecklistView(slug: project.slug),
+        builder: (_) => ChecklistView(slug: project.slug, openItemText: title),
       ));
       return;
     }
