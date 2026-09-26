@@ -19,13 +19,17 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
-// The share receiver targets Java 11 while Kotlin uses the app's JVM 17
-// toolchain. Align its Java compilation with Kotlin for AGP's target check.
+// The share receiver declares Java 11 while its Kotlin tasks target 17.
+// Configure the Android extension, which owns the Java task compatibility.
 subprojects {
     if (name == "receive_sharing_intent") {
-        tasks.withType<JavaCompile>().configureEach {
-            sourceCompatibility = "17"
-            targetCompatibility = "17"
+        plugins.withId("com.android.library") {
+            extensions.configure<com.android.build.api.dsl.LibraryExtension>("android") {
+                compileOptions {
+                    sourceCompatibility = JavaVersion.VERSION_17
+                    targetCompatibility = JavaVersion.VERSION_17
+                }
+            }
         }
     }
 }
