@@ -487,7 +487,8 @@ class _DetailHeader extends StatelessWidget {
               ],
             ),
           ),
-          ProjectMenu(project: project),        ],
+          ProjectMenu(project: project),
+        ],
       ),
     );
   }
