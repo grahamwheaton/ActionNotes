@@ -2,6 +2,13 @@ import 'package:actionnotes/markdown/note_blocks.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('markdown tables stay one editable block across round trips', () {
+    const source = '| Name | State |\n| --- | --- |\n| One | Open |';
+    final blocks = NoteBlocks.parse(source);
+    expect(blocks, [const NoteBlock.table(source)]);
+    expect(NoteBlocks.serialize(blocks), source);
+  });
+
   group('parse', () {
     test('reads headings, keeping their level and dropping the hashes', () {
       final blocks = NoteBlocks.parse('# One\n\n### Three');

@@ -361,7 +361,8 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
     // A rule holds no text, so turning a run of lines into one would throw
     // the lines away. That stays a single-row change.
-    if (selected.length < 2 || kind.type == NoteBlockType.divider) {
+    if (selected.length < 2 || kind.type == NoteBlockType.divider ||
+        kind.type == NoteBlockType.table) {
       _setBlockType(row, kind);
       return;
     }
@@ -658,12 +659,12 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
   /// Turns the focused block into [kind], keeping whatever text it held.
   void _setBlockType(_Row row, NoteBlock kind) {
-    if (kind.type == NoteBlockType.divider) {
+    if (kind.type == NoteBlockType.divider || kind.type == NoteBlockType.table) {
       // A rule holds no text, so put the text in a fresh block below it
       // rather than discarding what was typed.
       final index = _indexOfId(row.id);
       final text = row.controller?.text ?? '';
-      final rule = _row(const NoteBlock.divider());
+      final rule = _row(kind);
       setState(() => _rows.insert(index, rule));
 
       if (text.trim().isEmpty) {
@@ -752,6 +753,18 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
         );
       }
 
+      if (row.block.type == NoteBlockType.table) {
+        return _TableBlock(
+          key: ValueKey(row.id),
+          markdown: row.block.text,
+          onChanged: (value) {
+            setState(() => row.block = row.block.copyWith(text: value));
+            _emit();
+          },
+          onRemove: () => _removeRow(row),
+        );
+      }
+
       return row.block.isText
           ? _TextBlock(
               key: ValueKey(row.id),
@@ -797,6 +810,99 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
               onRemove: () => _removeRow(row),
             );
     }
+  }
+}
+
+class _TableBlock extends StatelessWidget {
+  const _TableBlock({super.key, required this.markdown,
+    required this.onChanged, required this.onRemove});
+
+  final String markdown;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onRemove;
+
+  List<List<String>> get cells {
+    final lines = markdown.split('\n');
+    final parsed = [
+      for (var index = 0; index < lines.length; index++)
+        if (index != 1)
+          lines[index].split('|').skip(1).toList()
+            ..removeLast(),
+    ];
+    return parsed.isEmpty ? [['Column 1', 'Column 2'], ['', '']] : parsed;
+  }
+
+  String _asMarkdown(List<List<String>> rows) {
+    final width = rows.first.length;
+    final header = rows.first;
+    final body = rows.skip(1);
+    return [
+      '| ${header.join(' | ')} |',
+      '| ${List.filled(width, '---').join(' | ')} |',
+      for (final row in body) '| ${row.join(' | ')} |',
+    ].join('\n');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = cells;
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: rows.first.length * 150.0,
+              child: Table(
+                border: TableBorder.all(color: theme.colorScheme.outlineVariant),
+                children: [
+                  for (var row = 0; row < rows.length; row++)
+                    TableRow(children: [
+                      for (var column = 0; column < rows[row].length; column++)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          child: TextFormField(
+                            key: ValueKey('$row-$column'),
+                            initialValue: rows[row][column].trim(),
+                            decoration: const InputDecoration(border: InputBorder.none),
+                            style: row == 0 ? theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.bold) : theme.textTheme.bodyMedium,
+                            onChanged: (value) {
+                              final next = [for (final cells in rows) [...cells]];
+                              next[row][column] = value;
+                              onChanged(_asMarkdown(next));
+                            },
+                          ),
+                        ),
+                    ]),
+                ],
+              ),
+            ),
+          ),
+          Row(children: [
+            TextButton.icon(
+              onPressed: () => onChanged(_asMarkdown([
+                ...rows, List.filled(rows.first.length, ''),
+              ])),
+              icon: const Icon(Icons.add, size: 16), label: const Text('Row'),
+            ),
+            TextButton.icon(
+              onPressed: () => onChanged(_asMarkdown([
+                for (final row in rows) [...row, ''],
+              ])),
+              icon: const Icon(Icons.add, size: 16), label: const Text('Column'),
+            ),
+            const Spacer(),
+            IconButton(
+              tooltip: 'Remove table', icon: const Icon(Icons.delete_outline),
+              onPressed: onRemove,
+            ),
+          ]),
+        ]),
+      ),
+    );
   }
 }
 

@@ -1,5 +1,5 @@
 /// The kinds of line the note editor understands as a block.
-enum NoteBlockType { paragraph, heading, bullet, task, image, divider }
+enum NoteBlockType { paragraph, heading, bullet, task, image, divider, table }
 
 /// One line-level piece of a note.
 ///
@@ -40,6 +40,9 @@ class NoteBlock {
 
   const NoteBlock.divider() : this(type: NoteBlockType.divider);
 
+  const NoteBlock.table([String text = '| Column 1 | Column 2 |\n| --- | --- |\n|  |  |'])
+      : this(type: NoteBlockType.table, text: text);
+
   final NoteBlockType type;
 
   /// The block's text, without its markdown marker — a heading's `##` and a
@@ -62,7 +65,8 @@ class NoteBlock {
 
   /// Whether the block is edited as text. Images and rules are not.
   bool get isText =>
-      type != NoteBlockType.image && type != NoteBlockType.divider;
+      type != NoteBlockType.image && type != NoteBlockType.divider &&
+      type != NoteBlockType.table;
 
   /// Whether the block is a list row, and so can be nested.
   bool get isListRow =>
@@ -110,6 +114,7 @@ class NoteBlock {
         NoteBlockType.task => 'Task@$indent(${done ? 'x' : ' '} $text)',
         NoteBlockType.image => 'Image($imagePath)',
         NoteBlockType.divider => 'Divider()',
+        NoteBlockType.table => 'Table($text)',
         NoteBlockType.paragraph => 'P($text)',
       };
 }
@@ -144,9 +149,24 @@ class NoteBlocks {
   static List<NoteBlock> parse(String markdown) {
     final blocks = <NoteBlock>[];
 
-    for (final raw in markdown.replaceAll('\r\n', '\n').split('\n')) {
+    final rawLines = markdown.replaceAll('\r\n', '\n').split('\n');
+    for (var index = 0; index < rawLines.length; index++) {
+      final raw = rawLines[index];
       final line = raw.trimRight();
       if (line.trim().isEmpty) continue;
+
+      if (index + 1 < rawLines.length &&
+          line.trim().startsWith('|') &&
+          RegExp(r'^\|[\s:|\-]+\|$').hasMatch(rawLines[index + 1].trim()) &&
+          rawLines[index + 1].contains('-')) {
+        final rows = <String>[line];
+        while (index + 1 < rawLines.length &&
+            rawLines[index + 1].trim().startsWith('|')) {
+          rows.add(rawLines[++index].trimRight());
+        }
+        blocks.add(NoteBlock.table(rows.join('\n')));
+        continue;
+      }
 
       if (_divider.hasMatch(line.trim())) {
         blocks.add(const NoteBlock.divider());
@@ -227,6 +247,7 @@ class NoteBlocks {
           '$pad- [${block.done ? 'x' : ' '}] ${block.text.trim()}',
         NoteBlockType.image => '![${block.imageAlt}](${block.imagePath})',
         NoteBlockType.divider => '---',
+        NoteBlockType.table => block.text.trim(),
         NoteBlockType.paragraph => block.text.trim(),
       });
 
