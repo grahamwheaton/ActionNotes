@@ -1038,7 +1038,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<Project> createProject(String title) async {
+  Future<Project> createProject(String title, {bool schedulePush = true}) async {
     final slug = _uniqueSlug(Project.slugify(title));
     final now = DateTime.now().toUtc();
     final project = Project(
@@ -1053,7 +1053,7 @@ class AppState extends ChangeNotifier {
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
     await _localStore.save(project, sourceId: project.sourceId);
     notifyListeners();
-    _schedulePush(slug);
+    if (schedulePush) _schedulePush(slug);
     return project;
   }
 
@@ -1072,7 +1072,7 @@ class AppState extends ChangeNotifier {
     }
     final copy = ProjectCopy.decode(bytes);
     final source = ProjectMarkdown.parse(copy.markdown, slug: 'copy');
-    final project = await createProject(source.title);
+    final project = await createProject(source.title, schedulePush: false);
     final folder = project.fileSlug;
     final names = RegExp(r'\.\./attachments/[^/\s)]+/([A-Za-z0-9._-]+)')
         .allMatches(copy.markdown).map((match) => match.group(1)!).toSet();
