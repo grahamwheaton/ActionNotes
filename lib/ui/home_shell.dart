@@ -10,6 +10,7 @@ import '../state/app_state.dart';
 import 'checklist_view.dart';
 import 'context_menu.dart';
 import 'note_editor.dart';
+import 'project_copy_actions.dart';
 import 'search_screen.dart';
 import 'shared_notebooks.dart';
 import 'starred_screen.dart';
@@ -1330,6 +1331,11 @@ class _SidebarFooter extends StatelessWidget {
             icon: const Icon(Icons.today_outlined, size: 18),
             label: const Text('Daily note'),
           ),
+        TextButton.icon(
+          onPressed: () => ProjectCopyActions.import(context),
+          icon: const Icon(Icons.file_download_outlined, size: 18),
+          label: const Text('Import a project copy'),
+        ),
         const UpdateBanner(),
         Divider(height: 1, color: theme.colorScheme.outlineVariant),
         Padding(
@@ -1434,6 +1440,11 @@ class _ProjectTile extends StatelessWidget {
         label: 'Move to group…',
         icon: Icons.folder_outlined,
         onSelected: () => _moveToGroup(context, project),
+      ),
+      ContextMenuAction(
+        label: 'Share a copy…',
+        icon: Icons.ios_share,
+        onSelected: () => ProjectCopyActions.share(context, project),
       ),
       if (onOpenInNewTab != null)
         ContextMenuAction(
