@@ -1331,11 +1331,6 @@ class _SidebarFooter extends StatelessWidget {
             icon: const Icon(Icons.today_outlined, size: 18),
             label: const Text('Daily note'),
           ),
-        TextButton.icon(
-          onPressed: () => ProjectCopyActions.import(context),
-          icon: const Icon(Icons.file_download_outlined, size: 18),
-          label: const Text('Import a project copy'),
-        ),
         const UpdateBanner(),
         Divider(height: 1, color: theme.colorScheme.outlineVariant),
         Padding(

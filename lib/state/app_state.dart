@@ -1857,7 +1857,10 @@ class AppState extends ChangeNotifier {
       }
     }
 
-    final card = CanvasCards.text(markdown);
+    var card = CanvasCards.text(markdown);
+    if (CanvasCards.parse(block.body).any((other) => other.ref == card.ref)) {
+      card = CanvasCards.uniqueCopy(card);
+    }
     _layouts[slug] = layoutFor(
       slug,
     ).withSection(section, [...existing, spot.copyWith(ref: card.ref, z: z)]);
@@ -1986,7 +1989,7 @@ class AppState extends ChangeNotifier {
     final cards = CanvasCards.parse(block.body);
     if (index < 0 || index >= cards.length) return;
     _rememberCanvas(slug, section);
-    cards.insert(index + 1, cards[index]);
+    cards.insert(index + 1, CanvasCards.uniqueCopy(cards[index]));
 
     final spots = [...layoutFor(slug).spotsFor(section)];
     if (index < spots.length) {
@@ -1995,7 +1998,8 @@ class AppState extends ChangeNotifier {
         index + 1,
         // Offset a little, so the copy is visibly a second card rather than
         // one exactly on top of another.
-        from.copyWith(x: from.x + 24, y: from.y + 24, locked: false),
+        from.copyWith(x: from.x + 24, y: from.y + 24,
+          ref: cards[index + 1].ref, locked: false),
       );
       _layouts[slug] = layoutFor(slug).withSection(section, spots);
       unawaited(_pushLayout(slug));
@@ -2090,6 +2094,12 @@ class AppState extends ChangeNotifier {
   Future<void> setKanbanColumns(String slug, List<KanbanColumn> columns) =>
       _mutate(slug, (project) => project.copyWith(
         extraFrontMatter: KanbanBoard.withColumns(project, columns),
+      ));
+
+  Future<void> setKanbanPresets(String slug,
+      Map<String, List<KanbanColumn>> presets) =>
+      _mutate(slug, (project) => project.copyWith(
+        extraFrontMatter: KanbanBoard.withPresets(project, presets),
       ));
 
   Future<void> deleteProject(String slug) async {

@@ -813,7 +813,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   }
 }
 
-class _TableBlock extends StatelessWidget {
+class _TableBlock extends StatefulWidget {
   const _TableBlock({super.key, required this.markdown,
     required this.onChanged, required this.onRemove});
 
@@ -821,15 +821,32 @@ class _TableBlock extends StatelessWidget {
   final ValueChanged<String> onChanged;
   final VoidCallback onRemove;
 
+  @override
+  State<_TableBlock> createState() => _TableBlockState();
+}
+
+class _TableBlockState extends State<_TableBlock> {
+  final _scroll = ScrollController();
+  final _cellVersions = <String, int>{};
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
   List<List<String>> get cells {
-    final lines = markdown.split('\n');
+    final lines = widget.markdown.split('\n');
     final parsed = [
       for (var index = 0; index < lines.length; index++)
         if (index != 1)
           lines[index].split('|').skip(1).toList()
             ..removeLast(),
     ];
-    return parsed.isEmpty ? [['Column 1', 'Column 2'], ['', '']] : parsed;
+    if (parsed.isEmpty) return [['Column 1', 'Column 2'], ['', '']];
+    final width = parsed.first.length;
+    return [for (final row in parsed)
+      [for (var i = 0; i < width; i++) i < row.length ? row[i] : '']];
   }
 
   String _asMarkdown(List<List<String>> rows) {
@@ -851,7 +868,11 @@ class _TableBlock extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(8),
         child: Column(children: [
-          SingleChildScrollView(
+          Scrollbar(
+            controller: _scroll,
+            thumbVisibility: rows.first.length > 4,
+            child: SingleChildScrollView(
+            controller: _scroll,
             scrollDirection: Axis.horizontal,
             child: SizedBox(
               width: rows.first.length * 150.0,
@@ -864,15 +885,32 @@ class _TableBlock extends StatelessWidget {
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 6),
                           child: TextFormField(
-                            key: ValueKey('$row-$column'),
+                            key: ValueKey('$row-$column-'
+                              '${_cellVersions['$row-$column'] ?? 0}'),
                             initialValue: rows[row][column].trim(),
-                            decoration: const InputDecoration(border: InputBorder.none),
+                            decoration: InputDecoration(
+                              border: InputBorder.none,
+                              suffixIconConstraints: const BoxConstraints(
+                                minWidth: 24, minHeight: 24),
+                              suffixIcon: rows[row][column].trim().isEmpty ? null
+                                  : IconButton(
+                                      tooltip: 'Clear cell',
+                                      icon: const Icon(Icons.close, size: 14),
+                                      onPressed: () {
+                                        final next = [for (final cells in rows) [...cells]];
+                                        next[row][column] = '';
+                                        setState(() => _cellVersions['$row-$column'] =
+                                          (_cellVersions['$row-$column'] ?? 0) + 1);
+                                        widget.onChanged(_asMarkdown(next));
+                                      },
+                                    ),
+                            ),
                             style: row == 0 ? theme.textTheme.bodyMedium?.copyWith(
                               fontWeight: FontWeight.bold) : theme.textTheme.bodyMedium,
                             onChanged: (value) {
                               final next = [for (final cells in rows) [...cells]];
                               next[row][column] = value;
-                              onChanged(_asMarkdown(next));
+                              widget.onChanged(_asMarkdown(next));
                             },
                           ),
                         ),
@@ -881,23 +919,43 @@ class _TableBlock extends StatelessWidget {
               ),
             ),
           ),
+          ),
           Row(children: [
             TextButton.icon(
-              onPressed: () => onChanged(_asMarkdown([
+              onPressed: () => widget.onChanged(_asMarkdown([
                 ...rows, List.filled(rows.first.length, ''),
               ])),
               icon: const Icon(Icons.add, size: 16), label: const Text('Row'),
             ),
             TextButton.icon(
-              onPressed: () => onChanged(_asMarkdown([
+              onPressed: () => widget.onChanged(_asMarkdown([
                 for (final row in rows) [...row, ''],
               ])),
               icon: const Icon(Icons.add, size: 16), label: const Text('Column'),
             ),
+            PopupMenuButton<String>(
+              tooltip: 'Table options',
+              onSelected: (value) {
+                if (value == 'row' && rows.length > 1) {
+                  widget.onChanged(_asMarkdown(rows.sublist(0, rows.length - 1)));
+                } else if (value == 'column' && rows.first.length > 1) {
+                  widget.onChanged(_asMarkdown([
+                    for (final row in rows) row.sublist(0, row.length - 1),
+                  ]));
+                }
+              },
+              itemBuilder: (_) => [
+                if (rows.length > 1)
+                  const PopupMenuItem(value: 'row', child: Text('Remove last row')),
+                if (rows.first.length > 1)
+                  const PopupMenuItem(value: 'column',
+                    child: Text('Remove last column')),
+              ],
+            ),
             const Spacer(),
             IconButton(
               tooltip: 'Remove table', icon: const Icon(Icons.delete_outline),
-              onPressed: onRemove,
+              onPressed: widget.onRemove,
             ),
           ]),
         ]),
