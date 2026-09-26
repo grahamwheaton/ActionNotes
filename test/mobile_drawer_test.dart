@@ -34,6 +34,9 @@ void main() {
     await tester.tap(find.text('Ideas').first);
     await tester.pumpAndSettle();
     expect(find.text('Ideas'), findsWidgets);
+    await tester.tap(find.byTooltip('Open navigation menu'));
+    await tester.pumpAndSettle();
     expect(find.byType(Drawer), findsOneWidget);
+    expect(find.byTooltip('Notes project'), findsOneWidget);
   });
 }
