@@ -37,7 +37,7 @@ void main() {
       client: MockClient((_) async => http.Response('Not Found', 404)),
     );
 
-    expect(await client.listProjectPaths(), isEmpty);
+    expect(await client.listProjects(), isEmpty);
   });
 
   test('lists only markdown files, ignoring directories', () async {
@@ -53,7 +53,10 @@ void main() {
           )),
     );
 
-    expect(await client.listProjectPaths(), ['projects/a.md']);
+    expect(
+      (await client.listProjects()).map((entry) => entry.path),
+      ['projects/a.md'],
+    );
   });
 
   test('decodes base64 content, including the newlines GitHub inserts',

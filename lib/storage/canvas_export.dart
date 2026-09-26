@@ -5,7 +5,6 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../markdown/canvas_cards.dart';
-import '../models/canvas_layout.dart';
 
 /// One picture on its way out of the app.
 class ExportedImage {
@@ -111,13 +110,8 @@ class CanvasExport {
     return document.save();
   }
 
-  /// Everything needed to write a board's pictures out, from a layout and the
-  /// cards it arranges. Only the cards that are pictures, which is what
-  /// "export all images" means.
+  /// How many of a board's cards are pictures, which is what "export all
+  /// images" writes out.
   static int pictureCount(List<CanvasCard> cards) =>
       cards.where((card) => card.isImage).length;
-
-  /// Whether a board has anything worth exporting at all.
-  static bool hasAnything(CanvasLayout layout, String section) =>
-      layout.spotsFor(section).isNotEmpty;
 }

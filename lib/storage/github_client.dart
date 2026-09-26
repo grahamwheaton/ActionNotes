@@ -88,8 +88,7 @@ class GitHubClient {
     ).replace(queryParameters: withRef ? {'ref': config.branch} : null);
   }
 
-  /// Verifies the token can reach the repo. Throws [GitHubException] if not.
-  Future<void> checkAccess() async {
+  Future<http.Response> _getRepo() async {
     final response = await _client.get(
       Uri.parse('$_base/repos/${config.owner}/${config.repo}'),
       headers: _headers,
@@ -97,18 +96,16 @@ class GitHubClient {
     if (response.statusCode != 200) {
       throw GitHubException(response.statusCode, _errorMessage(response));
     }
+    return response;
   }
+
+  /// Verifies the token can reach the repo. Throws [GitHubException] if not.
+  Future<void> checkAccess() => _getRepo();
 
   /// Whether the repo is private, which decides whether anything sensitive
   /// may be written into it.
   Future<bool> repoIsPrivate() async {
-    final response = await _client.get(
-      Uri.parse('$_base/repos/${config.owner}/${config.repo}'),
-      headers: _headers,
-    );
-    if (response.statusCode != 200) {
-      throw GitHubException(response.statusCode, _errorMessage(response));
-    }
+    final response = await _getRepo();
     final decoded = jsonDecode(response.body);
     // Absent or unreadable counts as public. Guessing wrong in this
     // direction costs a feature; guessing wrong the other way writes a key
@@ -165,29 +162,6 @@ class GitHubClient {
         .toList();
   }
 
-  /// Lists the markdown files in `projects/`. An absent directory is not an
-  /// error — it just means nothing has been saved yet.
-  Future<List<String>> listProjectPaths() async {
-    final response = await _client.get(
-      _contentsUri(projectsDir),
-      headers: _headers,
-    );
-    if (response.statusCode == 404) return const [];
-    if (response.statusCode != 200) {
-      throw GitHubException(response.statusCode, _errorMessage(response));
-    }
-
-    final decoded = jsonDecode(response.body);
-    if (decoded is! List) return const [];
-
-    return decoded
-        .whereType<Map<String, dynamic>>()
-        .where((entry) => entry['type'] == 'file')
-        .map((entry) => entry['path'] as String)
-        .where((path) => path.endsWith('.md'))
-        .toList();
-  }
-
   Future<RemoteFile?> readFile(String path) async {
     final response = await _client.get(_contentsUri(path), headers: _headers);
     if (response.statusCode == 404) return null;
@@ -219,25 +193,12 @@ class GitHubClient {
     required String content,
     required String message,
     String? sha,
-  }) async {
-    final response = await _client.put(
-      _contentsUri(path, withRef: false),
-      headers: {..._headers, 'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'message': message,
-        'content': base64.encode(utf8.encode(content)),
-        'branch': config.branch,
-        if (sha != null) 'sha': sha,
-      }),
-    );
-
-    if (response.statusCode != 200 && response.statusCode != 201) {
-      throw GitHubException(response.statusCode, _errorMessage(response));
-    }
-
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
-    return (json['content'] as Map<String, dynamic>)['sha'] as String;
-  }
+  }) => writeBytes(
+    path: path,
+    bytes: utf8.encode(content),
+    message: message,
+    sha: sha,
+  );
 
   /// Reads a file's raw bytes. Used for note attachments, which are binary and
   /// live in a private repo, so they cannot simply be fetched by URL.
@@ -253,7 +214,8 @@ class GitHubClient {
     return response.bodyBytes;
   }
 
-  /// Uploads raw bytes, for an image being attached to an item's notes.
+  /// Creates or updates a file from raw bytes — an attached image, or the
+  /// UTF-8 text [writeFile] hands it. [sha] works as it does there.
   Future<String> writeBytes({
     required String path,
     required List<int> bytes,

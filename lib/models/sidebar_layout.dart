@@ -109,15 +109,6 @@ class SidebarLayout {
     );
   }
 
-  SidebarLayout withGroupAt(String name, int at) {
-    final moving = groups.where((group) => group.name == name).toList();
-    if (moving.isEmpty) return this;
-
-    final rest = groups.where((group) => group.name != name).toList()
-      ..insert(at.clamp(0, groups.length - 1), moving.single);
-    return SidebarLayout(groups: rest, loose: loose, sha: sha);
-  }
-
   SidebarLayout renameGroup(String from, String to) => SidebarLayout(
     groups: [
       for (final group in groups)

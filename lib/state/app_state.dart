@@ -252,9 +252,6 @@ class AppState extends ChangeNotifier {
     );
   }
 
-  Future<void> moveGroup(String name, int to) =>
-      _saveSidebar(_sidebar.withGroupAt(name, to));
-
   /// The file behind a picture in a note or on a canvas, fetched from
   /// whichever notebook the picture belongs to.
   ///
@@ -1807,31 +1804,6 @@ class AppState extends ChangeNotifier {
       CanvasCards.serialize([...CanvasCards.parse(block.body), card]),
     );
   }
-
-  /// Puts a frame on a canvas: a labelled rectangle to group things inside.
-  ///
-  /// Behind the cards, because a frame is what the others stand on.
-  Future<void> addCanvasFrame(
-    String slug,
-    String section, {
-    String title = 'Frame',
-    double x = 40,
-    double y = 40,
-    double width = 560,
-    double height = 400,
-  }) => placeCanvasCard(
-    slug,
-    section,
-    markdown: title,
-    behind: true,
-    spot: CanvasSpot(
-      x: x,
-      y: y,
-      width: width,
-      height: height,
-      kind: CanvasSpotKind.frame,
-    ),
-  );
 
   /// Rewrites one card's markdown, leaving where it sits alone.
   ///
