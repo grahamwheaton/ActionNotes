@@ -1,14 +1,18 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../markdown/canvas_cards.dart';
 import '../markdown/canvas_placement.dart';
+import '../markdown/feed_days.dart';
+import '../markdown/project_markdown.dart';
 import '../markdown/project_links.dart';
 import '../models/canvas_layout.dart';
 import '../models/checklist_item.dart';
+import '../models/kanban_board.dart';
 import '../models/notes_source.dart';
 import '../models/project.dart';
 import '../models/sidebar_layout.dart';
@@ -17,6 +21,7 @@ import '../storage/github_client.dart';
 import '../storage/share_code.dart';
 import '../storage/image_encoder.dart';
 import '../storage/local_store.dart';
+import '../storage/project_copy.dart';
 import '../storage/notebook_index.dart';
 import '../storage/settings_store.dart';
 import '../storage/sync_service.dart';
@@ -1033,7 +1038,7 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<Project> createProject(String title) async {
+  Future<Project> createProject(String title, {bool schedulePush = true}) async {
     final slug = _uniqueSlug(Project.slugify(title));
     final now = DateTime.now().toUtc();
     final project = Project(
@@ -1048,8 +1053,59 @@ class AppState extends ChangeNotifier {
       ..sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
     await _localStore.save(project, sourceId: project.sourceId);
     notifyListeners();
-    _schedulePush(slug);
+    if (schedulePush) _schedulePush(slug);
     return project;
+  }
+
+  Future<Uint8List> exportProjectCopy(String slug) async {
+    final project = projectBySlug(slug);
+    if (project == null) throw StateError('Project no longer exists');
+    return ProjectCopy.encode(project, layoutFor(slug), (reference) async {
+      final file = await attachmentFor(reference);
+      return file?.readAsBytes();
+    });
+  }
+
+  Future<Project> importProjectCopy(List<int> bytes) async {
+    if (!_config.isComplete) {
+      throw StateError('Connect your own GitHub repo before importing a copy.');
+    }
+    final copy = ProjectCopy.decode(bytes);
+    final source = ProjectMarkdown.parse(copy.markdown, slug: 'copy');
+    final project = await createProject(source.title, schedulePush: false);
+    final folder = project.fileSlug;
+    final names = RegExp(r'\.\./attachments/[^/\s)]+/([A-Za-z0-9._-]+)')
+        .allMatches(copy.markdown).map((match) => match.group(1)!).toSet();
+    for (final name in names) {
+      final image = copy.attachments[name];
+      if (image == null) throw FormatException('Missing attachment: $name');
+      final repoPath = AttachmentStore.repoPath(folder, name);
+      await _syncService.uploadAttachment(_config,
+        path: repoPath, bytes: image,
+        message: 'Import attachment $name to ${project.title}',
+      );
+      await attachments.save(repoPath, image);
+    }
+    final markdown = copy.markdown.replaceAll(
+      RegExp(r'\.\./attachments/[^/\s)]+/'), '../attachments/$folder/');
+    final restored = ProjectMarkdown.parse(markdown, slug: project.slug)
+        .copyWith(dirty: true, created: project.created,
+          updated: DateTime.now().toUtc());
+    _projects = _projects.map((value) =>
+        value.slug == project.slug ? restored : value).toList();
+    await _localStore.save(restored);
+    final layout = CanvasLayout.parse(copy.layout);
+    _layouts[project.slug] = layout;
+    await _localStore.saveLayout(folder, layout);
+    notifyListeners();
+    _schedulePush(project.slug);
+    if (!layout.isEmpty) {
+      _pendingLayoutUpdates.add(project.slug);
+      _layoutTimers[project.slug]?.cancel();
+      _layoutTimers[project.slug] = Timer(_pushDelay * 2,
+        () => _pushLayout(project.slug));
+    }
+    return restored;
   }
 
   Future<void> renameProject(String slug, String title) =>
@@ -1151,6 +1207,7 @@ class AppState extends ChangeNotifier {
       text: text.trim(),
       starred: starred,
       block: block,
+      createdAt: project.mode == ProjectMode.feed ? DateTime.now().toUtc() : null,
     );
     if (block == null) return project.copyWith(items: [item, ...project.items]);
 
@@ -1286,7 +1343,15 @@ class AppState extends ChangeNotifier {
   Future<void> setItemNotes(String slug, int index, String notes) =>
       _mutate(slug, (project) {
         final items = [...project.items];
-        items[index] = items[index].copyWith(notes: notes.trim());
+        items[index] = items[index].copyWith(
+          notes: notes.trim(),
+          createdAt: project.mode == ProjectMode.feed
+              ? (items[index].createdAt ??
+                  FeedDays.dayOf(items[index].block ?? '') ??
+                  DateTime.now().toUtc())
+              : null,
+          updatedAt: project.mode == ProjectMode.feed ? DateTime.now().toUtc() : null,
+        );
         return project.copyWith(items: items);
       });
 
@@ -2021,6 +2086,11 @@ class AppState extends ChangeNotifier {
   /// changes, and a checklist keeps its front matter untouched.
   Future<void> setMode(String slug, ProjectMode mode) =>
       _mutate(slug, (project) => project.copyWith(mode: mode));
+
+  Future<void> setKanbanColumns(String slug, List<KanbanColumn> columns) =>
+      _mutate(slug, (project) => project.copyWith(
+        extraFrontMatter: KanbanBoard.withColumns(project, columns),
+      ));
 
   Future<void> deleteProject(String slug) async {
     final project = projectBySlug(slug);

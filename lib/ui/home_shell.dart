@@ -5,10 +5,12 @@ import 'package:provider/provider.dart';
 
 import '../models/project.dart';
 import '../models/sidebar_layout.dart';
+import '../markdown/feed_days.dart';
 import '../state/app_state.dart';
 import 'checklist_view.dart';
 import 'context_menu.dart';
 import 'note_editor.dart';
+import 'project_copy_actions.dart';
 import 'search_screen.dart';
 import 'shared_notebooks.dart';
 import 'starred_screen.dart';
@@ -58,11 +60,14 @@ class _TwoPaneLayout extends StatefulWidget {
 class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
   final List<String> _tabs = [];
   final List<String> _rightTabs = [];
+  final Map<int, NoteTarget?> _paneNotes = {};
+  final Map<int, String> _paneNoteTitles = {};
   String? _active;
   String? _rightActive;
   String? _lastSelected;
   int _focused = 0;
   bool _split = false;
+  double _splitFraction = .5;
   bool _sidebarCollapsed = false;
   bool _openedInitialProject = false;
 
@@ -81,6 +86,10 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
     if (state.projectBySlug(slug) == null) return;
     final tabs = _forPane(pane);
     setState(() {
+      if (_activeFor(pane) != slug) {
+        _paneNotes.remove(pane);
+        _paneNoteTitles.remove(pane);
+      }
       if (!tabs.contains(slug)) {
         if (newTab || tabs.isEmpty || _activeFor(pane) == null) {
           tabs.add(slug);
@@ -134,6 +143,8 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
       } else {
         _rightTabs.clear();
         _rightActive = null;
+        _paneNotes.remove(1);
+        _paneNoteTitles.remove(1);
         _focused = 0;
       }
     });
@@ -141,10 +152,29 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
     state.select(_lastSelected);
   }
 
-  Widget _pane(AppState state, ThemeData theme, int pane) {
+  Widget _pane(AppState state, ThemeData theme, int pane,
+      {double? width}) {
     final active = _activeFor(pane);
     final project = state.projectBySlug(active ?? '');
-    return Expanded(child: Listener(
+    final localNote = _paneNotes[pane];
+    if (localNote != null &&
+        (project == null || localNote.index >= project.items.length ||
+            project.items[localNote.index].text != _paneNoteTitles[pane])) {
+      _paneNotes.remove(pane);
+      _paneNoteTitles.remove(pane);
+    }
+    final content = DragTarget<NoteTarget>(
+      onWillAcceptWithDetails: (details) =>
+          state.projectBySlug(details.data.slug) != null,
+      onAcceptWithDetails: (details) {
+        _show(state, pane, details.data.slug);
+        setState(() {
+          _paneNotes[pane] = details.data;
+          _paneNoteTitles[pane] = state.projectBySlug(details.data.slug)
+              ?.items.elementAtOrNull(details.data.index)?.text ?? '';
+        });
+      },
+      builder: (context, candidates, rejected) => Listener(
       onPointerDown: (_) => _focus(state, pane),
       child: DecoratedBox(
         decoration: BoxDecoration(border: pane == 1
@@ -168,10 +198,27 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
           ),
           Expanded(child: project == null
               ? const _NoProjectSelected()
-              : _DetailPane(project: project)),
+              : PaneNoteScope(
+                  onOpen: (slug, index) => setState(() {
+                    _paneNotes[pane] = NoteTarget(slug, index);
+                    _paneNoteTitles[pane] = state.projectBySlug(slug)
+                        ?.items.elementAtOrNull(index)?.text ?? '';
+                  }),
+                  child: _DetailPane(
+                    project: project,
+                    note: _paneNotes[pane] ??
+                        (_focused == pane ? state.openNote : null),
+                    onClose: () => setState(() {
+                      _paneNotes.remove(pane);
+                      _paneNoteTitles.remove(pane);
+                      if (_focused == pane) state.hideNote();
+                    }),
+                  ),
+                )),
         ]),
       ),
     ));
+    return width == null ? Expanded(child: content) : SizedBox(width: width, child: content);
   }
 
   @override
@@ -205,7 +252,10 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
     }
 
     return Scaffold(
-      body: Row(
+      body: LayoutBuilder(builder: (context, constraints) {
+        final contentWidth = constraints.maxWidth - (_sidebarCollapsed ? 0 : 280);
+        final paneWidth = (contentWidth - 8).clamp(1.0, double.infinity).toDouble();
+        return Row(
         children: [
           if (!_sidebarCollapsed) SizedBox(
             width: 280,
@@ -224,12 +274,39 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
               ),
             ),
           ),
-          _pane(state, theme, 0),
-          if (_split) _pane(state, theme, 1),
+          _pane(state, theme, 0,
+              width: _split ? paneWidth * _splitFraction : null),
+          if (_split) MouseRegion(
+            cursor: SystemMouseCursors.resizeColumn,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragUpdate: (details) => setState(() {
+                _splitFraction = (_splitFraction + details.delta.dx / paneWidth)
+                    .clamp(.2, .8).toDouble();
+              }),
+              child: Container(width: 8, color: theme.colorScheme.outlineVariant),
+            ),
+          ),
+          if (_split) _pane(state, theme, 1,
+              width: paneWidth * (1 - _splitFraction)),
         ],
-      ),
+      );
+      }),
     );
   }
+}
+
+/// Routes note openings to the desktop pane where the action happened.
+class PaneNoteScope extends InheritedWidget {
+  const PaneNoteScope({super.key, required this.onOpen, required super.child});
+
+  final void Function(String slug, int index) onOpen;
+
+  static PaneNoteScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<PaneNoteScope>();
+
+  @override
+  bool updateShouldNotify(PaneNoteScope oldWidget) => onOpen != oldWidget.onOpen;
 }
 
 /// Projects stay open across sidebar switches. The sidebar's existing drag
@@ -327,32 +404,33 @@ class _ProjectTabs extends StatelessWidget {
 /// A note edited here keeps the sidebar, which is the point — on a phone the
 /// editor is a screen of its own, because there is no sidebar to keep.
 class _DetailPane extends StatelessWidget {
-  const _DetailPane({required this.project});
+  const _DetailPane({required this.project, required this.note,
+    required this.onClose});
 
   final Project project;
+  final NoteTarget? note;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final note = state.openNote;
-
+    final target = note;
     // An index only means something against the list it came from. Anything
     // that shortens the list closes the note, but a sync landing another
     // device's edit can still take the item away underneath us.
-    if (note != null &&
-        note.slug == project.slug &&
-        note.index < project.items.length) {
-      final item = project.items[note.index];
+    if (target != null &&
+        target.slug == project.slug &&
+        target.index < project.items.length) {
+      final item = project.items[target.index];
 
       return NoteEditor(
         // Keyed by the item so opening another note builds a fresh editor
         // rather than handing this one the last note's blocks.
-        key: ValueKey('note-${project.slug}-${note.index}'),
+        key: ValueKey('note-${project.slug}-${target.index}'),
         slug: project.slug,
-        index: note.index,
+        index: target.index,
         title: item.text,
         initialNotes: item.notes,
-        onClose: state.hideNote,
+        onClose: onClose,
       );
     }
 
@@ -473,7 +551,14 @@ class _SinglePaneLayout extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [Text('ActionNotes'), AppVersionLabel()],
         ),
-        actions: const [_SearchAction(), _SyncAction(), _SettingsAction()],
+        actions: [
+          IconButton(
+            tooltip: 'Daily note',
+            icon: const Icon(Icons.today_outlined),
+            onPressed: () => openDailyNote(context, openAfter: true),
+          ),
+          const _SearchAction(), const _SyncAction(), const _SettingsAction(),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => createProject(context, openAfter: true),
@@ -1240,6 +1325,17 @@ class _SidebarFooter extends StatelessWidget {
             ),
           ),
         ),
+        if (MediaQuery.sizeOf(context).width >= HomeShell.sidebarBreakpoint)
+          TextButton.icon(
+            onPressed: () => openDailyNote(context),
+            icon: const Icon(Icons.today_outlined, size: 18),
+            label: const Text('Daily note'),
+          ),
+        TextButton.icon(
+          onPressed: () => ProjectCopyActions.import(context),
+          icon: const Icon(Icons.file_download_outlined, size: 18),
+          label: const Text('Import a project copy'),
+        ),
         const UpdateBanner(),
         Divider(height: 1, color: theme.colorScheme.outlineVariant),
         Padding(
@@ -1344,6 +1440,11 @@ class _ProjectTile extends StatelessWidget {
         label: 'Move to group…',
         icon: Icons.folder_outlined,
         onSelected: () => _moveToGroup(context, project),
+      ),
+      ContextMenuAction(
+        label: 'Share a copy…',
+        icon: Icons.ios_share,
+        onSelected: () => ProjectCopyActions.share(context, project),
       ),
       if (onOpenInNewTab != null)
         ContextMenuAction(
@@ -1454,27 +1555,13 @@ class _ProjectTile extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      // Which notebook a shared project is in, beside its
-                      // name: two people's lists sitting in one sidebar
-                      // need to be told apart at a glance, or somebody
-                      // writes the shopping into the wrong one.
-                      if (project.isShared)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Tooltip(
-                            message: 'In ${state.sourceOf(project.slug).name}',
-                            child: Icon(
-                              Icons.folder_shared_outlined,
-                              size: 14,
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
-                        ),
                       Tooltip(
                         message: project.mode == ProjectMode.notes
                             ? 'Notes project'
                             : project.mode == ProjectMode.feed
                                 ? 'Timeline project'
+                                : project.mode == ProjectMode.kanban
+                                    ? 'Kanban board'
                                 : project.items.isEmpty &&
                                         project.blocks.isNotEmpty &&
                                         project.blocks.every((block) =>
@@ -1488,6 +1575,8 @@ class _ProjectTile extends StatelessWidget {
                                 ? Icons.notes_outlined
                                 : project.mode == ProjectMode.feed
                                     ? Icons.timeline
+                                    : project.mode == ProjectMode.kanban
+                                        ? Icons.view_column_outlined
                                     : project.items.isEmpty &&
                                             project.blocks.isNotEmpty &&
                                             project.blocks.every((block) =>
@@ -1499,13 +1588,26 @@ class _ProjectTile extends StatelessWidget {
                           ),
                         ),
                       ),
-                      Expanded(
+                      Flexible(
+                        fit: FlexFit.loose,
                         child: Text(
                           project.title,
                           overflow: TextOverflow.ellipsis,
                           style: titleStyle,
                         ),
                       ),
+                      if (project.isShared)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4, right: 6),
+                          child: Tooltip(
+                            message: 'In ${state.sourceOf(project.slug).name}',
+                            child: Icon(
+                              Icons.folder_shared_outlined,
+                              size: 14,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                        ),
                       if (project.dirty)
                         Padding(
                           padding: const EdgeInsets.only(left: 4),
@@ -1766,6 +1868,22 @@ Future<void> createProject(
   await Navigator.of(
     context,
   ).push(MaterialPageRoute(builder: (_) => ChecklistView(slug: project.slug)));
+}
+
+Future<void> openDailyNote(BuildContext context, {bool openAfter = false}) async {
+  final state = context.read<AppState>();
+  var project = state.projectBySlug('daily-note');
+  project ??= await state.createProject('Daily note');
+  if (project.mode != ProjectMode.feed) {
+    await state.setMode(project.slug, ProjectMode.feed);
+  }
+  await state.addBlock(project.slug, FeedDays.titleFor(DateTime.now()));
+  state.select(project.slug);
+  if (openAfter && context.mounted) {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ChecklistView(slug: project!.slug),
+    ));
+  }
 }
 
 Future<void> confirmDeleteProject(BuildContext context, Project project) async {

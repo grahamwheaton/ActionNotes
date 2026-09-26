@@ -115,10 +115,11 @@ class CanvasViewState extends State<CanvasView> {
   /// sticky note down the next time you meant to click something.
   CanvasTool _tool = CanvasTool.select;
   CanvasTool _lastLineTool = CanvasTool.arrow;
-  CanvasColour _colour = CanvasColour.yellow;
+  CanvasColour _colour = CanvasColour.none;
+  CanvasColour _stickyColour = CanvasColour.yellow;
 
   /// How heavy a mark the pen and the shapes make.
-  double _thickness = 2;
+  double _thickness = 5;
 
   /// Smooth future pen strokes without changing marks already on the board.
   bool _smoothPen = false;
@@ -197,6 +198,7 @@ class CanvasViewState extends State<CanvasView> {
   Offset _panAtStart = Offset.zero;
 
   /// The pointer holding the middle button down, while it is panning.
+  bool _wheelActive = false;
   int? _middlePan;
   int? _rightPan;
   int? _cutPointer;
@@ -309,6 +311,15 @@ class CanvasViewState extends State<CanvasView> {
   }
 
   void _openLinkedCard(int index) {
+    final projectMatch = RegExp(r'\]\(([^)]+)\.md#project\)')
+        .firstMatch(widget.cards[index].markdown);
+    if (projectMatch != null) {
+      final state = context.read<AppState>();
+      final project = state.projects.where((project) =>
+          project.fileSlug == projectMatch.group(1)).firstOrNull;
+      if (project != null) state.select(project.slug);
+      return;
+    }
     final match = RegExp(r'\]\(([^)]+)\.md#note=([^)]*)\)')
         .firstMatch(widget.cards[index].markdown);
     if (match == null) return;
@@ -741,7 +752,7 @@ class CanvasViewState extends State<CanvasView> {
         kind: tool == CanvasTool.sticky
             ? CanvasSpotKind.sticky
             : CanvasSpotKind.text,
-        colour: tool == CanvasTool.sticky ? _colour : CanvasColour.none,
+        colour: tool == CanvasTool.sticky ? _stickyColour : CanvasColour.none,
       ),
     );
   }
@@ -766,6 +777,7 @@ class CanvasViewState extends State<CanvasView> {
     // A wheel zooms, which is what a canvas is for. Shift scrolls sideways
     // and plain two-finger scrolling on a trackpad pans, so a trackpad still
     // behaves as a trackpad.
+    if (!_wheelActive) return;
     if (HardwareKeyboard.instance.isShiftPressed) {
       setState(() => _pan += Offset(-event.scrollDelta.dy, 0));
       return;
@@ -1110,8 +1122,8 @@ class CanvasViewState extends State<CanvasView> {
 
     // Grid snapping follows the dots actually visible at this zoom level.
     final gridStep = CanvasMarks.backgroundStep(_scale) / _scale;
-    final gridCorrection = proposed != null && widget.settings.snapGrid &&
-            !HardwareKeyboard.instance.isControlPressed &&
+    final gridCorrection = proposed != null &&
+            (widget.settings.snapGrid != HardwareKeyboard.instance.isControlPressed) &&
             !(HardwareKeyboard.instance.isAltPressed &&
                 HardwareKeyboard.instance.isShiftPressed)
         ? Offset(
@@ -1201,6 +1213,26 @@ class CanvasViewState extends State<CanvasView> {
         : Offset(box.size.width / 2, box.size.height / 2);
 
     switch (event.logicalKey) {
+      case LogicalKeyboardKey.keyE:
+      case LogicalKeyboardKey.keyP:
+        if (modified || HardwareKeyboard.instance.isAltPressed) {
+          return KeyEventResult.ignored;
+        }
+        _chooseTool(event.logicalKey == LogicalKeyboardKey.keyE
+            ? CanvasTool.eraser : CanvasTool.pen);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.keyG:
+        if (modified || HardwareKeyboard.instance.isAltPressed) {
+          return KeyEventResult.ignored;
+        }
+        if (HardwareKeyboard.instance.isShiftPressed) {
+          widget.onSettingsChanged?.call(widget.settings.copyWith(
+            snapGrid: !widget.settings.snapGrid,
+          ));
+        } else {
+          fit();
+        }
+        return KeyEventResult.handled;
       case LogicalKeyboardKey.keyC:
       case LogicalKeyboardKey.keyN:
       case LogicalKeyboardKey.keyL:
@@ -1282,9 +1314,9 @@ class CanvasViewState extends State<CanvasView> {
         });
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyA:
-        if (!HardwareKeyboard.instance.isControlPressed &&
-            !HardwareKeyboard.instance.isMetaPressed) {
-          return KeyEventResult.ignored;
+        if (!modified) {
+          _chooseTool(CanvasTool.select);
+          return KeyEventResult.handled;
         }
         setState(() {
           _selection
@@ -1363,9 +1395,34 @@ class CanvasViewState extends State<CanvasView> {
     final order = [for (var i = 0; i < drawable; i++) i]
       ..sort((a, b) => _spots[a].z.compareTo(_spots[b].z));
 
-    return Theme(
+    return DragTarget<Object>(
+      onWillAcceptWithDetails: (details) =>
+          widget.onPlaceCard != null &&
+          (details.data is String || details.data is NoteTarget),
+      onAcceptWithDetails: (details) {
+        final state = context.read<AppState>();
+        final value = details.data;
+        final slug = value is String ? value : (value as NoteTarget).slug;
+        final project = state.projectBySlug(slug);
+        if (project == null) return;
+        final local = _toLocal(details.offset) ?? _centre();
+        final scene = _toScene(local);
+        String markdown;
+        if (value is NoteTarget && value.index < project.items.length) {
+          final item = project.items[value.index];
+          markdown = '[${project.title}: ${item.title}]'
+              '(${project.fileSlug}.md#note=${Uri.encodeComponent(item.text)})';
+        } else {
+          markdown = '[${project.title}](${project.fileSlug}.md#project)';
+        }
+        widget.onPlaceCard?.call(markdown,
+          CanvasSpot(x: scene.dx, y: scene.dy, width: 280));
+      },
+      builder: (context, candidates, rejected) => Theme(
       data: theme,
-      child: Focus(
+      child: MouseRegion(
+        onExit: (_) => _wheelActive = false,
+        child: Focus(
         focusNode: _focus,
         autofocus: widget.autofocus,
         onKeyEvent: _onKey,
@@ -1377,6 +1434,7 @@ class CanvasViewState extends State<CanvasView> {
           // The middle button pans, and never joins the gesture arena, so it
           // works while the left button is drawing a marquee.
           onPointerDown: (event) {
+            _wheelActive = true;
             if (event.buttons & kSecondaryMouseButton != 0 &&
                 HardwareKeyboard.instance.isShiftPressed &&
                 widget.onEraseShapes != null) {
@@ -1704,7 +1762,7 @@ class CanvasViewState extends State<CanvasView> {
                             pendingKind: _tool == CanvasTool.frame
                                 ? CanvasShapeKind.rectangle
                                 : _tool.draws,
-                            pendingColour: _colour,
+                            pendingColour: _tool == CanvasTool.sticky ? _stickyColour : _colour,
                             pendingThickness: _thickness,
                             pendingCurved: _tool == CanvasTool.bendyArrow ||
                                 (_tool == CanvasTool.pen &&
@@ -1836,10 +1894,15 @@ class CanvasViewState extends State<CanvasView> {
                         child: Center(
                           child: _CanvasTools(
                             tool: _tool,
-                            colour: _colour,
+                            colour: _tool == CanvasTool.sticky ? _stickyColour : _colour,
                             onTool: _chooseTool,
-                            onColour: (colour) =>
-                                setState(() => _colour = colour),
+                            onColour: (colour) => setState(() {
+                              if (_tool == CanvasTool.sticky) {
+                                _stickyColour = colour;
+                              } else {
+                                _colour = colour;
+                              }
+                            }),
                             thickness: _thickness,
                             onThickness: (value) =>
                                 setState(() => _thickness = value),
@@ -1872,7 +1935,8 @@ class CanvasViewState extends State<CanvasView> {
           ),
         ),
       ),
-    );
+      ),
+    ));
   }
 
   /// Takes the selection off the canvas.
@@ -2389,6 +2453,32 @@ class CanvasViewState extends State<CanvasView> {
     widget.onEditCard?.call(index, text);
   }
 
+  Future<void> _editPortal(int index) async {
+    final markdown = widget.cards[index].markdown;
+    final match = RegExp(r'\]\(([^)]+)\.md#(project|note=([^)]*))\)')
+        .firstMatch(markdown);
+    if (match == null) return;
+    final state = context.read<AppState>();
+    final project = state.projects.where((project) =>
+        project.fileSlug == match.group(1)).firstOrNull;
+    if (project == null) return;
+    final noteText = match.group(3);
+    final itemIndex = noteText == null ? -1 : project.items.indexWhere(
+      (item) => item.text == Uri.decodeComponent(noteText));
+    if (noteText != null && itemIndex < 0) return;
+    final current = itemIndex < 0 ? project.notes : project.items[itemIndex].notes;
+    final changed = await TextPromptDialog.show(context,
+      title: itemIndex < 0 ? 'Edit ${project.title}'
+          : 'Edit ${project.items[itemIndex].title}',
+      initialValue: current, minLines: 6, maxLines: 14, allowEmpty: true);
+    if (changed == null) return;
+    if (itemIndex < 0) {
+      await state.setNotes(project.slug, changed);
+    } else {
+      await state.setItemNotes(project.slug, itemIndex, changed);
+    }
+  }
+
   void _showCardMenu(int index, Offset at) {
     // Whatever is selected, or the card that was clicked if it is not part of
     // the selection.
@@ -2396,6 +2486,12 @@ class CanvasViewState extends State<CanvasView> {
     final many = targets.length > 1;
 
     showItemMenu(context, [
+      if (!many && RegExp(r'\.md#(?:project|note=)').hasMatch(
+          widget.cards[index].markdown))
+        ContextMenuAction(
+          label: 'Edit linked content', icon: Icons.edit_outlined,
+          onSelected: () => _editPortal(index),
+        ),
       if (many)
         ContextMenuAction(
           label: 'Line ${targets.length} up…',
@@ -2665,6 +2761,8 @@ class _CardOnCanvas extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final at = Offset(spot.x, spot.y) * scale + pan;
+    final portal = RegExp(r'\]\(([^)]+)\.md#(project|note=([^)]*))\)')
+        .firstMatch(card.markdown);
 
     return Positioned(
       left: at.dx,
@@ -2837,7 +2935,14 @@ class _CardOnCanvas extends StatelessWidget {
                                               : 8) *
                                           scale.clamp(0.5, 1.5),
                                     ),
-                                    child: NoteView(
+                                    child: portal != null
+                                        ? _PortalPreview(
+                                            fileSlug: portal.group(1)!,
+                                            noteText: portal.group(3) == null
+                                                ? null
+                                                : Uri.decodeComponent(portal.group(3)!),
+                                          )
+                                        : NoteView(
                                       markdown: card.markdown,
                                       // Centred on a sticky note, the way one
                                       // written by hand is: what is on it is a
@@ -2990,6 +3095,47 @@ class _ZoomedText extends TextScaler {
 }
 
 /// A picture on the canvas, at whatever width the card is.
+class _PortalPreview extends StatelessWidget {
+  const _PortalPreview({required this.fileSlug, this.noteText});
+
+  final String fileSlug;
+  final String? noteText;
+
+  @override
+  Widget build(BuildContext context) {
+    final project = context.watch<AppState>().projects.where(
+      (project) => project.fileSlug == fileSlug).firstOrNull;
+    if (project == null) return const Text('Linked project is unavailable');
+    final item = noteText == null ? null : project.items.where(
+      (item) => item.text == noteText).firstOrNull;
+    if (noteText != null && item == null) {
+      return const Text('Linked note is unavailable');
+    }
+    final theme = Theme.of(context);
+    final content = item?.notes ?? project.notes;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(children: [
+          Icon(item == null ? Icons.folder_outlined : Icons.notes_outlined,
+            size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 6),
+          Expanded(child: Text(item?.title ?? project.title,
+            style: theme.textTheme.titleSmall, maxLines: 2,
+            overflow: TextOverflow.ellipsis)),
+        ]),
+        const Divider(height: 12),
+        if (content.trim().isNotEmpty)
+          NoteView(markdown: content)
+        else
+          Text('Open the menu to edit this ${item == null ? 'project' : 'note'}.',
+            style: theme.textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
 class _CanvasImage extends StatefulWidget {
   const _CanvasImage({required this.reference, this.near = true});
 
@@ -3127,7 +3273,7 @@ class _CanvasControls extends StatelessWidget {
               onPressed: onZoomIn,
             ),
             IconButton(
-              tooltip: TouchInput.isPrimary ? 'Fit all' : 'Fit all (F)',
+              tooltip: TouchInput.isPrimary ? 'Fit all' : 'Fit all (G)',
               visualDensity: VisualDensity.compact,
               icon: const Icon(Icons.fit_screen_outlined, size: 18),
               onPressed: onFit,
@@ -3158,7 +3304,7 @@ class _CanvasControls extends StatelessWidget {
                     onTap: () => onSettingsChanged!(
                       settings.copyWith(snapGrid: !settings.snapGrid),
                     ),
-                    child: const Text('Snap to grid'),
+                    child: const Text('Snap to grid (Shift+G)'),
                   ),
                   const PopupMenuDivider(),
                   const PopupMenuItem(
@@ -3514,7 +3660,7 @@ enum CanvasTool {
   eraser;
 
   String get label => switch (this) {
-    CanvasTool.select => 'Select',
+    CanvasTool.select => 'Select (A)',
     CanvasTool.image => 'Image',
     CanvasTool.sticky => 'Sticky note',
     CanvasTool.text => 'Text',
@@ -3524,8 +3670,8 @@ enum CanvasTool {
     CanvasTool.bendyArrow => 'Bendy arrow',
     CanvasTool.rectangle => 'Rectangle',
     CanvasTool.oval => 'Oval',
-    CanvasTool.pen => 'Pen',
-    CanvasTool.eraser => 'Eraser',
+    CanvasTool.pen => 'Pen (P)',
+    CanvasTool.eraser => 'Eraser (E)',
   };
 
   IconData get icon => switch (this) {
@@ -3596,7 +3742,7 @@ class _CanvasTools extends StatelessWidget {
   /// Fine, ordinary and bold. Three weights rather than a slider: a slider
   /// in a column this narrow is a thing to fight with, and nobody has ever
   /// wanted a line exactly 3.4 wide.
-  static const _weights = [1.0, 2.0, 5.0];
+  static const _weights = [1.0, 5.0, 9.0];
 
   static const _lines = [
     CanvasTool.line,
@@ -3617,7 +3763,7 @@ class _CanvasTools extends StatelessWidget {
   ];
 
   static String _hint(CanvasTool option) => switch (option) {
-    CanvasTool.select => 'Select',
+    CanvasTool.select => 'Select (A)',
     CanvasTool.sticky => 'Sticky note (C)',
     CanvasTool.text => 'Note (N)',
     CanvasTool.frame => 'Frame (F)',
@@ -3627,8 +3773,8 @@ class _CanvasTools extends StatelessWidget {
     CanvasTool.arrow => 'Arrow (L cycles)',
     CanvasTool.bendyArrow => 'Bendy arrow (L cycles)',
     CanvasTool.image => 'Image (I)',
-    CanvasTool.pen => 'Pen',
-    CanvasTool.eraser => 'Eraser',
+    CanvasTool.pen => 'Pen (P)',
+    CanvasTool.eraser => 'Eraser (E)',
   };
 
   /// Whether what is armed is coloured by the swatches: a note is drawn on a
@@ -3743,7 +3889,8 @@ class _CanvasTools extends StatelessWidget {
                 Tooltip(
                   message: switch (weight) {
                     1.0 => 'Fine',
-                    5.0 => 'Bold',
+                    5.0 => 'Medium',
+                    9.0 => 'Bold',
                     _ => 'Ordinary',
                   },
                   child: InkWell(

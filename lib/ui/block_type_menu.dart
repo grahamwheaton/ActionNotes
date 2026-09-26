@@ -54,6 +54,13 @@ class BlockTypes {
       shortcut: 'Ctrl+-',
       block: NoteBlock.divider(),
     ),
+    BlockTypeChoice(
+      label: 'Table',
+      hint: 'Columns and rows',
+      icon: '▦',
+      shortcut: '',
+      block: NoteBlock.table(),
+    ),
   ];
 
   static const headers = [

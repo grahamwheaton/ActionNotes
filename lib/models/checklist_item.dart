@@ -10,6 +10,8 @@ class ChecklistItem {
     this.notes = '',
     this.block,
     this.blankAfter = false,
+    this.createdAt,
+    this.updatedAt,
   });
 
   final String text;
@@ -38,6 +40,8 @@ class ChecklistItem {
   /// something to markdown itself, where a blank line between list items makes
   /// a loose list that renders with more air.
   final bool blankAfter;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   bool get hasNotes => notes.trim().isNotEmpty;
 
@@ -72,6 +76,8 @@ class ChecklistItem {
     String? block,
     bool clearBlock = false,
     bool? blankAfter,
+    DateTime? createdAt,
+    DateTime? updatedAt,
   }) {
     return ChecklistItem(
       text: text ?? this.text,
@@ -80,6 +86,8 @@ class ChecklistItem {
       notes: notes ?? this.notes,
       block: clearBlock ? null : (block ?? this.block),
       blankAfter: blankAfter ?? this.blankAfter,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
     );
   }
 
@@ -91,11 +99,13 @@ class ChecklistItem {
       other.starred == starred &&
       other.notes == notes &&
       other.block == block &&
-      other.blankAfter == blankAfter;
+      other.blankAfter == blankAfter &&
+      other.createdAt == createdAt &&
+      other.updatedAt == updatedAt;
 
   @override
   int get hashCode =>
-      Object.hash(text, done, starred, notes, block, blankAfter);
+      Object.hash(text, done, starred, notes, block, blankAfter, createdAt, updatedAt);
 
   @override
   String toString() =>

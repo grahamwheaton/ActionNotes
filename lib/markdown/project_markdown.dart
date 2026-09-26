@@ -29,6 +29,9 @@ class ProjectMarkdown {
   /// rather than being read as another item of the project.
   static final _itemPattern = RegExp(r'^[-*+]\s+\[([ xX])\]\s?(.*)$');
   static final _starPattern = RegExp(r'^(?:⭐|★|\*\*)\s*');
+  static final _itemDates = RegExp(
+    r'^<!-- actionnotes:created=([^;]*);updated=([^ ]*) -->$',
+  );
 
   static Project parse(String source, {required String slug, String? sha}) {
     final lines = source.replaceAll('\r\n', '\n').split('\n');
@@ -71,6 +74,21 @@ class ProjectMarkdown {
       if (itemNotes == null || items.isEmpty) {
         itemNotes = null;
         return;
+      }
+      DateTime? createdAt;
+      DateTime? updatedAt;
+      itemNotes!.removeWhere((line) {
+        final match = _itemDates.firstMatch(line.trim());
+        if (match == null) return false;
+        createdAt = DateTime.tryParse(match.group(1)!);
+        updatedAt = DateTime.tryParse(match.group(2)!);
+        return true;
+      });
+      if (createdAt != null || updatedAt != null) {
+        items[items.length - 1] = items.last.copyWith(
+          createdAt: createdAt,
+          updatedAt: updatedAt,
+        );
       }
       final notes = _trimBlankEdges(itemNotes!).join('\n');
       if (notes.isNotEmpty) {
@@ -204,6 +222,9 @@ class ProjectMarkdown {
     final buffer = StringBuffer();
     final star = item.starred ? '$starMarker ' : '';
     buffer.writeln('- [${item.done ? 'x' : ' '}] $star${item.text}');
+    if (item.createdAt != null) {
+      buffer.writeln('  ${_datesFor(item)}');
+    }
 
     if (item.hasNotes) {
       for (final line in item.notes.trim().split('\n')) {
@@ -249,6 +270,9 @@ class ProjectMarkdown {
         final item = within[i];
         final star = item.starred ? '$starMarker ' : '';
         buffer.writeln('- [${item.done ? 'x' : ' '}] $star${item.text}');
+        if (item.createdAt != null) {
+          buffer.writeln('$_noteIndent${_datesFor(item)}');
+        }
 
         if (item.hasNotes) {
           for (final line in item.notes.trim().split('\n')) {
@@ -353,6 +377,10 @@ class ProjectMarkdown {
 
   static String _formatDate(DateTime date) =>
       '${date.toUtc().toIso8601String().split('.').first}Z';
+
+  static String _datesFor(ChecklistItem item) =>
+      '<!-- actionnotes:created=${_formatDate(item.createdAt!)};'
+      'updated=${_formatDate(item.updatedAt ?? item.createdAt!)} -->';
 
   static List<String> _trimBlankEdges(List<String> lines) {
     var start = 0;

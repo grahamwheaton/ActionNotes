@@ -109,6 +109,7 @@ class _ProjectNotesViewState extends State<ProjectNotesView> {
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
                     child: NoteBlocksEditor(
                       key: _editor,
+                      autofocus: true,
                       initialMarkdown: _initial,
                       onChanged: _changed,
                       onPaste: () async => _images.currentState?.paste(),

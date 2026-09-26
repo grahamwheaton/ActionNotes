@@ -18,6 +18,7 @@ import '../models/project.dart';
 import '../state/app_state.dart';
 import 'canvas_screen.dart';
 import 'home_shell.dart';
+import 'kanban_view.dart';
 import 'canvas_view.dart';
 import 'composer.dart';
 import 'context_menu.dart';
@@ -454,6 +455,17 @@ class _ChecklistViewState extends State<ChecklistView> {
     }
 
     if (project.mode == ProjectMode.feed) _foldOlderDays(project);
+    if (project.mode == ProjectMode.kanban) {
+      return Scaffold(
+        drawer: widget.showAppBar
+            ? MobileProjectDrawer(selectedSlug: widget.slug) : null,
+        appBar: widget.showAppBar ? AppBar(
+          title: Text(project.title),
+          actions: [_ProjectMenu(project: project)],
+        ) : null,
+        body: KanbanView(board: project),
+      );
+    }
 
     // A notes project is a document, not a list. The items are still in the
     // file and come back if it is switched again — this is a second view, not
@@ -897,13 +909,30 @@ class _ItemTile extends StatelessWidget {
             onDoubleTap: touch ? openEditor : null,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: _ItemTitle(
-                item: item,
-                notesExpanded: notesExpanded,
-                // Only where the marker at the end of the row is gone. On a
-                // desktop that button is still there and says the same thing,
-                // and two of them beside each other says it twice.
-                showNotesMarker: touch,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _ItemTitle(
+                    item: item,
+                    notesExpanded: notesExpanded,
+                    showNotesMarker: touch,
+                  ),
+                  if (state.projectBySlug(slug)?.mode == ProjectMode.feed)
+                    Text(
+                      [
+                        if (item.createdAt != null)
+                          'Created ${FeedDays.label(FeedDays.titleFor(item.createdAt!))}'
+                        else if (item.block != null)
+                          'Created ${FeedDays.label(item.block!)}',
+                        if (item.updatedAt != null &&
+                            item.updatedAt != item.createdAt)
+                          FeedDays.relativeUpdate(item.updatedAt!),
+                      ].join(' · '),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -1160,6 +1189,7 @@ class _InlineNotesState extends State<_InlineNotes> {
             showProgress: false,
             child: NoteBlocksEditor(
               key: _editor,
+              autofocus: true,
               initialMarkdown: _markdown,
               shrinkWrap: true,
               onChanged: (markdown) {
@@ -1784,7 +1814,12 @@ class _SectionCanvasState extends State<_SectionCanvas> {
                 if (index < 0) continue;
                 state.select(project.slug);
                 state.revealItem(project.slug, index);
-                state.showNote(project.slug, index);
+                final pane = PaneNoteScope.maybeOf(context);
+                if (pane != null) {
+                  pane.onOpen(project.slug, index);
+                } else {
+                  state.showNote(project.slug, index);
+                }
                 return;
               }
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -2062,6 +2097,10 @@ class _ProjectMenu extends StatelessWidget {
                   ? ProjectMode.tasks
                   : ProjectMode.feed,
             );
+          case 'kanban':
+            await state.setMode(project.slug,
+              project.mode == ProjectMode.kanban
+                  ? ProjectMode.tasks : ProjectMode.kanban);
           case 'notes':
             final notes = await TextPromptDialog.show(
               context,
@@ -2095,6 +2134,11 @@ class _ProjectMenu extends StatelessWidget {
                 ? 'Turn into a checklist'
                 : 'Turn into a feed',
           ),
+        ),
+        PopupMenuItem(
+          value: 'kanban',
+          child: Text(project.mode == ProjectMode.kanban
+              ? 'Turn into a checklist' : 'Turn into a Kanban board'),
         ),
         if (project.mode != ProjectMode.notes) ...const [
           PopupMenuItem(value: 'archive', child: Text('Archive completed')),

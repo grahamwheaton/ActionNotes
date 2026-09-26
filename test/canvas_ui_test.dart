@@ -121,7 +121,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Pen'));
+      await tester.tap(find.byTooltip('Pen (P)'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Smooth pen off'));
       await tester.pumpAndSettle();
@@ -284,7 +284,7 @@ void main() {
         spots: const [CanvasSpot(x: 4000, y: 4000, width: 200, ref: 'Far')],
       );
 
-      await tester.tap(find.byTooltip('Fit all (F)'));
+      await tester.tap(find.byTooltip('Fit all (G)'));
       await tester.pumpAndSettle();
 
       final card = tester.getRect(find.text('Far'));

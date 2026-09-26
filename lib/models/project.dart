@@ -16,17 +16,20 @@ enum ProjectMode {
   /// The file is an ordinary project whose sections happen to be dates, so a
   /// feed read anywhere else is a list under date headings — which is what
   /// anyone would have written by hand anyway.
-  feed;
+  feed,
+  kanban;
 
   static ProjectMode parse(String? raw) => switch (raw?.trim().toLowerCase()) {
     'notes' => ProjectMode.notes,
     'feed' => ProjectMode.feed,
+    'kanban' => ProjectMode.kanban,
     _ => ProjectMode.tasks,
   };
 
   String get name => switch (this) {
     ProjectMode.notes => 'notes',
     ProjectMode.feed => 'feed',
+    ProjectMode.kanban => 'kanban',
     ProjectMode.tasks => 'tasks',
   };
 }

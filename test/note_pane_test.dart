@@ -169,7 +169,7 @@ void main() {
 
       await tester.tap(find.text('First item'));
       await tester.pumpAndSettle();
-      expect(state.openNote, isNotNull);
+      expect(find.byType(NoteEditor), findsOneWidget);
 
       await state.removeItem('list', 0);
       await tester.pumpAndSettle();
