@@ -516,7 +516,7 @@ void _drawingOnTheBoard() {
     ) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Pen'));
+      await tester.tap(find.byTooltip('Pen (P)'));
       await tester.pumpAndSettle();
 
       await tester.dragFrom(const Offset(600, 400), const Offset(60, 60));
@@ -535,7 +535,7 @@ void _drawingOnTheBoard() {
     ) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Pen'));
+      await tester.tap(find.byTooltip('Pen (P)'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Blue'));
       await tester.pumpAndSettle();
@@ -553,9 +553,9 @@ void _drawingOnTheBoard() {
     testWidgets('the pen draws at the weight that was chosen', (tester) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Pen'));
+      await tester.tap(find.byTooltip('Pen (P)'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Bold'));
+      await tester.tap(find.byTooltip('Medium'));
       await tester.pumpAndSettle();
 
       await tester.dragFrom(const Offset(600, 400), const Offset(60, 60));
@@ -811,7 +811,7 @@ void _drawingOnTheBoard() {
         ],
       );
 
-      await tester.tap(find.byTooltip('Pen'));
+      await tester.tap(find.byTooltip('Pen (P)'));
       await tester.pumpAndSettle();
       await tester.dragFrom(const Offset(200, 300), const Offset(80, 40));
       await tester.pumpAndSettle();
@@ -820,7 +820,7 @@ void _drawingOnTheBoard() {
       expect(before, isNotEmpty);
 
       // The pen stays armed, so put it down before dragging anything.
-      await tester.tap(find.byTooltip('Select'));
+      await tester.tap(find.byTooltip('Select (A)'));
       await tester.pumpAndSettle();
       await tester.drag(
         find.descendant(
@@ -859,7 +859,7 @@ void _drawingOnTheBoard() {
         ],
       );
 
-      await tester.tap(find.byTooltip('Pen'));
+      await tester.tap(find.byTooltip('Pen (P)'));
       await tester.pumpAndSettle();
       // Starts inside the frame and runs well past its edge.
       await tester.dragFrom(const Offset(200, 250), const Offset(600, 0));
@@ -867,7 +867,7 @@ void _drawingOnTheBoard() {
 
       final before = state.canvasDrawing('list', 'Board').single.points;
 
-      await tester.tap(find.byTooltip('Select'));
+      await tester.tap(find.byTooltip('Select (A)'));
       await tester.pumpAndSettle();
       await tester.drag(
         find.descendant(
@@ -886,13 +886,13 @@ void _drawingOnTheBoard() {
         'it back', (tester) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Pen'));
+      await tester.tap(find.byTooltip('Pen (P)'));
       await tester.pumpAndSettle();
       await tester.dragFrom(const Offset(600, 400), const Offset(80, 0));
       await tester.pumpAndSettle();
       expect(state.canvasDrawing('list', 'Board'), hasLength(1));
 
-      await tester.tap(find.byTooltip('Eraser'));
+      await tester.tap(find.byTooltip('Eraser (E)'));
       await tester.pumpAndSettle();
       await tester.dragFrom(const Offset(600, 400), const Offset(80, 0));
       await tester.pumpAndSettle();
@@ -910,12 +910,12 @@ void _drawingOnTheBoard() {
     ) async {
       final state = await pumpBoard(tester);
 
-      await tester.tap(find.byTooltip('Pen'));
+      await tester.tap(find.byTooltip('Pen (P)'));
       await tester.pumpAndSettle();
       await tester.dragFrom(const Offset(600, 400), const Offset(80, 0));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Eraser'));
+      await tester.tap(find.byTooltip('Eraser (E)'));
       await tester.pumpAndSettle();
       await tester.dragFrom(const Offset(600, 700), const Offset(80, 0));
       await tester.pumpAndSettle();

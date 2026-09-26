@@ -121,7 +121,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byTooltip('Pen'));
+      await tester.tap(find.byTooltip('Pen (P)'));
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Smooth pen off'));
       await tester.pumpAndSettle();

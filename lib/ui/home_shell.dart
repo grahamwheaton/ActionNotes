@@ -60,6 +60,7 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
   final List<String> _tabs = [];
   final List<String> _rightTabs = [];
   final Map<int, NoteTarget?> _paneNotes = {};
+  final Map<int, String> _paneNoteTitles = {};
   String? _active;
   String? _rightActive;
   String? _lastSelected;
@@ -84,7 +85,10 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
     if (state.projectBySlug(slug) == null) return;
     final tabs = _forPane(pane);
     setState(() {
-      if (_activeFor(pane) != slug) _paneNotes.remove(pane);
+      if (_activeFor(pane) != slug) {
+        _paneNotes.remove(pane);
+        _paneNoteTitles.remove(pane);
+      }
       if (!tabs.contains(slug)) {
         if (newTab || tabs.isEmpty || _activeFor(pane) == null) {
           tabs.add(slug);
@@ -138,6 +142,8 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
       } else {
         _rightTabs.clear();
         _rightActive = null;
+        _paneNotes.remove(1);
+        _paneNoteTitles.remove(1);
         _focused = 0;
       }
     });
@@ -149,12 +155,23 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
       {double? width}) {
     final active = _activeFor(pane);
     final project = state.projectBySlug(active ?? '');
+    final localNote = _paneNotes[pane];
+    if (localNote != null &&
+        (project == null || localNote.index >= project.items.length ||
+            project.items[localNote.index].text != _paneNoteTitles[pane])) {
+      _paneNotes.remove(pane);
+      _paneNoteTitles.remove(pane);
+    }
     final content = DragTarget<NoteTarget>(
       onWillAcceptWithDetails: (details) =>
           state.projectBySlug(details.data.slug) != null,
       onAcceptWithDetails: (details) {
         _show(state, pane, details.data.slug);
-        setState(() => _paneNotes[pane] = details.data);
+        setState(() {
+          _paneNotes[pane] = details.data;
+          _paneNoteTitles[pane] = state.projectBySlug(details.data.slug)
+              ?.items.elementAtOrNull(details.data.index)?.text ?? '';
+        });
       },
       builder: (context, candidates, rejected) => Listener(
       onPointerDown: (_) => _focus(state, pane),
@@ -183,6 +200,8 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
               : PaneNoteScope(
                   onOpen: (slug, index) => setState(() {
                     _paneNotes[pane] = NoteTarget(slug, index);
+                    _paneNoteTitles[pane] = state.projectBySlug(slug)
+                        ?.items.elementAtOrNull(index)?.text ?? '';
                   }),
                   child: _DetailPane(
                     project: project,
@@ -190,6 +209,7 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
                         (_focused == pane ? state.openNote : null),
                     onClose: () => setState(() {
                       _paneNotes.remove(pane);
+                      _paneNoteTitles.remove(pane);
                       if (_focused == pane) state.hideNote();
                     }),
                   ),
@@ -1529,6 +1549,8 @@ class _ProjectTile extends StatelessWidget {
                             ? 'Notes project'
                             : project.mode == ProjectMode.feed
                                 ? 'Timeline project'
+                                : project.mode == ProjectMode.kanban
+                                    ? 'Kanban board'
                                 : project.items.isEmpty &&
                                         project.blocks.isNotEmpty &&
                                         project.blocks.every((block) =>
@@ -1542,6 +1564,8 @@ class _ProjectTile extends StatelessWidget {
                                 ? Icons.notes_outlined
                                 : project.mode == ProjectMode.feed
                                     ? Icons.timeline
+                                    : project.mode == ProjectMode.kanban
+                                        ? Icons.view_column_outlined
                                     : project.items.isEmpty &&
                                             project.blocks.isNotEmpty &&
                                             project.blocks.every((block) =>

@@ -3649,7 +3649,7 @@ class _CanvasTools extends StatelessWidget {
   ];
 
   static String _hint(CanvasTool option) => switch (option) {
-    CanvasTool.select => 'Select',
+    CanvasTool.select => 'Select (A)',
     CanvasTool.sticky => 'Sticky note (C)',
     CanvasTool.text => 'Note (N)',
     CanvasTool.frame => 'Frame (F)',
@@ -3659,8 +3659,8 @@ class _CanvasTools extends StatelessWidget {
     CanvasTool.arrow => 'Arrow (L cycles)',
     CanvasTool.bendyArrow => 'Bendy arrow (L cycles)',
     CanvasTool.image => 'Image (I)',
-    CanvasTool.pen => 'Pen',
-    CanvasTool.eraser => 'Eraser',
+    CanvasTool.pen => 'Pen (P)',
+    CanvasTool.eraser => 'Eraser (E)',
   };
 
   /// Whether what is armed is coloured by the swatches: a note is drawn on a

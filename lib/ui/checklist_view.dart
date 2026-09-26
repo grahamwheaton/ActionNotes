@@ -18,6 +18,7 @@ import '../models/project.dart';
 import '../state/app_state.dart';
 import 'canvas_screen.dart';
 import 'home_shell.dart';
+import 'kanban_view.dart';
 import 'canvas_view.dart';
 import 'composer.dart';
 import 'context_menu.dart';
@@ -454,6 +455,17 @@ class _ChecklistViewState extends State<ChecklistView> {
     }
 
     if (project.mode == ProjectMode.feed) _foldOlderDays(project);
+    if (project.mode == ProjectMode.kanban) {
+      return Scaffold(
+        drawer: widget.showAppBar
+            ? MobileProjectDrawer(selectedSlug: widget.slug) : null,
+        appBar: widget.showAppBar ? AppBar(
+          title: Text(project.title),
+          actions: [_ProjectMenu(project: project)],
+        ) : null,
+        body: KanbanView(board: project),
+      );
+    }
 
     // A notes project is a document, not a list. The items are still in the
     // file and come back if it is switched again — this is a second view, not
@@ -2085,6 +2097,10 @@ class _ProjectMenu extends StatelessWidget {
                   ? ProjectMode.tasks
                   : ProjectMode.feed,
             );
+          case 'kanban':
+            await state.setMode(project.slug,
+              project.mode == ProjectMode.kanban
+                  ? ProjectMode.tasks : ProjectMode.kanban);
           case 'notes':
             final notes = await TextPromptDialog.show(
               context,
@@ -2118,6 +2134,11 @@ class _ProjectMenu extends StatelessWidget {
                 ? 'Turn into a checklist'
                 : 'Turn into a feed',
           ),
+        ),
+        PopupMenuItem(
+          value: 'kanban',
+          child: Text(project.mode == ProjectMode.kanban
+              ? 'Turn into a checklist' : 'Turn into a Kanban board'),
         ),
         if (project.mode != ProjectMode.notes) ...const [
           PopupMenuItem(value: 'archive', child: Text('Archive completed')),

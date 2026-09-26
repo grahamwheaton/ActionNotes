@@ -10,6 +10,7 @@ import '../markdown/feed_days.dart';
 import '../markdown/project_links.dart';
 import '../models/canvas_layout.dart';
 import '../models/checklist_item.dart';
+import '../models/kanban_board.dart';
 import '../models/notes_source.dart';
 import '../models/project.dart';
 import '../models/sidebar_layout.dart';
@@ -2031,6 +2032,11 @@ class AppState extends ChangeNotifier {
   /// changes, and a checklist keeps its front matter untouched.
   Future<void> setMode(String slug, ProjectMode mode) =>
       _mutate(slug, (project) => project.copyWith(mode: mode));
+
+  Future<void> setKanbanColumns(String slug, List<KanbanColumn> columns) =>
+      _mutate(slug, (project) => project.copyWith(
+        extraFrontMatter: KanbanBoard.withColumns(project, columns),
+      ));
 
   Future<void> deleteProject(String slug) async {
     final project = projectBySlug(slug);
