@@ -63,6 +63,7 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
   String? _lastSelected;
   int _focused = 0;
   bool _split = false;
+  double _splitFraction = .5;
   bool _sidebarCollapsed = false;
   bool _openedInitialProject = false;
 
@@ -141,10 +142,11 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
     state.select(_lastSelected);
   }
 
-  Widget _pane(AppState state, ThemeData theme, int pane) {
+  Widget _pane(AppState state, ThemeData theme, int pane,
+      {double? width}) {
     final active = _activeFor(pane);
     final project = state.projectBySlug(active ?? '');
-    return Expanded(child: Listener(
+    final content = Listener(
       onPointerDown: (_) => _focus(state, pane),
       child: DecoratedBox(
         decoration: BoxDecoration(border: pane == 1
@@ -171,7 +173,8 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
               : _DetailPane(project: project)),
         ]),
       ),
-    ));
+    );
+    return width == null ? Expanded(child: content) : SizedBox(width: width, child: content);
   }
 
   @override
@@ -205,7 +208,10 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
     }
 
     return Scaffold(
-      body: Row(
+      body: LayoutBuilder(builder: (context, constraints) {
+        final contentWidth = constraints.maxWidth - (_sidebarCollapsed ? 0 : 280);
+        final paneWidth = (contentWidth - 8).clamp(1.0, double.infinity).toDouble();
+        return Row(
         children: [
           if (!_sidebarCollapsed) SizedBox(
             width: 280,
@@ -224,10 +230,24 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
               ),
             ),
           ),
-          _pane(state, theme, 0),
-          if (_split) _pane(state, theme, 1),
+          _pane(state, theme, 0,
+              width: _split ? paneWidth * _splitFraction : null),
+          if (_split) MouseRegion(
+            cursor: SystemMouseCursors.resizeColumn,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragUpdate: (details) => setState(() {
+                _splitFraction = (_splitFraction + details.delta.dx / paneWidth)
+                    .clamp(.2, .8).toDouble();
+              }),
+              child: Container(width: 8, color: theme.colorScheme.outlineVariant),
+            ),
+          ),
+          if (_split) _pane(state, theme, 1,
+              width: paneWidth * (1 - _splitFraction)),
         ],
-      ),
+      );
+      }),
     );
   }
 }

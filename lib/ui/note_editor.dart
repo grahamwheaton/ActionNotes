@@ -344,6 +344,7 @@ class _NoteEditorState extends State<NoteEditor> {
       },
       child: NoteBlocksEditor(
         key: _editor,
+        autofocus: true,
         // What the note holds now, not what it held on opening: switching
         // back from the conversation has to bring the messages with it.
         initialMarkdown: _markdown,

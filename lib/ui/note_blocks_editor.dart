@@ -51,6 +51,7 @@ class NoteBlocksEditor extends StatefulWidget {
     this.onRequestImage,
     this.onPaste,
     this.shrinkWrap = false,
+    this.autofocus = false,
     this.placeholder,
   });
 
@@ -63,6 +64,7 @@ class NoteBlocksEditor extends StatefulWidget {
   /// Lays the blocks out at their natural height instead of scrolling, for
   /// when the note is embedded in a list that scrolls for it.
   final bool shrinkWrap;
+  final bool autofocus;
 
   /// Fires whenever the note's markdown changes, so the host can save it.
   final ValueChanged<String> onChanged;
@@ -1094,6 +1096,9 @@ class _TextBlock extends StatelessWidget {
               child: TextField(
                 controller: row.controller,
                 focusNode: row.focus,
+                autofocus: widget.autofocus &&
+                    _rows.indexWhere((entry) => entry.block.isText) ==
+                        _rows.indexOf(row),
                 style: style,
                 maxLines: null,
                 // Enter is intercepted above to split the block, so the field

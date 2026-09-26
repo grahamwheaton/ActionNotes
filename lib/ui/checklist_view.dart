@@ -1160,6 +1160,7 @@ class _InlineNotesState extends State<_InlineNotes> {
             showProgress: false,
             child: NoteBlocksEditor(
               key: _editor,
+              autofocus: true,
               initialMarkdown: _markdown,
               shrinkWrap: true,
               onChanged: (markdown) {

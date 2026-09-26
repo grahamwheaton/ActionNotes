@@ -115,10 +115,11 @@ class CanvasViewState extends State<CanvasView> {
   /// sticky note down the next time you meant to click something.
   CanvasTool _tool = CanvasTool.select;
   CanvasTool _lastLineTool = CanvasTool.arrow;
-  CanvasColour _colour = CanvasColour.yellow;
+  CanvasColour _colour = CanvasColour.none;
+  CanvasColour _stickyColour = CanvasColour.yellow;
 
   /// How heavy a mark the pen and the shapes make.
-  double _thickness = 2;
+  double _thickness = 5;
 
   /// Smooth future pen strokes without changing marks already on the board.
   bool _smoothPen = false;
@@ -197,6 +198,7 @@ class CanvasViewState extends State<CanvasView> {
   Offset _panAtStart = Offset.zero;
 
   /// The pointer holding the middle button down, while it is panning.
+  bool _wheelActive = false;
   int? _middlePan;
   int? _rightPan;
   int? _cutPointer;
@@ -741,7 +743,7 @@ class CanvasViewState extends State<CanvasView> {
         kind: tool == CanvasTool.sticky
             ? CanvasSpotKind.sticky
             : CanvasSpotKind.text,
-        colour: tool == CanvasTool.sticky ? _colour : CanvasColour.none,
+        colour: tool == CanvasTool.sticky ? _stickyColour : CanvasColour.none,
       ),
     );
   }
@@ -766,6 +768,7 @@ class CanvasViewState extends State<CanvasView> {
     // A wheel zooms, which is what a canvas is for. Shift scrolls sideways
     // and plain two-finger scrolling on a trackpad pans, so a trackpad still
     // behaves as a trackpad.
+    if (!_wheelActive) return;
     if (HardwareKeyboard.instance.isShiftPressed) {
       setState(() => _pan += Offset(-event.scrollDelta.dy, 0));
       return;
@@ -1110,8 +1113,8 @@ class CanvasViewState extends State<CanvasView> {
 
     // Grid snapping follows the dots actually visible at this zoom level.
     final gridStep = CanvasMarks.backgroundStep(_scale) / _scale;
-    final gridCorrection = proposed != null && widget.settings.snapGrid &&
-            !HardwareKeyboard.instance.isControlPressed &&
+    final gridCorrection = proposed != null &&
+            (widget.settings.snapGrid != HardwareKeyboard.instance.isControlPressed) &&
             !(HardwareKeyboard.instance.isAltPressed &&
                 HardwareKeyboard.instance.isShiftPressed)
         ? Offset(
@@ -1201,6 +1204,26 @@ class CanvasViewState extends State<CanvasView> {
         : Offset(box.size.width / 2, box.size.height / 2);
 
     switch (event.logicalKey) {
+      case LogicalKeyboardKey.keyE:
+      case LogicalKeyboardKey.keyP:
+        if (modified || HardwareKeyboard.instance.isAltPressed) {
+          return KeyEventResult.ignored;
+        }
+        _chooseTool(event.logicalKey == LogicalKeyboardKey.keyE
+            ? CanvasTool.eraser : CanvasTool.pen);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.keyG:
+        if (modified || HardwareKeyboard.instance.isAltPressed) {
+          return KeyEventResult.ignored;
+        }
+        if (HardwareKeyboard.instance.isShiftPressed) {
+          widget.onSettingsChanged?.call(widget.settings.copyWith(
+            snapGrid: !widget.settings.snapGrid,
+          ));
+        } else {
+          fit();
+        }
+        return KeyEventResult.handled;
       case LogicalKeyboardKey.keyC:
       case LogicalKeyboardKey.keyN:
       case LogicalKeyboardKey.keyL:
@@ -1282,9 +1305,9 @@ class CanvasViewState extends State<CanvasView> {
         });
         return KeyEventResult.handled;
       case LogicalKeyboardKey.keyA:
-        if (!HardwareKeyboard.instance.isControlPressed &&
-            !HardwareKeyboard.instance.isMetaPressed) {
-          return KeyEventResult.ignored;
+        if (!modified) {
+          _chooseTool(CanvasTool.select);
+          return KeyEventResult.handled;
         }
         setState(() {
           _selection
@@ -1365,7 +1388,9 @@ class CanvasViewState extends State<CanvasView> {
 
     return Theme(
       data: theme,
-      child: Focus(
+      child: MouseRegion(
+        onExit: (_) => _wheelActive = false,
+        child: Focus(
         focusNode: _focus,
         autofocus: widget.autofocus,
         onKeyEvent: _onKey,
@@ -1377,6 +1402,7 @@ class CanvasViewState extends State<CanvasView> {
           // The middle button pans, and never joins the gesture arena, so it
           // works while the left button is drawing a marquee.
           onPointerDown: (event) {
+            _wheelActive = true;
             if (event.buttons & kSecondaryMouseButton != 0 &&
                 HardwareKeyboard.instance.isShiftPressed &&
                 widget.onEraseShapes != null) {
@@ -1704,7 +1730,7 @@ class CanvasViewState extends State<CanvasView> {
                             pendingKind: _tool == CanvasTool.frame
                                 ? CanvasShapeKind.rectangle
                                 : _tool.draws,
-                            pendingColour: _colour,
+                            pendingColour: _tool == CanvasTool.sticky ? _stickyColour : _colour,
                             pendingThickness: _thickness,
                             pendingCurved: _tool == CanvasTool.bendyArrow ||
                                 (_tool == CanvasTool.pen &&
@@ -1836,10 +1862,15 @@ class CanvasViewState extends State<CanvasView> {
                         child: Center(
                           child: _CanvasTools(
                             tool: _tool,
-                            colour: _colour,
+                            colour: _tool == CanvasTool.sticky ? _stickyColour : _colour,
                             onTool: _chooseTool,
-                            onColour: (colour) =>
-                                setState(() => _colour = colour),
+                            onColour: (colour) => setState(() {
+                              if (_tool == CanvasTool.sticky) {
+                                _stickyColour = colour;
+                              } else {
+                                _colour = colour;
+                              }
+                            }),
                             thickness: _thickness,
                             onThickness: (value) =>
                                 setState(() => _thickness = value),
@@ -1871,6 +1902,7 @@ class CanvasViewState extends State<CanvasView> {
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -3127,7 +3159,7 @@ class _CanvasControls extends StatelessWidget {
               onPressed: onZoomIn,
             ),
             IconButton(
-              tooltip: TouchInput.isPrimary ? 'Fit all' : 'Fit all (F)',
+              tooltip: TouchInput.isPrimary ? 'Fit all' : 'Fit all (G)',
               visualDensity: VisualDensity.compact,
               icon: const Icon(Icons.fit_screen_outlined, size: 18),
               onPressed: onFit,
@@ -3158,7 +3190,7 @@ class _CanvasControls extends StatelessWidget {
                     onTap: () => onSettingsChanged!(
                       settings.copyWith(snapGrid: !settings.snapGrid),
                     ),
-                    child: const Text('Snap to grid'),
+                    child: const Text('Snap to grid (Shift+G)'),
                   ),
                   const PopupMenuDivider(),
                   const PopupMenuItem(
@@ -3514,7 +3546,7 @@ enum CanvasTool {
   eraser;
 
   String get label => switch (this) {
-    CanvasTool.select => 'Select',
+    CanvasTool.select => 'Select (A)',
     CanvasTool.image => 'Image',
     CanvasTool.sticky => 'Sticky note',
     CanvasTool.text => 'Text',
@@ -3524,8 +3556,8 @@ enum CanvasTool {
     CanvasTool.bendyArrow => 'Bendy arrow',
     CanvasTool.rectangle => 'Rectangle',
     CanvasTool.oval => 'Oval',
-    CanvasTool.pen => 'Pen',
-    CanvasTool.eraser => 'Eraser',
+    CanvasTool.pen => 'Pen (P)',
+    CanvasTool.eraser => 'Eraser (E)',
   };
 
   IconData get icon => switch (this) {
@@ -3596,7 +3628,7 @@ class _CanvasTools extends StatelessWidget {
   /// Fine, ordinary and bold. Three weights rather than a slider: a slider
   /// in a column this narrow is a thing to fight with, and nobody has ever
   /// wanted a line exactly 3.4 wide.
-  static const _weights = [1.0, 2.0, 5.0];
+  static const _weights = [1.0, 5.0, 9.0];
 
   static const _lines = [
     CanvasTool.line,
@@ -3743,7 +3775,8 @@ class _CanvasTools extends StatelessWidget {
                 Tooltip(
                   message: switch (weight) {
                     1.0 => 'Fine',
-                    5.0 => 'Bold',
+                    5.0 => 'Medium',
+                    9.0 => 'Bold',
                     _ => 'Ordinary',
                   },
                   child: InkWell(
