@@ -877,6 +877,12 @@ class CanvasViewState extends State<CanvasView> {
       setState(() => _shapeShift += details.focalPointDelta / _scale);
       return;
     }
+    if (_movingShape != null) {
+      _finishShapeMove();
+      _panAtStart = _pan;
+      _scaleAtStart = _scale;
+      _focalAtStart = details.localFocalPoint;
+    }
     _applyZoom(details.localFocalPoint, details.scale);
   }
 

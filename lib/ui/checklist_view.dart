@@ -461,7 +461,7 @@ class _ChecklistViewState extends State<ChecklistView> {
             ? MobileProjectDrawer(selectedSlug: widget.slug) : null,
         appBar: widget.showAppBar ? AppBar(
           title: Text(project.title),
-          actions: [_ProjectMenu(project: project)],
+          actions: [ProjectMenu(project: project)],
         ) : null,
         body: KanbanView(board: project),
       );
@@ -476,7 +476,7 @@ class _ChecklistViewState extends State<ChecklistView> {
         appBar: widget.showAppBar
             ? AppBar(
                 title: Text(project.title),
-                actions: [_ProjectMenu(project: project)],
+                actions: [ProjectMenu(project: project)],
               )
             : null,
         body: ProjectNotesView(
@@ -536,7 +536,7 @@ class _ChecklistViewState extends State<ChecklistView> {
       appBar: widget.showAppBar
           ? AppBar(
               title: Text(project.title),
-              actions: [_ProjectMenu(project: project)],
+              actions: [ProjectMenu(project: project)],
             )
           : null,
       body: Column(
@@ -2065,8 +2065,8 @@ class _ProjectNotes extends StatelessWidget {
   }
 }
 
-class _ProjectMenu extends StatelessWidget {
-  const _ProjectMenu({required this.project});
+class ProjectMenu extends StatelessWidget {
+  const ProjectMenu({super.key, required this.project});
 
   final Project project;
 
