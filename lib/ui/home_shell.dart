@@ -428,12 +428,45 @@ class _DetailHeader extends StatelessWidget {
   }
 }
 
+/// The phone's project switcher, available from every project screen.
+class MobileProjectDrawer extends StatelessWidget {
+  const MobileProjectDrawer({super.key, this.selectedSlug});
+
+  final String? selectedSlug;
+
+  @override
+  Widget build(BuildContext context) => Drawer(
+    child: SafeArea(
+      child: ProjectSidebar(
+        selectedSlug: selectedSlug,
+        drawerMode: true,
+        onSelect: (slug) {
+          final navigator = Navigator.of(context);
+          // Closing the drawer restores the current route before changing the
+          // project, so a swipe or Back never leaves a drawer behind.
+          navigator.pop();
+          if (slug == selectedSlug) return;
+          final route = MaterialPageRoute<void>(
+            builder: (_) => ChecklistView(slug: slug),
+          );
+          if (selectedSlug == null) {
+            navigator.push(route);
+          } else {
+            navigator.pushReplacement(route);
+          }
+        },
+      ),
+    ),
+  );
+}
+
 class _SinglePaneLayout extends StatelessWidget {
   const _SinglePaneLayout();
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: const MobileProjectDrawer(),
       appBar: AppBar(
         title: const Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -458,6 +491,7 @@ class ProjectSidebar extends StatefulWidget {
     super.key,
     required this.selectedSlug,
     this.pushOnTap = false,
+    this.drawerMode = false,
     this.onSelect,
     this.onOpenInNewTab,
   });
@@ -466,6 +500,7 @@ class ProjectSidebar extends StatefulWidget {
 
   /// True on a phone, where tapping a project opens it as a new screen.
   final bool pushOnTap;
+  final bool drawerMode;
   final ValueChanged<String>? onSelect;
   final ValueChanged<String>? onOpenInNewTab;
 
@@ -509,7 +544,7 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
 
     return Column(
       children: [
-        if (!widget.pushOnTap) ...[
+        if (!widget.pushOnTap || widget.drawerMode) ...[
           const _SidebarHeader(),
           _SidebarSearch(
             controller: _filter,
@@ -533,13 +568,13 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
                     // project, not for where you filed it.
                     filtered: filtering ? projects : null,
                     selectedSlug: widget.selectedSlug,
-                    pushOnTap: widget.pushOnTap,
+                    pushOnTap: widget.pushOnTap || widget.drawerMode,
                     onSelect: widget.onSelect,
                     onOpenInNewTab: widget.onOpenInNewTab,
                   ),
                 ),
         ),
-        if (!widget.pushOnTap) const _SidebarFooter(),
+        if (!widget.pushOnTap || widget.drawerMode) const _SidebarFooter(),
       ],
     );
   }
@@ -1382,18 +1417,16 @@ class _ProjectTile extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(6),
           onTap: () {
-            if (pushOnTap) {
+            if (onSelect != null) {
+              onSelect!(project.slug);
+            } else if (pushOnTap) {
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => ChecklistView(slug: project.slug),
                 ),
               );
             } else {
-              if (onSelect != null) {
-                onSelect!(project.slug);
-              } else {
-                state.select(project.slug);
-              }
+              state.select(project.slug);
             }
           },
           child: Row(
@@ -1437,6 +1470,35 @@ class _ProjectTile extends StatelessWidget {
                             ),
                           ),
                         ),
+                      Tooltip(
+                        message: project.mode == ProjectMode.notes
+                            ? 'Notes project'
+                            : project.mode == ProjectMode.feed
+                                ? 'Timeline project'
+                                : project.items.isEmpty &&
+                                        project.blocks.isNotEmpty &&
+                                        project.blocks.every((block) =>
+                                            state.isCanvas(project.slug, block.title))
+                                    ? 'Canvas project'
+                                    : 'Tasks project',
+                        child: Padding(
+                          padding: const EdgeInsets.only(right: 10),
+                          child: Icon(
+                            project.mode == ProjectMode.notes
+                                ? Icons.notes_outlined
+                                : project.mode == ProjectMode.feed
+                                    ? Icons.timeline
+                                    : project.items.isEmpty &&
+                                            project.blocks.isNotEmpty &&
+                                            project.blocks.every((block) =>
+                                                state.isCanvas(project.slug, block.title))
+                                        ? Icons.dashboard_outlined
+                                        : Icons.check_box_outlined,
+                            size: 19,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
                       Expanded(
                         child: Text(
                           project.title,

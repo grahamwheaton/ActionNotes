@@ -17,6 +17,7 @@ import '../models/checklist_item.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
 import 'canvas_screen.dart';
+import 'home_shell.dart';
 import 'canvas_view.dart';
 import 'composer.dart';
 import 'context_menu.dart';
@@ -459,6 +460,7 @@ class _ChecklistViewState extends State<ChecklistView> {
     // a second format.
     if (opensAsNotes(project)) {
       return Scaffold(
+        drawer: widget.showAppBar ? MobileProjectDrawer(selectedSlug: widget.slug) : null,
         appBar: widget.showAppBar
             ? AppBar(
                 title: Text(project.title),
@@ -518,6 +520,7 @@ class _ChecklistViewState extends State<ChecklistView> {
     final sections = _sectionsOf(project);
 
     return Scaffold(
+      drawer: widget.showAppBar ? MobileProjectDrawer(selectedSlug: widget.slug) : null,
       appBar: widget.showAppBar
           ? AppBar(
               title: Text(project.title),
