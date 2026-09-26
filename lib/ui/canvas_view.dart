@@ -210,9 +210,6 @@ class CanvasViewState extends State<CanvasView> {
   final _viewport = GlobalKey();
 
   @visibleForTesting
-  double get debugScale => _scale;
-
-  @visibleForTesting
   Offset get debugPan => _pan;
   final _focus = FocusNode();
 

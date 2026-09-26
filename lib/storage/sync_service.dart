@@ -12,6 +12,8 @@ import 'local_store.dart';
 
 final _md = RegExp(r'\.md$');
 
+String _slugOf(String path) => path.split('/').last.replaceAll(_md, '');
+
 class SyncResult {
   const SyncResult({
     required this.projects,
@@ -124,9 +126,7 @@ class SyncService {
       // makes checking every few seconds affordable rather than a download of
       // every list, every time.
       final listing = await client.listProjects();
-      final present = listing
-          .map((entry) => entry.path.split('/').last.replaceAll(_md, ''))
-          .toSet();
+      final present = listing.map((entry) => _slugOf(entry.path)).toSet();
 
       // A project that has gone from the repo goes from here too. It is how
       // a project deleted, or shared into another notebook, stops haunting
@@ -147,10 +147,7 @@ class SyncService {
       }
 
       for (final entry in listing) {
-        final slug = entry.path
-            .split('/')
-            .last
-            .replaceAll(RegExp(r'\.md$'), '');
+        final slug = _slugOf(entry.path);
         final existing = byslug[slug];
         if (existing != null && existing.dirty) continue;
         if (existing != null && existing.sha == entry.sha) continue;
@@ -468,13 +465,6 @@ class SyncService {
     }
   }
 
-  /// Uploads one attachment. Errors are left to the caller, which already
-  /// turns a [GitHubException] into something readable.
-  /// Reads a project's canvas layout from the repo.
-  ///
-  /// Absent, unreadable or nonsense all mean the same thing — no layout — so a
-  /// canvas whose positions cannot be read opens as the list of pictures and
-  /// notes it is rather than as an error.
   /// Fetches the arrangements that have changed, for the projects in hand.
   ///
   /// A canvas is a section with an arrangement beside it, and the arrangement
@@ -527,17 +517,6 @@ class SyncService {
     return pulled;
   }
 
-  Future<CanvasLayout> readLayout(GitHubConfig config, String slug) async {
-    final client = _clientFactory(config);
-    try {
-      final file = await client.readFile(CanvasLayout.path(slug));
-      if (file == null) return CanvasLayout.empty;
-      return CanvasLayout.parse(file.content, sha: file.sha);
-    } on GitHubException {
-      return CanvasLayout.empty;
-    }
-  }
-
   /// Writes a project's canvas layout, and returns it with the SHA GitHub
   /// gave back.
   ///
@@ -554,7 +533,19 @@ class SyncService {
   ) async {
     final client = _clientFactory(config);
     final path = CanvasLayout.path(slug);
+    try {
+      return await _writeLayoutWith(client, path, slug, layout);
+    } finally {
+      client.dispose();
+    }
+  }
 
+  Future<CanvasLayout> _writeLayoutWith(
+    GitHubClient client,
+    String path,
+    String slug,
+    CanvasLayout layout,
+  ) async {
     if (layout.isEmpty) {
       // Nothing left to arrange: take the file away rather than leave an empty
       // one implying the project still has a canvas.
@@ -589,6 +580,8 @@ class SyncService {
     }
   }
 
+  /// Uploads one attachment. Errors are left to the caller, which already
+  /// turns a [GitHubException] into something readable.
   Future<void> uploadAttachment(
     GitHubConfig config, {
     required String path,
