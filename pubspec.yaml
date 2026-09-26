@@ -40,6 +40,7 @@ dependencies:
   path: ^1.9.1
   provider: ^6.1.5+1
   path_provider: ^2.1.5
+  share_plus: ^13.3.0
   shared_preferences: ^2.5.5
   flutter_secure_storage: ^10.3.4
   flutter_markdown_plus: ^1.0.12

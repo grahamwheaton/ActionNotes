@@ -9,6 +9,8 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:pasteboard/pasteboard.dart';
 import 'package:provider/provider.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../markdown/canvas_cards.dart';
 import '../markdown/canvas_placement.dart';
@@ -147,16 +149,24 @@ class _CanvasScreenState extends State<CanvasScreen> {
       return;
     }
 
-    final location = await getSaveLocation(
-      suggestedName: CanvasExport.fileNameFor(title, section, extension: 'pdf'),
-    );
-    if (location == null) return;
-
     final pdf = await CanvasExport.pdfOf(
       board: drawn.bytes,
       width: drawn.width,
       height: drawn.height,
     );
+    final name = CanvasExport.fileNameFor(title, section, extension: 'pdf');
+    if (!CanvasExport.canSaveFiles) {
+      final directory = await getTemporaryDirectory();
+      final file = File('${directory.path}${Platform.pathSeparator}$name');
+      await file.writeAsBytes(pdf);
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(file.path, mimeType: 'application/pdf')],
+        title: name,
+      ));
+      return;
+    }
+    final location = await getSaveLocation(suggestedName: name);
+    if (location == null) return;
     await File(location.path).writeAsBytes(pdf);
     messenger.showSnackBar(
       SnackBar(content: Text('Saved to ${location.path}')),
@@ -376,23 +386,25 @@ class _CanvasScreenState extends State<CanvasScreen> {
               // Saving a file somewhere you choose is a desktop idea. A phone
               // has no folder to put thirty pictures in that means anything
               // to the person choosing it, so it is not offered there.
-              if (CanvasExport.canSaveFiles)
-                PopupMenuButton<String>(
+              PopupMenuButton<String>(
                   tooltip: 'Export',
                   icon: const Icon(Icons.ios_share),
                   onSelected: (choice) {
                     if (choice == 'pdf') _exportPdf();
                     if (choice == 'images') _exportImages();
                   },
-                  itemBuilder: (_) => const [
+                  itemBuilder: (_) => [
                     PopupMenuItem(
                       value: 'pdf',
-                      child: Text('Save the board as a PDF'),
+                      child: Text(CanvasExport.canSaveFiles
+                          ? 'Save the board as a PDF'
+                          : 'Share the board as a PDF'),
                     ),
-                    PopupMenuItem(
-                      value: 'images',
-                      child: Text('Save all the pictures'),
-                    ),
+                    if (CanvasExport.canSaveFiles)
+                      const PopupMenuItem(
+                        value: 'images',
+                        child: Text('Save all the pictures'),
+                      ),
                   ],
                 ),
               const SizedBox(width: 4),
