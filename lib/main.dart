@@ -6,6 +6,8 @@ import 'package:provider/provider.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import 'state/app_state.dart';
+import 'markdown/feed_days.dart';
+import 'models/project.dart';
 import 'storage/update_check.dart';
 import 'storage/windows_updater.dart';
 import 'ui/home_shell.dart';
@@ -109,6 +111,10 @@ class _ActionNotesAppState extends State<ActionNotesApp>
         builder: (dialog) => SimpleDialog(
           title: const Text('Add shared photos to project'),
           children: [
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialog, '__daily__'),
+              child: const Text('Daily note'),
+            ),
             for (final project in _state.projects)
               SimpleDialogOption(
                 onPressed: () => Navigator.pop(dialog, project.slug),
@@ -118,9 +124,24 @@ class _ActionNotesAppState extends State<ActionNotesApp>
         ),
       );
       if (project == null || !context.mounted) return;
-      final selected = _state.projectBySlug(project);
+      var destination = project;
+      if (project == '__daily__') {
+        var daily = _state.projectBySlug('daily-note');
+        daily ??= await _state.createProject('Daily note');
+        if (daily.mode != ProjectMode.feed) {
+          await _state.setMode(daily.slug, ProjectMode.feed);
+        }
+        destination = daily.slug;
+        final today = FeedDays.titleFor(DateTime.now());
+        await _state.addBlock(destination, today);
+        await _state.addItem(destination, 'Shared photo', block: today);
+      }
+      final selected = _state.projectBySlug(destination);
       if (selected == null) return;
-      final index = await showDialog<int>(
+      final index = project == '__daily__' ? selected.items.indexWhere(
+        (item) => item.text == 'Shared photo' &&
+            item.block == FeedDays.titleFor(DateTime.now()),
+      ) : await showDialog<int>(
         context: context,
         builder: (dialog) => SimpleDialog(
           title: const Text('Where should they go?'),
@@ -141,7 +162,7 @@ class _ActionNotesAppState extends State<ActionNotesApp>
       final references = <String>[];
       for (final image in images) {
         final file = File(image.path);
-        final reference = await _state.attachImage(project,
+        final reference = await _state.attachImage(destination,
           fileName: file.uri.pathSegments.last,
           bytes: await file.readAsBytes(),
         );
@@ -150,12 +171,12 @@ class _ActionNotesAppState extends State<ActionNotesApp>
       if (references.isEmpty) return;
       final addition = references.join('\n\n');
       if (index < 0) {
-        await _state.setNotes(project,
+        await _state.setNotes(destination,
           [selected.notes, addition].where((part) => part.trim().isNotEmpty).join('\n\n'));
       } else {
-        final note = _state.projectBySlug(project)?.items.elementAtOrNull(index);
+        final note = _state.projectBySlug(destination)?.items.elementAtOrNull(index);
         if (note == null) return;
-        await _state.setItemNotes(project, index,
+        await _state.setItemNotes(destination, index,
           [note.notes, addition].where((part) => part.trim().isNotEmpty).join('\n\n'));
       }
       if (context.mounted) {

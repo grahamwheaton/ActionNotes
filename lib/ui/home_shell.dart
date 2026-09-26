@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../models/project.dart';
 import '../models/sidebar_layout.dart';
+import '../markdown/feed_days.dart';
 import '../state/app_state.dart';
 import 'checklist_view.dart';
 import 'context_menu.dart';
@@ -529,7 +530,14 @@ class _SinglePaneLayout extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [Text('ActionNotes'), AppVersionLabel()],
         ),
-        actions: const [_SearchAction(), _SyncAction(), _SettingsAction()],
+        actions: [
+          IconButton(
+            tooltip: 'Daily note',
+            icon: const Icon(Icons.today_outlined),
+            onPressed: () => openDailyNote(context, openAfter: true),
+          ),
+          const _SearchAction(), const _SyncAction(), const _SettingsAction(),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => createProject(context, openAfter: true),
@@ -1296,6 +1304,12 @@ class _SidebarFooter extends StatelessWidget {
             ),
           ),
         ),
+        if (MediaQuery.sizeOf(context).width >= HomeShell.sidebarBreakpoint)
+          TextButton.icon(
+            onPressed: () => openDailyNote(context),
+            icon: const Icon(Icons.today_outlined, size: 18),
+            label: const Text('Daily note'),
+          ),
         const UpdateBanner(),
         Divider(height: 1, color: theme.colorScheme.outlineVariant),
         Padding(
@@ -1819,6 +1833,22 @@ Future<void> createProject(
   await Navigator.of(
     context,
   ).push(MaterialPageRoute(builder: (_) => ChecklistView(slug: project.slug)));
+}
+
+Future<void> openDailyNote(BuildContext context, {bool openAfter = false}) async {
+  final state = context.read<AppState>();
+  var project = state.projectBySlug('daily-note');
+  project ??= await state.createProject('Daily note');
+  if (project.mode != ProjectMode.feed) {
+    await state.setMode(project.slug, ProjectMode.feed);
+  }
+  await state.addBlock(project.slug, FeedDays.titleFor(DateTime.now()));
+  state.select(project.slug);
+  if (openAfter && context.mounted) {
+    await Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => ChecklistView(slug: project!.slug),
+    ));
+  }
 }
 
 Future<void> confirmDeleteProject(BuildContext context, Project project) async {
