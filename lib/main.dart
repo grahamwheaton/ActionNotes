@@ -138,6 +138,7 @@ class _ActionNotesAppState extends State<ActionNotesApp>
       }
       final selected = _state.projectBySlug(destination);
       if (selected == null) return;
+      if (!context.mounted) return;
       final index = project == '__daily__' ? selected.items.indexWhere(
         (item) => item.text == 'Shared photo' &&
             item.block == FeedDays.titleFor(DateTime.now()),

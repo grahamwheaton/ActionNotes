@@ -897,13 +897,30 @@ class _ItemTile extends StatelessWidget {
             onDoubleTap: touch ? openEditor : null,
             child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: _ItemTitle(
-                item: item,
-                notesExpanded: notesExpanded,
-                // Only where the marker at the end of the row is gone. On a
-                // desktop that button is still there and says the same thing,
-                // and two of them beside each other says it twice.
-                showNotesMarker: touch,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _ItemTitle(
+                    item: item,
+                    notesExpanded: notesExpanded,
+                    showNotesMarker: touch,
+                  ),
+                  if (state.projectBySlug(slug)?.mode == ProjectMode.feed)
+                    Text(
+                      [
+                        if (item.createdAt != null)
+                          'Created ${FeedDays.label(FeedDays.titleFor(item.createdAt!))}'
+                        else if (item.block != null)
+                          'Created ${FeedDays.label(item.block!)}',
+                        if (item.updatedAt != null &&
+                            item.updatedAt != item.createdAt)
+                          FeedDays.relativeUpdate(item.updatedAt!),
+                      ].join(' · '),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),

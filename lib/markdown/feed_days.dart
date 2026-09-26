@@ -74,6 +74,15 @@ class FeedDays {
         : '${day.day} $month ${day.year}';
   }
 
+  static String relativeUpdate(DateTime updated, {DateTime? now}) {
+    final elapsed = (now ?? DateTime.now()).difference(updated);
+    if (elapsed.inMinutes < 1) return 'updated just now';
+    if (elapsed.inHours < 1) return 'updated ${elapsed.inMinutes}m ago';
+    if (elapsed.inDays < 1) return 'updated ${elapsed.inHours}h ago';
+    if (elapsed.inDays == 1) return 'updated yesterday';
+    return 'updated ${elapsed.inDays} days ago';
+  }
+
   /// Whether a day should open by itself: today's writing is what you came
   /// to read, and everything before it is folded until asked for.
   static bool opensByDefault(String title, {DateTime? now}) {

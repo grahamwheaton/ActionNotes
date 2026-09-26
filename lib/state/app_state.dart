@@ -6,6 +6,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../markdown/canvas_cards.dart';
 import '../markdown/canvas_placement.dart';
+import '../markdown/feed_days.dart';
 import '../markdown/project_links.dart';
 import '../models/canvas_layout.dart';
 import '../models/checklist_item.dart';
@@ -1151,6 +1152,7 @@ class AppState extends ChangeNotifier {
       text: text.trim(),
       starred: starred,
       block: block,
+      createdAt: project.mode == ProjectMode.feed ? DateTime.now().toUtc() : null,
     );
     if (block == null) return project.copyWith(items: [item, ...project.items]);
 
@@ -1286,7 +1288,15 @@ class AppState extends ChangeNotifier {
   Future<void> setItemNotes(String slug, int index, String notes) =>
       _mutate(slug, (project) {
         final items = [...project.items];
-        items[index] = items[index].copyWith(notes: notes.trim());
+        items[index] = items[index].copyWith(
+          notes: notes.trim(),
+          createdAt: project.mode == ProjectMode.feed
+              ? (items[index].createdAt ??
+                  FeedDays.dayOf(items[index].block ?? '') ??
+                  DateTime.now().toUtc())
+              : null,
+          updatedAt: project.mode == ProjectMode.feed ? DateTime.now().toUtc() : null,
+        );
         return project.copyWith(items: items);
       });
 

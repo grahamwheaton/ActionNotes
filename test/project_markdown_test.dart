@@ -4,6 +4,23 @@ import 'package:actionnotes/models/project.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('feed item dates round-trip without appearing in note text', () {
+    final created = DateTime.utc(2026, 9, 20, 9);
+    final updated = DateTime.utc(2026, 9, 22, 11);
+    final project = Project(
+      slug: 'daily', title: 'Daily', mode: ProjectMode.feed,
+      items: [ChecklistItem(
+        text: 'Idea', notes: 'Keep this thought', block: '2026-09-20',
+        createdAt: created, updatedAt: updated,
+      )],
+    );
+    final markdown = ProjectMarkdown.serialize(project);
+    final restored = ProjectMarkdown.parse(markdown, slug: 'daily');
+    expect(restored.items.single.createdAt, created);
+    expect(restored.items.single.updatedAt, updated);
+    expect(restored.items.single.notes, 'Keep this thought');
+  });
+
   group('parse', () {
     test('reads front matter, heading, items and notes', () {
       const source = '''
