@@ -239,6 +239,23 @@ class _NoteEditorState extends State<NoteEditor> {
                   child: _EditorTitle(text: widget.title, maxLines: 3),
                 ),
           actions: [
+            if (_inPane)
+              Draggable<NoteTarget>(
+                data: NoteTarget(widget.slug, widget.index),
+                feedback: Material(
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Text(widget.title),
+                  ),
+                ),
+                child: const Tooltip(
+                  message: 'Drag note to another pane',
+                  child: Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Icon(Icons.drag_indicator),
+                  ),
+                ),
+              ),
             if (item != null)
               IconButton(
                 tooltip: item.starred ? 'Remove star' : 'Star',

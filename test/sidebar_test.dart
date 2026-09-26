@@ -66,6 +66,12 @@ void main() {
 
     expect(find.byType(NoteEditor), findsOneWidget);
     expect(find.byType(ChecklistView), findsOneWidget);
+
+    final drag = find.byTooltip('Drag note to another pane');
+    final destination = tester.getCenter(find.byType(PaneNoteScope).last);
+    await tester.drag(drag, destination - tester.getCenter(drag));
+    await tester.pumpAndSettle();
+    expect(find.byType(NoteEditor), findsNWidgets(2));
   });
 
   testWidgets('sidebar selection reuses the active tab; split panes can close',

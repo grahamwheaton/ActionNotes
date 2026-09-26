@@ -148,7 +148,14 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
       {double? width}) {
     final active = _activeFor(pane);
     final project = state.projectBySlug(active ?? '');
-    final content = Listener(
+    final content = DragTarget<NoteTarget>(
+      onWillAcceptWithDetails: (details) =>
+          state.projectBySlug(details.data.slug) != null,
+      onAcceptWithDetails: (details) {
+        _show(state, pane, details.data.slug);
+        setState(() => _paneNotes[pane] = details.data);
+      },
+      builder: (context, candidates, rejected) => Listener(
       onPointerDown: (_) => _focus(state, pane),
       child: DecoratedBox(
         decoration: BoxDecoration(border: pane == 1
@@ -188,7 +195,7 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
                 )),
         ]),
       ),
-    );
+    ));
     return width == null ? Expanded(child: content) : SizedBox(width: width, child: content);
   }
 
