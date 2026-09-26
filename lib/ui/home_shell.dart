@@ -384,20 +384,21 @@ class _DetailPane extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final target = note;
     // An index only means something against the list it came from. Anything
     // that shortens the list closes the note, but a sync landing another
     // device's edit can still take the item away underneath us.
-    if (note != null &&
-        note.slug == project.slug &&
-        note.index < project.items.length) {
-      final item = project.items[note.index];
+    if (target != null &&
+        target.slug == project.slug &&
+        target.index < project.items.length) {
+      final item = project.items[target.index];
 
       return NoteEditor(
         // Keyed by the item so opening another note builds a fresh editor
         // rather than handing this one the last note's blocks.
-        key: ValueKey('note-${project.slug}-${note.index}'),
+        key: ValueKey('note-${project.slug}-${target.index}'),
         slug: project.slug,
-        index: note.index,
+        index: target.index,
         title: item.text,
         initialNotes: item.notes,
         onClose: onClose,
@@ -1502,22 +1503,6 @@ class _ProjectTile extends StatelessWidget {
                   ),
                   child: Row(
                     children: [
-                      // Which notebook a shared project is in, beside its
-                      // name: two people's lists sitting in one sidebar
-                      // need to be told apart at a glance, or somebody
-                      // writes the shopping into the wrong one.
-                      if (project.isShared)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: Tooltip(
-                            message: 'In ${state.sourceOf(project.slug).name}',
-                            child: Icon(
-                              Icons.folder_shared_outlined,
-                              size: 14,
-                              color: theme.colorScheme.primary,
-                            ),
-                          ),
-                        ),
                       Tooltip(
                         message: project.mode == ProjectMode.notes
                             ? 'Notes project'
@@ -1547,13 +1532,26 @@ class _ProjectTile extends StatelessWidget {
                           ),
                         ),
                       ),
-                      Expanded(
+                      Flexible(
+                        fit: FlexFit.loose,
                         child: Text(
                           project.title,
                           overflow: TextOverflow.ellipsis,
                           style: titleStyle,
                         ),
                       ),
+                      if (project.isShared)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 4, right: 6),
+                          child: Tooltip(
+                            message: 'In ${state.sourceOf(project.slug).name}',
+                            child: Icon(
+                              Icons.folder_shared_outlined,
+                              size: 14,
+                              color: theme.colorScheme.primary,
+                            ),
+                          ),
+                        ),
                       if (project.dirty)
                         Padding(
                           padding: const EdgeInsets.only(left: 4),
