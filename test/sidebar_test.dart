@@ -1,5 +1,7 @@
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/ui/home_shell.dart';
+import 'package:actionnotes/ui/note_editor.dart';
+import 'package:actionnotes/ui/checklist_view.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -51,6 +53,21 @@ Finder sidebarText(String text) => find.descendant(
     );
 
 void main() {
+  testWidgets('split panes keep note editing independent', (tester) async {
+    final state = await withProjects(tester, FakeLocalStore());
+    await state.addItem('garden', 'Order compost');
+    await tester.tap(sidebarText('Garden'));
+    await tester.tap(find.byTooltip('Split view right'));
+    await tester.pumpAndSettle();
+
+    final first = tester.widget<PaneNoteScope>(find.byType(PaneNoteScope).first);
+    first.onOpen('garden', 0);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(NoteEditor), findsOneWidget);
+    expect(find.byType(ChecklistView), findsOneWidget);
+  });
+
   testWidgets('sidebar selection reuses the active tab; split panes can close',
       (tester) async {
     final state = await withProjects(tester, FakeLocalStore());

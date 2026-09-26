@@ -756,6 +756,9 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
           ? _TextBlock(
               key: ValueKey(row.id),
               row: row,
+              autofocus: widget.autofocus &&
+                  _rows.indexWhere((entry) => entry.block.isText) ==
+                      _rows.indexOf(row),
               // Only while there is nothing at all: a hint on the first of
               // several lines would be a label for the note.
               placeholder:
@@ -801,6 +804,7 @@ class _TextBlock extends StatelessWidget {
   const _TextBlock({
     super.key,
     required this.row,
+    required this.autofocus,
     required this.onChanged,
     required this.onSplit,
     required this.onBackspaceAtStart,
@@ -824,6 +828,7 @@ class _TextBlock extends StatelessWidget {
   });
 
   final _Row row;
+  final bool autofocus;
   final String? placeholder;
   final VoidCallback onChanged;
   final VoidCallback onSplit;
@@ -1096,9 +1101,7 @@ class _TextBlock extends StatelessWidget {
               child: TextField(
                 controller: row.controller,
                 focusNode: row.focus,
-                autofocus: widget.autofocus &&
-                    _rows.indexWhere((entry) => entry.block.isText) ==
-                        _rows.indexOf(row),
+                autofocus: autofocus,
                 style: style,
                 maxLines: null,
                 // Enter is intercepted above to split the block, so the field

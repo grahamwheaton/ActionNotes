@@ -58,6 +58,7 @@ class _TwoPaneLayout extends StatefulWidget {
 class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
   final List<String> _tabs = [];
   final List<String> _rightTabs = [];
+  final Map<int, NoteTarget?> _paneNotes = {};
   String? _active;
   String? _rightActive;
   String? _lastSelected;
@@ -82,6 +83,7 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
     if (state.projectBySlug(slug) == null) return;
     final tabs = _forPane(pane);
     setState(() {
+      if (_activeFor(pane) != slug) _paneNotes.remove(pane);
       if (!tabs.contains(slug)) {
         if (newTab || tabs.isEmpty || _activeFor(pane) == null) {
           tabs.add(slug);
@@ -170,7 +172,20 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
           ),
           Expanded(child: project == null
               ? const _NoProjectSelected()
-              : _DetailPane(project: project)),
+              : PaneNoteScope(
+                  onOpen: (slug, index) => setState(() {
+                    _paneNotes[pane] = NoteTarget(slug, index);
+                  }),
+                  child: _DetailPane(
+                    project: project,
+                    note: _paneNotes[pane] ??
+                        (_focused == pane ? state.openNote : null),
+                    onClose: () => setState(() {
+                      _paneNotes.remove(pane);
+                      if (_focused == pane) state.hideNote();
+                    }),
+                  ),
+                )),
         ]),
       ),
     );
@@ -250,6 +265,19 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
       }),
     );
   }
+}
+
+/// Routes note openings to the desktop pane where the action happened.
+class PaneNoteScope extends InheritedWidget {
+  const PaneNoteScope({super.key, required this.onOpen, required super.child});
+
+  final void Function(String slug, int index) onOpen;
+
+  static PaneNoteScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<PaneNoteScope>();
+
+  @override
+  bool updateShouldNotify(PaneNoteScope oldWidget) => onOpen != oldWidget.onOpen;
 }
 
 /// Projects stay open across sidebar switches. The sidebar's existing drag
@@ -347,15 +375,15 @@ class _ProjectTabs extends StatelessWidget {
 /// A note edited here keeps the sidebar, which is the point — on a phone the
 /// editor is a screen of its own, because there is no sidebar to keep.
 class _DetailPane extends StatelessWidget {
-  const _DetailPane({required this.project});
+  const _DetailPane({required this.project, required this.note,
+    required this.onClose});
 
   final Project project;
+  final NoteTarget? note;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final note = state.openNote;
-
     // An index only means something against the list it came from. Anything
     // that shortens the list closes the note, but a sync landing another
     // device's edit can still take the item away underneath us.
@@ -372,7 +400,7 @@ class _DetailPane extends StatelessWidget {
         index: note.index,
         title: item.text,
         initialNotes: item.notes,
-        onClose: state.hideNote,
+        onClose: onClose,
       );
     }
 

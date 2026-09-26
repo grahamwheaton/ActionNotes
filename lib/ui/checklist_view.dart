@@ -1785,7 +1785,12 @@ class _SectionCanvasState extends State<_SectionCanvas> {
                 if (index < 0) continue;
                 state.select(project.slug);
                 state.revealItem(project.slug, index);
-                state.showNote(project.slug, index);
+                final pane = PaneNoteScope.maybeOf(context);
+                if (pane != null) {
+                  pane.onOpen(project.slug, index);
+                } else {
+                  state.showNote(project.slug, index);
+                }
                 return;
               }
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(

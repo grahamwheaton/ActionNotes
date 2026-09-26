@@ -55,7 +55,12 @@ class NoteEditor extends StatefulWidget {
     required String initialNotes,
   }) async {
     if (MediaQuery.sizeOf(context).width >= HomeShell.sidebarBreakpoint) {
-      context.read<AppState>().showNote(slug, index);
+      final pane = PaneNoteScope.maybeOf(context);
+      if (pane != null) {
+        pane.onOpen(slug, index);
+      } else {
+        context.read<AppState>().showNote(slug, index);
+      }
       return;
     }
 
