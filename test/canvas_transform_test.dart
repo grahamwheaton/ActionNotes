@@ -206,7 +206,7 @@ void main() {
 
       expect(
         state.projects.single.blocks.single.body,
-        '- One\n- Two\n- Two\n- Three',
+        matches(RegExp(r'^- One\n- Two\n- Two <!-- canvas-id: [^>]+ -->\n- Three$')),
       );
       // The copy is offset, not exactly on top of the original.
       expect(spotsOf(state)[2].x, 524);
