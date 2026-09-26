@@ -48,6 +48,26 @@ void main() {
     test('a hand-written star bullet reads the same as a dash', () {
       expect(CanvasCards.parse('* ![a](x.png)').single.isImage, isTrue);
     });
+
+    test('a placed image uses its path as its layout reference', () {
+      final card = CanvasCards.text('![door](../attachments/x/door.png)');
+      expect(card.isImage, isTrue);
+      expect(card.ref, '../attachments/x/door.png');
+    });
+
+    test('copies of one image have separate anchor references', () {
+      final source = CanvasCards.text('![door](../attachments/x/door.png)');
+      final copy = CanvasCards.uniqueCopy(source);
+      final restored = CanvasCards.parse(CanvasCards.serialize([source, copy]));
+      expect(restored.last.isImage, isTrue);
+      expect(restored.last.imagePath, source.imagePath);
+      expect(restored.last.ref, isNot(source.ref));
+      final placed = CanvasPlacement.place(restored, [
+        CanvasSpot(x: 12, y: 14, ref: source.ref),
+        CanvasSpot(x: 50, y: 60, ref: copy.ref),
+      ]);
+      expect(placed.last.x, 50);
+    });
   });
 
   group('the layout file', () {

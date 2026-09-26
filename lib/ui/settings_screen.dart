@@ -5,8 +5,10 @@ import '../state/app_state.dart';
 import '../storage/github_account.dart';
 import '../storage/github_client.dart';
 import 'repo_picker.dart';
+import 'project_copy_actions.dart';
 import 'shared_notebooks.dart';
 import 'sign_in_dialog.dart';
+import 'update_banner.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -260,6 +262,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 24),
           const SharedNotebooksCard(),
           const SizedBox(height: 20),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () => ProjectCopyActions.import(context),
+              icon: const Icon(Icons.file_download_outlined),
+              label: const Text('Import a project copy'),
+            ),
+          ),
+          const SizedBox(height: 24),
           Text(
             'Appearance',
             style: theme.textTheme.titleMedium?.copyWith(
@@ -351,12 +362,15 @@ class _UpdateRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        OutlinedButton(
-          onPressed: state.checkingUpdate
-              ? null
-              : () => context.read<AppState>().checkForUpdate(),
-          child: const Text('Check now'),
-        ),
+        if (update != null)
+          const UpdateBanner(compact: true)
+        else
+          OutlinedButton(
+            onPressed: state.checkingUpdate
+                ? null
+                : () => context.read<AppState>().checkForUpdate(),
+            child: const Text('Check now'),
+          ),
       ],
     );
   }

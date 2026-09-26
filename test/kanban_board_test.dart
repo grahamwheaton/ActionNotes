@@ -19,4 +19,16 @@ void main() {
     expect(columns.first.hideCompleted, isTrue);
     expect(columns.last.hideCompleted, isFalse);
   });
+
+  test('named filter presets survive project markdown sync', () {
+    final board = Project(slug: 'board', title: 'Board', mode: ProjectMode.kanban);
+    final saved = board.copyWith(extraFrontMatter: KanbanBoard.withPresets(
+      board, {'Focus': [const KanbanColumn('work', onlyStarred: true)]}));
+    final restored = ProjectMarkdown.parse(ProjectMarkdown.serialize(saved),
+      slug: 'board');
+    final preset = KanbanBoard.presets(restored)['Focus'];
+    expect(preset, isNotNull);
+    expect(preset!.single.slug, 'work');
+    expect(preset.single.onlyStarred, isTrue);
+  });
 }

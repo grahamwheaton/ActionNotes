@@ -185,6 +185,9 @@ class CanvasViewState extends State<CanvasView> {
   final Map<int, Offset> _dragFrom = {};
   int? _copyFrom;
   Offset _copyShift = Offset.zero;
+  int? _movingShape;
+  Offset _shapeShift = Offset.zero;
+  List<double>? _shapeStart;
   Offset _dragRaw = Offset.zero;
 
   /// The lines to draw for whatever the drag is currently lined up with.
@@ -694,6 +697,30 @@ class CanvasViewState extends State<CanvasView> {
     );
   }
 
+  CanvasShape _shiftedShape(CanvasShape shape, List<double> points,
+      Offset shift) => shape.copyWith(
+        points: [for (var i = 0; i < points.length; i++)
+          points[i] + (i.isEven ? shift.dx : shift.dy)],
+        clearFrom: true,
+        clearTo: true,
+      );
+
+  void _finishShapeMove() {
+    final mark = _movingShape;
+    if (mark == null) return;
+    final points = _shapeStart!;
+    final shift = _shapeShift;
+    setState(() {
+      _movingShape = null;
+      _shapeStart = null;
+      _shapeShift = Offset.zero;
+    });
+    if (shift != Offset.zero && mark < widget.shapes.length) {
+      widget.onEditShape?.call(mark,
+        _shiftedShape(widget.shapes[mark], points, shift));
+    }
+  }
+
   /// Rubs out whatever the eraser is dragged over.
   void _rub(Offset viewportPoint) {
     final scene = _toScene(viewportPoint);
@@ -827,13 +854,37 @@ class CanvasViewState extends State<CanvasView> {
   }
 
   void _onScaleStart(ScaleStartDetails details) {
+    if (details.pointerCount == 1 && _tool == CanvasTool.select &&
+        widget.onEditShape != null) {
+      final mark = _markNear(_toScene(details.localFocalPoint));
+      if (mark != null) {
+        setState(() {
+          _picked = mark;
+          _movingShape = mark;
+          _shapeShift = Offset.zero;
+          _shapeStart = CanvasMarks.pointsOf(widget.shapes[mark], _cardRects);
+        });
+        return;
+      }
+    }
     _panAtStart = _pan;
     _scaleAtStart = _scale;
     _focalAtStart = details.localFocalPoint;
   }
 
-  void _onScaleUpdate(ScaleUpdateDetails details) =>
-      _applyZoom(details.localFocalPoint, details.scale);
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    if (_movingShape != null && details.pointerCount == 1) {
+      setState(() => _shapeShift += details.focalPointDelta / _scale);
+      return;
+    }
+    if (_movingShape != null) {
+      _finishShapeMove();
+      _panAtStart = _pan;
+      _scaleAtStart = _scale;
+      _focalAtStart = details.localFocalPoint;
+    }
+    _applyZoom(details.localFocalPoint, details.scale);
+  }
 
   /// Puts everything on screen, which is the first thing wanted on opening a
   /// canvas that was arranged somewhere else.
@@ -1530,9 +1581,10 @@ class CanvasViewState extends State<CanvasView> {
                             // one armed is not a mark, so it does nothing rather
                             // than quietly clearing the selection behind it.
                             if (_tool != CanvasTool.select) return;
+                            final mark = _markNear(_toScene(details.localPosition));
                             setState(() {
                               _selection.clear();
-                              _picked = null;
+                              _picked = mark;
                             });
                           },
                           // A mark is not a card, so it has no box to press on:
@@ -1569,6 +1621,9 @@ class CanvasViewState extends State<CanvasView> {
                           onScaleUpdate: touch && !drawing
                               ? _onScaleUpdate
                               : null,
+                          onScaleEnd: touch && !drawing
+                              ? (_) => _finishShapeMove()
+                              : null,
                           onPanStart: drawing
                               ? (details) {
                                   _focus.requestFocus();
@@ -1586,6 +1641,21 @@ class CanvasViewState extends State<CanvasView> {
                                   // and leaving the marquee unstarted is what the
                                   // update below reads as "pan".
                                   if (_panning) return;
+                                  if (_tool == CanvasTool.select &&
+                                      widget.onEditShape != null) {
+                                    final mark = _markNear(
+                                      _toScene(details.localPosition));
+                                    if (mark != null) {
+                                      setState(() {
+                                        _picked = mark;
+                                        _movingShape = mark;
+                                        _shapeShift = Offset.zero;
+                                        _shapeStart = CanvasMarks.pointsOf(
+                                          widget.shapes[mark], _cardRects);
+                                      });
+                                      return;
+                                    }
+                                  }
                                   _marqueeStart(details.localPosition);
                                 },
                           onPanUpdate: drawing
@@ -1599,6 +1669,11 @@ class CanvasViewState extends State<CanvasView> {
                               : touch
                               ? null
                               : (details) {
+                                  if (_movingShape != null) {
+                                    setState(() => _shapeShift +=
+                                        details.delta / _scale);
+                                    return;
+                                  }
                                   if (_marqueeFrom != null) {
                                     _marqueeUpdate(details.localPosition);
                                     return;
@@ -1615,7 +1690,13 @@ class CanvasViewState extends State<CanvasView> {
                                 }
                               : touch
                               ? null
-                              : (_) => _marqueeEnd(),
+                              : (_) {
+                                  if (_movingShape != null) {
+                                    _finishShapeMove();
+                                    return;
+                                  }
+                                  _marqueeEnd();
+                                },
                           child: CustomPaint(
                             painter: _GridPainter(
                               pan: _pan,
@@ -1757,7 +1838,13 @@ class CanvasViewState extends State<CanvasView> {
                       child: IgnorePointer(
                         child: CustomPaint(
                           painter: _MarksPainter(
-                            shapes: widget.shapes,
+                            shapes: [
+                              for (var i = 0; i < widget.shapes.length; i++)
+                                if (i == _movingShape && _shapeStart != null)
+                                  _shiftedShape(widget.shapes[i], _shapeStart!,
+                                    _shapeShift)
+                                else widget.shapes[i],
+                            ],
                             pending: _drawing,
                             pendingKind: _tool == CanvasTool.frame
                                 ? CanvasShapeKind.rectangle
@@ -2894,6 +2981,7 @@ class _CardOnCanvas extends StatelessWidget {
                         // could be looked at and never moved. On a canvas a card is an
                         // object you pick up, not a page you interact with.
                         child: IgnorePointer(
+                          ignoring: portal == null || !selected,
                           child: spot.isFrame
                               // A frame shows only its name, at the top left where
                               // a label goes — the rest of it is the space it
@@ -2939,8 +3027,9 @@ class _CardOnCanvas extends StatelessWidget {
                                         ? _PortalPreview(
                                             fileSlug: portal.group(1)!,
                                             noteText: portal.group(3) == null
-                                                ? null
-                                                : Uri.decodeComponent(portal.group(3)!),
+                                          ? null
+                                              : Uri.decodeComponent(portal.group(3)!),
+                                            selected: selected,
                                           )
                                         : NoteView(
                                       markdown: card.markdown,
@@ -3095,20 +3184,40 @@ class _ZoomedText extends TextScaler {
 }
 
 /// A picture on the canvas, at whatever width the card is.
-class _PortalPreview extends StatelessWidget {
-  const _PortalPreview({required this.fileSlug, this.noteText});
+class _PortalPreview extends StatefulWidget {
+  const _PortalPreview({required this.fileSlug, this.noteText,
+    required this.selected});
 
   final String fileSlug;
   final String? noteText;
+  final bool selected;
+
+  @override
+  State<_PortalPreview> createState() => _PortalPreviewState();
+}
+
+class _PortalPreviewState extends State<_PortalPreview> {
+  TextEditingController? _editing;
+
+  @override
+  void dispose() {
+    _editing?.dispose();
+    super.dispose();
+  }
+
+  void _close() => setState(() {
+    _editing?.dispose();
+    _editing = null;
+  });
 
   @override
   Widget build(BuildContext context) {
     final project = context.watch<AppState>().projects.where(
-      (project) => project.fileSlug == fileSlug).firstOrNull;
+      (project) => project.fileSlug == widget.fileSlug).firstOrNull;
     if (project == null) return const Text('Linked project is unavailable');
-    final item = noteText == null ? null : project.items.where(
-      (item) => item.text == noteText).firstOrNull;
-    if (noteText != null && item == null) {
+    final item = widget.noteText == null ? null : project.items.where(
+      (item) => item.text == widget.noteText).firstOrNull;
+    if (widget.noteText != null && item == null) {
       return const Text('Linked note is unavailable');
     }
     final theme = Theme.of(context);
@@ -3124,12 +3233,39 @@ class _PortalPreview extends StatelessWidget {
           Expanded(child: Text(item?.title ?? project.title,
             style: theme.textTheme.titleSmall, maxLines: 2,
             overflow: TextOverflow.ellipsis)),
+          if (widget.selected)
+            IconButton(
+              tooltip: _editing == null ? 'Edit here' : 'Save linked note',
+              icon: Icon(_editing == null ? Icons.edit_outlined : Icons.check,
+                size: 17),
+              onPressed: () async {
+                if (_editing == null) {
+                  setState(() => _editing = TextEditingController(text: content));
+                  return;
+                }
+                final changed = _editing!.text;
+                final state = context.read<AppState>();
+                if (item == null) {
+                  await state.setNotes(project.slug, changed);
+                } else {
+                  final index = project.items.indexWhere(
+                    (candidate) => candidate.text == item.text);
+                  if (index >= 0) await state.setItemNotes(project.slug, index, changed);
+                }
+                if (mounted) _close();
+              },
+            ),
         ]),
         const Divider(height: 12),
-        if (content.trim().isNotEmpty)
+        if (_editing != null) ...[
+          TextField(controller: _editing, minLines: 3, maxLines: 10,
+            autofocus: true, decoration: const InputDecoration(
+              border: OutlineInputBorder(), hintText: 'Write here')),
+          TextButton(onPressed: _close, child: const Text('Cancel')),
+        ] else if (content.trim().isNotEmpty)
           NoteView(markdown: content)
         else
-          Text('Open the menu to edit this ${item == null ? 'project' : 'note'}.',
+          Text('Select this card to edit the ${item == null ? 'project' : 'note'}.',
             style: theme.textTheme.bodySmall),
       ],
     );
@@ -3757,6 +3893,7 @@ class _CanvasTools extends StatelessWidget {
 
   static const _own = [
     CanvasTool.select,
+    CanvasTool.image,
     CanvasTool.sticky,
     CanvasTool.text,
     CanvasTool.frame,

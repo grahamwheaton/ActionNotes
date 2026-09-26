@@ -10,11 +10,12 @@ import '../storage/update_installer.dart';
 
 /// Installs on Android, or verifies, saves and restarts into a Windows update.
 class UpdateBanner extends StatefulWidget {
-  const UpdateBanner({super.key, this.installer});
+  const UpdateBanner({super.key, this.installer, this.compact = false});
 
   /// Injectable so a test can drive the download without a network or a
   /// package installer.
   final UpdateInstaller? installer;
+  final bool compact;
 
   @override
   State<UpdateBanner> createState() => _UpdateBannerState();
@@ -149,6 +150,15 @@ class _UpdateBannerState extends State<UpdateBanner> {
 
     final installs = _canInstall && update.downloadUrl != null;
     final busy = _progress != null;
+
+    if (widget.compact) {
+      return OutlinedButton(
+        onPressed: busy ? null : () => installs ? _install(update) : _open(update),
+        child: Text(busy
+            ? 'Downloading ${(_progress! * 100).round()}%'
+            : 'Update app'),
+      );
+    }
 
     return Material(
       color: theme.colorScheme.secondaryContainer,

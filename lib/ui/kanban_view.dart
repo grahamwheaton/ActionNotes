@@ -5,6 +5,7 @@ import '../models/kanban_board.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
 import 'checklist_view.dart';
+import 'text_prompt.dart';
 
 /// A board made of live project columns. The columns reference projects;
 /// editing an item here changes its original project.
@@ -17,6 +18,7 @@ class KanbanView extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final columns = KanbanBoard.columns(board);
+    final presets = KanbanBoard.presets(board);
 
     void add(String slug) {
       if (slug == board.slug || columns.any((column) => column.slug == slug)) return;
@@ -37,6 +39,35 @@ class KanbanView extends StatelessWidget {
             padding: const EdgeInsets.all(12),
             child: Row(children: [
               const Expanded(child: Text('Drag a project here, or add a column')),
+              PopupMenuButton<String>(
+                tooltip: 'Filter presets',
+                icon: const Icon(Icons.bookmarks_outlined),
+                onSelected: (choice) async {
+                  if (choice == 'save') {
+                    final name = await TextPromptDialog.show(context,
+                      title: 'Save filter preset', hintText: 'Preset name');
+                    if (name == null || name.trim().isEmpty) return;
+                    await state.setKanbanPresets(board.slug,
+                      {...presets, name.trim(): [...columns]});
+                  } else if (choice.startsWith('delete:')) {
+                    final next = {...presets}..remove(choice.substring(7));
+                    await state.setKanbanPresets(board.slug, next);
+                  } else if (choice.startsWith('apply:')) {
+                    await state.setKanbanColumns(board.slug,
+                      presets[choice.substring(6)]!);
+                  }
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'save',
+                    child: Text('Save current filters…')),
+                  if (presets.isNotEmpty) const PopupMenuDivider(),
+                  for (final name in presets.keys) ...[
+                    PopupMenuItem(value: 'apply:$name', child: Text(name)),
+                    PopupMenuItem(value: 'delete:$name',
+                      child: Text('Delete “$name”')),
+                  ],
+                ],
+              ),
               PopupMenuButton<String>(
                 tooltip: 'Add project column',
                 icon: const Icon(Icons.add),

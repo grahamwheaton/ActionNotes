@@ -5,13 +5,15 @@
 /// it. What makes a card a picture is that its markdown is one image and
 /// nothing else.
 class CanvasCard {
-  const CanvasCard({required this.markdown, required this.imagePath});
+  const CanvasCard({required this.markdown, required this.imagePath,
+    this.id});
 
   /// The card's markdown, exactly as the file holds it.
   final String markdown;
 
   /// The image this card is, or null when it is text.
   final String? imagePath;
+  final String? id;
 
   bool get isImage => imagePath != null;
 
@@ -23,6 +25,7 @@ class CanvasCard {
   /// typing in it loses its place — the position is found by index first and
   /// only checked against this.
   String get ref {
+    if (id != null) return 'canvas:$id';
     if (imagePath != null) return imagePath!;
     final text = markdown.replaceAll(RegExp(r'\s+'), ' ').trim();
     return text.length <= 40 ? text : text.substring(0, 40);
@@ -55,7 +58,16 @@ class CanvasCards {
 
   /// A card that is one image and nothing else. Leading and trailing space is
   /// allowed so that a hand-written line still counts.
-  static final _loneImage = RegExp(r'^!\[([^\]]*)\]\(([^)\s]+)\)$');
+  static final _loneImage = RegExp(
+    r'^!\[([^\]]*)\]\(([^)\s]+)\)(?:\s*<!-- canvas-id: ([a-zA-Z0-9-]+) -->)?$',
+  );
+  static final _cardId = RegExp(r'\s*<!-- canvas-id: ([a-zA-Z0-9-]+) -->$');
+
+  static CanvasCard _fromMarkdown(String markdown) {
+    final image = _loneImage.firstMatch(markdown);
+    return CanvasCard(markdown: markdown, imagePath: image?.group(2),
+      id: image?.group(3) ?? _cardId.firstMatch(markdown)?.group(1));
+  }
 
   static List<CanvasCard> parse(String body) {
     final cards = <CanvasCard>[];
@@ -65,10 +77,7 @@ class CanvasCards {
       final markdown = current.join('\n').trim();
       current = <String>[];
       if (markdown.isEmpty) return;
-      final image = _loneImage.firstMatch(markdown);
-      cards.add(
-        CanvasCard(markdown: markdown, imagePath: image?.group(2)),
-      );
+      cards.add(_fromMarkdown(markdown));
     }
 
     for (final line in body.split('\n')) {
@@ -110,5 +119,11 @@ class CanvasCards {
 
   /// The markdown for a text card.
   static CanvasCard text(String value) =>
-      CanvasCard(markdown: value.trim(), imagePath: null);
+      _fromMarkdown(value.trim());
+
+  /// Identical image paths and note text still need separate arrow targets.
+  static CanvasCard uniqueCopy(CanvasCard card) => text(
+    '${card.markdown.replaceFirst(_cardId, '')} '
+    '<!-- canvas-id: ${DateTime.now().microsecondsSinceEpoch.toRadixString(36)} -->',
+  );
 }
