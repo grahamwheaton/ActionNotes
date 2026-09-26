@@ -487,20 +487,7 @@ class _DetailHeader extends StatelessWidget {
               ],
             ),
           ),
-          IconButton(
-            tooltip: 'Archive completed',
-            icon: const Icon(Icons.inventory_2_outlined),
-            onPressed: () async {
-              final problem = await context.read<AppState>().archiveCompleted(
-                project.slug,
-              );
-              if (problem == null || !context.mounted) return;
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(SnackBar(content: Text(problem)));
-            },
-          ),
-        ],
+          ProjectMenu(project: project),        ],
       ),
     );
   }
