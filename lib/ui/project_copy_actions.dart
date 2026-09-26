@@ -34,8 +34,10 @@ class ProjectCopyActions {
         await File(location.path).writeAsBytes(bytes);
       }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not share a copy: $error')));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not share a copy: $error')));
+      }
     }
   }
 
@@ -55,8 +57,10 @@ class ProjectCopyActions {
         ));
       }
     } catch (error) {
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not import the copy: $error')));
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not import the copy: $error')));
+      }
     }
   }
 }
