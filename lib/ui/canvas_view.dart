@@ -311,6 +311,15 @@ class CanvasViewState extends State<CanvasView> {
   }
 
   void _openLinkedCard(int index) {
+    final projectMatch = RegExp(r'\]\(([^)]+)\.md#project\)')
+        .firstMatch(widget.cards[index].markdown);
+    if (projectMatch != null) {
+      final state = context.read<AppState>();
+      final project = state.projects.where((project) =>
+          project.fileSlug == projectMatch.group(1)).firstOrNull;
+      if (project != null) state.select(project.slug);
+      return;
+    }
     final match = RegExp(r'\]\(([^)]+)\.md#note=([^)]*)\)')
         .firstMatch(widget.cards[index].markdown);
     if (match == null) return;
@@ -1386,7 +1395,30 @@ class CanvasViewState extends State<CanvasView> {
     final order = [for (var i = 0; i < drawable; i++) i]
       ..sort((a, b) => _spots[a].z.compareTo(_spots[b].z));
 
-    return Theme(
+    return DragTarget<Object>(
+      onWillAcceptWithDetails: (details) =>
+          widget.onPlaceCard != null &&
+          (details.data is String || details.data is NoteTarget),
+      onAcceptWithDetails: (details) {
+        final state = context.read<AppState>();
+        final value = details.data;
+        final slug = value is String ? value : (value as NoteTarget).slug;
+        final project = state.projectBySlug(slug);
+        if (project == null) return;
+        final local = _toLocal(details.offset) ?? _centre();
+        final scene = _toScene(local);
+        String markdown;
+        if (value is NoteTarget && value.index < project.items.length) {
+          final item = project.items[value.index];
+          markdown = '[${project.title}: ${item.title}]'
+              '(${project.fileSlug}.md#note=${Uri.encodeComponent(item.text)})';
+        } else {
+          markdown = '[${project.title}](${project.fileSlug}.md#project)';
+        }
+        widget.onPlaceCard?.call(markdown,
+          CanvasSpot(x: scene.dx, y: scene.dy, width: 280));
+      },
+      builder: (context, candidates, rejected) => Theme(
       data: theme,
       child: MouseRegion(
         onExit: (_) => _wheelActive = false,
@@ -1904,7 +1936,7 @@ class CanvasViewState extends State<CanvasView> {
         ),
       ),
       ),
-    );
+    ));
   }
 
   /// Takes the selection off the canvas.
@@ -2421,6 +2453,32 @@ class CanvasViewState extends State<CanvasView> {
     widget.onEditCard?.call(index, text);
   }
 
+  Future<void> _editPortal(int index) async {
+    final markdown = widget.cards[index].markdown;
+    final match = RegExp(r'\]\(([^)]+)\.md#(project|note=([^)]*))\)')
+        .firstMatch(markdown);
+    if (match == null) return;
+    final state = context.read<AppState>();
+    final project = state.projects.where((project) =>
+        project.fileSlug == match.group(1)).firstOrNull;
+    if (project == null) return;
+    final noteText = match.group(3);
+    final itemIndex = noteText == null ? -1 : project.items.indexWhere(
+      (item) => item.text == Uri.decodeComponent(noteText));
+    if (noteText != null && itemIndex < 0) return;
+    final current = itemIndex < 0 ? project.notes : project.items[itemIndex].notes;
+    final changed = await TextPromptDialog.show(context,
+      title: itemIndex < 0 ? 'Edit ${project.title}'
+          : 'Edit ${project.items[itemIndex].title}',
+      initialValue: current, minLines: 6, maxLines: 14, allowEmpty: true);
+    if (changed == null) return;
+    if (itemIndex < 0) {
+      await state.setNotes(project.slug, changed);
+    } else {
+      await state.setItemNotes(project.slug, itemIndex, changed);
+    }
+  }
+
   void _showCardMenu(int index, Offset at) {
     // Whatever is selected, or the card that was clicked if it is not part of
     // the selection.
@@ -2428,6 +2486,12 @@ class CanvasViewState extends State<CanvasView> {
     final many = targets.length > 1;
 
     showItemMenu(context, [
+      if (!many && RegExp(r'\.md#(?:project|note=)').hasMatch(
+          widget.cards[index].markdown))
+        ContextMenuAction(
+          label: 'Edit linked content', icon: Icons.edit_outlined,
+          onSelected: () => _editPortal(index),
+        ),
       if (many)
         ContextMenuAction(
           label: 'Line ${targets.length} up…',
@@ -2697,6 +2761,8 @@ class _CardOnCanvas extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final at = Offset(spot.x, spot.y) * scale + pan;
+    final portal = RegExp(r'\]\(([^)]+)\.md#(project|note=([^)]*))\)')
+        .firstMatch(card.markdown);
 
     return Positioned(
       left: at.dx,
@@ -2869,7 +2935,14 @@ class _CardOnCanvas extends StatelessWidget {
                                               : 8) *
                                           scale.clamp(0.5, 1.5),
                                     ),
-                                    child: NoteView(
+                                    child: portal != null
+                                        ? _PortalPreview(
+                                            fileSlug: portal.group(1)!,
+                                            noteText: portal.group(3) == null
+                                                ? null
+                                                : Uri.decodeComponent(portal.group(3)!),
+                                          )
+                                        : NoteView(
                                       markdown: card.markdown,
                                       // Centred on a sticky note, the way one
                                       // written by hand is: what is on it is a
@@ -3022,6 +3095,47 @@ class _ZoomedText extends TextScaler {
 }
 
 /// A picture on the canvas, at whatever width the card is.
+class _PortalPreview extends StatelessWidget {
+  const _PortalPreview({required this.fileSlug, this.noteText});
+
+  final String fileSlug;
+  final String? noteText;
+
+  @override
+  Widget build(BuildContext context) {
+    final project = context.watch<AppState>().projects.where(
+      (project) => project.fileSlug == fileSlug).firstOrNull;
+    if (project == null) return const Text('Linked project is unavailable');
+    final item = noteText == null ? null : project.items.where(
+      (item) => item.text == noteText).firstOrNull;
+    if (noteText != null && item == null) {
+      return const Text('Linked note is unavailable');
+    }
+    final theme = Theme.of(context);
+    final content = item?.notes ?? project.notes;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(children: [
+          Icon(item == null ? Icons.folder_outlined : Icons.notes_outlined,
+            size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 6),
+          Expanded(child: Text(item?.title ?? project.title,
+            style: theme.textTheme.titleSmall, maxLines: 2,
+            overflow: TextOverflow.ellipsis)),
+        ]),
+        const Divider(height: 12),
+        if (content.trim().isNotEmpty)
+          NoteView(markdown: content)
+        else
+          Text('Open the menu to edit this ${item == null ? 'project' : 'note'}.',
+            style: theme.textTheme.bodySmall),
+      ],
+    );
+  }
+}
+
 class _CanvasImage extends StatefulWidget {
   const _CanvasImage({required this.reference, this.near = true});
 
