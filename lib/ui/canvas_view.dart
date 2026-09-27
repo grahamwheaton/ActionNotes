@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -8,8 +9,11 @@ import 'package:provider/provider.dart';
 
 import '../markdown/canvas_cards.dart';
 import '../models/canvas_layout.dart';
+import '../models/checklist_item.dart';
+import '../models/project.dart';
 import '../state/app_state.dart';
 import 'image_viewer.dart';
+import 'note_blocks_editor.dart';
 import 'canvas_marks.dart';
 import 'canvas_snap.dart';
 import 'context_menu.dart';
@@ -3185,8 +3189,11 @@ class _ZoomedText extends TextScaler {
 
 /// A picture on the canvas, at whatever width the card is.
 class _PortalPreview extends StatefulWidget {
-  const _PortalPreview({required this.fileSlug, this.noteText,
-    required this.selected});
+  const _PortalPreview({
+    required this.fileSlug,
+    this.noteText,
+    required this.selected,
+  });
 
   final String fileSlug;
   final String? noteText;
@@ -3196,77 +3203,312 @@ class _PortalPreview extends StatefulWidget {
   State<_PortalPreview> createState() => _PortalPreviewState();
 }
 
+/// A window onto a project, or one of its notes, that can be worked in where
+/// it sits: items ticked, starred, renamed and added, and the writing edited
+/// in the same block editor the note itself uses. Edits are saved as they are
+/// made, a moment after typing stops.
+///
+/// Until the card is selected it takes no pointers, so it can be picked up
+/// and moved like any other card; once selected it is live.
 class _PortalPreviewState extends State<_PortalPreview> {
-  TextEditingController? _editing;
+  final _adding = TextEditingController();
+  Timer? _saveTimer;
+  String? _pending;
+
+  /// What this portal last wrote, so a change that came from somewhere else —
+  /// a sync, the note open in another pane — can be told apart from our own
+  /// save coming back, and only the former rebuilds the editor.
+  String? _written;
+  int _generation = 0;
+
+  // Held rather than looked up, because the last save happens in dispose,
+  // where the tree can no longer be asked.
+  late AppState _state;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _state = context.read<AppState>();
+  }
 
   @override
   void dispose() {
-    _editing?.dispose();
+    _flush();
+    _adding.dispose();
     super.dispose();
   }
 
-  void _close() => setState(() {
-    _editing?.dispose();
-    _editing = null;
-  });
+  Project? _project(AppState state) => state.projects
+      .where((project) => project.fileSlug == widget.fileSlug)
+      .firstOrNull;
+
+  void _notesChanged(String markdown) {
+    _pending = markdown;
+    _saveTimer?.cancel();
+    _saveTimer = Timer(const Duration(milliseconds: 600), _flush);
+  }
+
+  void _flush() {
+    _saveTimer?.cancel();
+    _saveTimer = null;
+    final markdown = _pending;
+    _pending = null;
+    if (markdown == null) return;
+    final state = _state;
+    final project = _project(state);
+    if (project == null) return;
+    _written = markdown;
+    if (widget.noteText == null) {
+      state.setNotes(project.slug, markdown);
+    } else {
+      final index = project.items.indexWhere(
+        (item) => item.text == widget.noteText,
+      );
+      if (index >= 0) state.setItemNotes(project.slug, index, markdown);
+    }
+  }
+
+  Future<void> _add(Project project) async {
+    final text = _adding.text.trim();
+    if (text.isEmpty) return;
+    _adding.clear();
+    await context.read<AppState>().addItem(project.slug, text);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final project = context.watch<AppState>().projects.where(
-      (project) => project.fileSlug == widget.fileSlug).firstOrNull;
+    final state = context.watch<AppState>();
+    final project = _project(state);
     if (project == null) return const Text('Linked project is unavailable');
-    final item = widget.noteText == null ? null : project.items.where(
-      (item) => item.text == widget.noteText).firstOrNull;
+    final item = widget.noteText == null
+        ? null
+        : project.items
+              .where((item) => item.text == widget.noteText)
+              .firstOrNull;
     if (widget.noteText != null && item == null) {
       return const Text('Linked note is unavailable');
     }
     final theme = Theme.of(context);
     final content = item?.notes ?? project.notes;
-    return Column(
+    if (_pending == null && content != _written) {
+      _written = content;
+      _generation++;
+    }
+
+    final showItems = item == null && project.mode != ProjectMode.notes;
+    final open =
+        [
+          for (var i = 0; i < project.items.length; i++)
+            if (!project.items[i].done) i,
+        ]..sort(
+          (a, b) => (project.items[a].starred ? 0 : 1).compareTo(
+            project.items[b].starred ? 0 : 1,
+          ),
+        );
+    final done = [
+      for (var i = 0; i < project.items.length; i++)
+        if (project.items[i].done) i,
+    ];
+
+    final body = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(children: [
-          Icon(item == null ? Icons.folder_outlined : Icons.notes_outlined,
-            size: 16, color: theme.colorScheme.primary),
-          const SizedBox(width: 6),
-          Expanded(child: Text(item?.title ?? project.title,
-            style: theme.textTheme.titleSmall, maxLines: 2,
-            overflow: TextOverflow.ellipsis)),
-          if (widget.selected)
-            IconButton(
-              tooltip: _editing == null ? 'Edit here' : 'Save linked note',
-              icon: Icon(_editing == null ? Icons.edit_outlined : Icons.check,
-                size: 17),
-              onPressed: () async {
-                if (_editing == null) {
-                  setState(() => _editing = TextEditingController(text: content));
-                  return;
-                }
-                final changed = _editing!.text;
-                final state = context.read<AppState>();
-                if (item == null) {
-                  await state.setNotes(project.slug, changed);
-                } else {
-                  final index = project.items.indexWhere(
-                    (candidate) => candidate.text == item.text);
-                  if (index >= 0) await state.setItemNotes(project.slug, index, changed);
-                }
-                if (mounted) _close();
-              },
+        Row(
+          children: [
+            Icon(
+              item == null ? Icons.folder_outlined : Icons.notes_outlined,
+              size: 16,
+              color: theme.colorScheme.primary,
             ),
-        ]),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                item?.title ?? project.title,
+                style: theme.textTheme.titleSmall,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (showItems)
+              Text(
+                '${open.length} open',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+          ],
+        ),
         const Divider(height: 12),
-        if (_editing != null) ...[
-          TextField(controller: _editing, minLines: 3, maxLines: 10,
-            autofocus: true, decoration: const InputDecoration(
-              border: OutlineInputBorder(), hintText: 'Write here')),
-          TextButton(onPressed: _close, child: const Text('Cancel')),
-        ] else if (content.trim().isNotEmpty)
+        if (showItems) ...[
+          for (final index in [...open, ...done])
+            _PortalItem(
+              key: ValueKey('${project.slug}-${project.items[index].text}'),
+              slug: project.slug,
+              index: index,
+              item: project.items[index],
+              editable: widget.selected,
+            ),
+          if (widget.selected)
+            TextField(
+              controller: _adding,
+              decoration: const InputDecoration(
+                isDense: true,
+                prefixIcon: Icon(Icons.add, size: 18),
+                hintText: 'Add an item',
+                border: InputBorder.none,
+              ),
+              onSubmitted: (_) => _add(project),
+            )
+          else if (project.items.isEmpty)
+            Text(
+              'No items yet. Select this card to add one.',
+              style: theme.textTheme.bodySmall,
+            ),
+          if (content.trim().isNotEmpty || widget.selected)
+            const Divider(height: 16),
+        ],
+        if (widget.selected)
+          NoteBlocksEditor(
+            key: ValueKey('portal-notes-$_generation'),
+            initialMarkdown: content,
+            shrinkWrap: true,
+            placeholder: item == null ? 'Project notes…' : 'Write here…',
+            onChanged: _notesChanged,
+          )
+        else if (content.trim().isNotEmpty)
           NoteView(markdown: content)
-        else
-          Text('Select this card to edit the ${item == null ? 'project' : 'note'}.',
-            style: theme.textTheme.bodySmall),
+        else if (!showItems)
+          Text(
+            'Select this card to write in the note.',
+            style: theme.textTheme.bodySmall,
+          ),
+      ],
+    );
+
+    // A card the person has sized keeps its size; what does not fit scrolls.
+    return LayoutBuilder(
+      builder: (context, constraints) => constraints.maxHeight.isFinite
+          ? SingleChildScrollView(child: body)
+          : body,
+    );
+  }
+}
+
+/// One item inside a portal: ticked, starred and renamed where it is.
+class _PortalItem extends StatefulWidget {
+  const _PortalItem({
+    super.key,
+    required this.slug,
+    required this.index,
+    required this.item,
+    required this.editable,
+  });
+
+  final String slug;
+  final int index;
+  final ChecklistItem item;
+  final bool editable;
+
+  @override
+  State<_PortalItem> createState() => _PortalItemState();
+}
+
+class _PortalItemState extends State<_PortalItem> {
+  late final _controller = TextEditingController(text: widget.item.text);
+  final _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() {
+      if (!_focus.hasFocus) _commit();
+    });
+  }
+
+  @override
+  void didUpdateWidget(_PortalItem old) {
+    super.didUpdateWidget(old);
+    if (!_focus.hasFocus && _controller.text != widget.item.text) {
+      _controller.text = widget.item.text;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  void _commit() {
+    final text = _controller.text.trim();
+    if (text.isEmpty || text == widget.item.text) {
+      _controller.text = widget.item.text;
+      return;
+    }
+    context.read<AppState>().editItem(widget.slug, widget.index, text);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final state = context.read<AppState>();
+    final item = widget.item;
+    final style = theme.textTheme.bodyMedium?.copyWith(
+      decoration: item.done ? TextDecoration.lineThrough : null,
+      color: item.done ? theme.colorScheme.onSurfaceVariant : null,
+    );
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        SizedBox(
+          width: 32,
+          height: 32,
+          child: Checkbox(
+            value: item.done,
+            visualDensity: VisualDensity.compact,
+            onChanged: widget.editable
+                ? (_) => state.toggleItem(widget.slug, widget.index)
+                : null,
+          ),
+        ),
+        Expanded(
+          child: widget.editable
+              ? TextField(
+                  controller: _controller,
+                  focusNode: _focus,
+                  style: style,
+                  maxLines: null,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: InputBorder.none,
+                  ),
+                  onSubmitted: (_) => _commit(),
+                )
+              : Text(
+                  item.title,
+                  style: style,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                ),
+        ),
+        IconButton(
+          tooltip: item.starred ? 'Remove star' : 'Star',
+          visualDensity: VisualDensity.compact,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+          padding: EdgeInsets.zero,
+          icon: Icon(
+            item.starred ? Icons.star : Icons.star_border,
+            size: 17,
+            color: item.starred
+                ? theme.colorScheme.primary
+                : theme.colorScheme.outline,
+          ),
+          onPressed: widget.editable
+              ? () => state.toggleStar(widget.slug, widget.index)
+              : null,
+        ),
       ],
     );
   }

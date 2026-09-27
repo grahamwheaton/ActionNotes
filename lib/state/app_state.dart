@@ -2096,6 +2096,11 @@ class AppState extends ChangeNotifier {
         extraFrontMatter: KanbanBoard.withColumns(project, columns),
       ));
 
+  Future<void> setKanbanSize(String slug, KanbanSize size) =>
+      _mutate(slug, (project) => project.copyWith(
+        extraFrontMatter: KanbanBoard.withSize(project, size),
+      ));
+
   Future<void> setKanbanPresets(String slug,
       Map<String, List<KanbanColumn>> presets) =>
       _mutate(slug, (project) => project.copyWith(

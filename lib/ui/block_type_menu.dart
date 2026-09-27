@@ -10,6 +10,7 @@ class BlockTypeChoice {
     required this.icon,
     required this.shortcut,
     required this.block,
+    this.glyph,
   });
 
   final String label;
@@ -17,6 +18,10 @@ class BlockTypeChoice {
   /// The markdown this produces, shown the way MarkText shows it.
   final String hint;
   final String icon;
+
+  /// Drawn in place of [icon] where a text character would not read well —
+  /// a checkbox or a grid in whatever font the platform falls back to.
+  final IconData? glyph;
   final String shortcut;
   final NoteBlock block;
 }
@@ -44,6 +49,7 @@ class BlockTypes {
       label: 'Checklist',
       hint: '- [ ] task',
       icon: '☑',
+      glyph: Icons.check_box_outlined,
       shortcut: 'Ctrl+T',
       block: NoteBlock.task(''),
     ),
@@ -58,6 +64,7 @@ class BlockTypes {
       label: 'Table',
       hint: 'Columns and rows',
       icon: '▦',
+      glyph: Icons.grid_on,
       shortcut: '',
       block: NoteBlock.table(),
     ),
@@ -179,12 +186,18 @@ class _ChoiceRow extends StatelessWidget {
             color: theme.colorScheme.surfaceContainerHighest,
             borderRadius: BorderRadius.circular(6),
           ),
-          child: Text(
-            choice.icon,
-            style: theme.textTheme.labelMedium?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          child: choice.glyph != null
+              ? Icon(
+                  choice.glyph,
+                  size: 18,
+                  color: theme.textTheme.labelMedium?.color,
+                )
+              : Text(
+                  choice.icon,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
         ),
         const SizedBox(width: 12),
         Expanded(

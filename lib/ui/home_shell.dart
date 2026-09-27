@@ -190,6 +190,15 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
             selectedSlug: active,
             onOpen: (slug) => _show(state, pane, slug, newTab: true),
             onClose: (slug) => _closeTab(state, pane, slug),
+            onMoveItem: (target, toSlug) async {
+              final problem =
+                  await state.moveItem(target.slug, target.index, toSlug);
+              if (!mounted) return;
+              final to = state.projectBySlug(toSlug)?.title ?? 'project';
+              ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(
+                content: Text(problem ?? 'Moved to $to'),
+              ));
+            },
             onToggleSidebar: pane == 0 ? () => setState(
                 () => _sidebarCollapsed = !_sidebarCollapsed) : null,
             sidebarCollapsed: _sidebarCollapsed,
@@ -314,7 +323,7 @@ class PaneNoteScope extends InheritedWidget {
 class _ProjectTabs extends StatelessWidget {
   const _ProjectTabs({required this.projects, required this.available,
     required this.selectedSlug, required this.onOpen, required this.onClose,
-    required this.onToggleSidebar, required this.sidebarCollapsed,
+    required this.onMoveItem, required this.onToggleSidebar, required this.sidebarCollapsed,
     required this.onToggleSplit, required this.split});
 
   final List<Project> projects;
@@ -322,6 +331,9 @@ class _ProjectTabs extends StatelessWidget {
   final String? selectedSlug;
   final ValueChanged<String> onOpen;
   final ValueChanged<String> onClose;
+
+  /// An item dropped on a tab moves to that tab's project.
+  final void Function(NoteTarget item, String toSlug) onMoveItem;
   final VoidCallback? onToggleSidebar;
   final bool sidebarCollapsed;
   final VoidCallback onToggleSplit;
@@ -353,10 +365,17 @@ class _ProjectTabs extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             children: [
               for (final project in projects)
-                SizedBox(
+                DragTarget<NoteTarget>(
+                  onWillAcceptWithDetails: (details) =>
+                      details.data.slug != project.slug,
+                  onAcceptWithDetails: (details) =>
+                      onMoveItem(details.data, project.slug),
+                  builder: (context, items, _) => SizedBox(
                   width: 184,
                   child: Material(
-                    color: project.slug == selectedSlug
+                    color: items.isNotEmpty
+                        ? theme.colorScheme.primaryContainer
+                        : project.slug == selectedSlug
                         ? theme.colorScheme.surface
                         : Colors.transparent,
                     child: Row(children: [
@@ -375,6 +394,7 @@ class _ProjectTabs extends StatelessWidget {
                       ),
                     ]),
                   ),
+                )
                 ),
             ],
           )),
