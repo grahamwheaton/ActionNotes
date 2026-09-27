@@ -959,6 +959,45 @@ void main() {
       );
     });
 
+    testWidgets('return at the start of a bullet pushes it down',
+        (tester) async {
+      final store = FakeLocalStore();
+      await openNoteFor(tester, store);
+
+      await tester.enterText(blockField(0), '- ');
+      await tester.pumpAndSettle();
+      await tester.enterText(blockField(0), 'First');
+      await tester.pumpAndSettle();
+
+      // Return with the caret before the text, from a soft keyboard: the line
+      // used to be emptied and then dropped out of the list, losing it.
+      await tester.enterText(blockField(0), '\nFirst');
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(blockField(1)).controller!.text, 'First');
+      await tester.enterText(blockField(0), 'Zero');
+      await tester.pumpAndSettle();
+
+      // And from a hardware Enter at the start.
+      final field = tester.widget<TextField>(blockField(1));
+      field.controller!.selection = const TextSelection.collapsed(offset: 0);
+      await tester.tap(blockField(1));
+      field.controller!.selection = const TextSelection.collapsed(offset: 0);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(tester.widget<TextField>(blockField(2)).controller!.text, 'First');
+      await tester.enterText(blockField(1), 'Half');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+
+      expect(
+        store.saved['bullets-test']!.items.single.notes,
+        '- Zero\n- Half\n- First',
+      );
+    });
+
     testWidgets('return on an empty bullet leaves the list', (tester) async {
       final store = FakeLocalStore();
       await openNoteFor(tester, store);

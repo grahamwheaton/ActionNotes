@@ -508,6 +508,14 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
     final before = controller.text.substring(0, at);
     final after = controller.text.substring(at + 1);
+    if (before.isEmpty && after.isNotEmpty && row.block.isListRow) {
+      controller.value = TextEditingValue(
+        text: after,
+        selection: const TextSelection.collapsed(offset: 0),
+      );
+      _insertBefore(row);
+      return;
+    }
 
     controller.value = TextEditingValue(
       text: before,
@@ -525,9 +533,25 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     );
     final before = controller.text.substring(0, caret);
     final after = controller.text.substring(caret);
+    if (before.isEmpty && after.isNotEmpty && row.block.isListRow) {
+      _insertBefore(row);
+      return;
+    }
 
     controller.text = before;
     _insertAfter(row, after);
+  }
+
+  /// Enter at the very start of a list row pushes the row down: an empty row
+  /// of the same kind goes in above it, and the caret stays with the text.
+  void _insertBefore(_Row row) {
+    final above = _row(row.block.copyWith(text: '', done: false));
+    setState(() => _rows.insert(_indexOfId(row.id), above));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      row.focus?.requestFocus();
+      row.controller?.selection = const TextSelection.collapsed(offset: 0);
+    });
+    _emit(structural: true);
   }
 
   /// Adds a row below [row] carrying [text] and moves the caret into it.

@@ -767,6 +767,48 @@ class _CompletedHeader extends StatelessWidget {
   }
 }
 
+/// Lets a row's title be picked up with a mouse and dropped on another
+/// project's tab to move it there, or on a pane to open its note.
+///
+/// Mouse only: under a finger a long press already reorders the row.
+class _ItemDragSource extends StatelessWidget {
+  const _ItemDragSource({
+    required this.enabled,
+    required this.target,
+    required this.title,
+    required this.child,
+  });
+
+  final bool enabled;
+  final NoteTarget target;
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!enabled) return child;
+    final theme = Theme.of(context);
+    return Draggable<NoteTarget>(
+      data: target,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: Material(
+        elevation: 4,
+        borderRadius: BorderRadius.circular(6),
+        color: theme.colorScheme.surfaceContainerHigh,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis),
+          ),
+        ),
+      ),
+      childWhenDragging: Opacity(opacity: 0.4, child: child),
+      child: child,
+    );
+  }
+}
+
 class _ItemTile extends StatelessWidget {
   const _ItemTile({
     super.key,
@@ -904,7 +946,11 @@ class _ItemTile extends StatelessWidget {
           onChanged: (_) => state.toggleItem(slug, index),
         ),
         Expanded(
-          child: _RowGestures(
+          child: _ItemDragSource(
+            enabled: !touch,
+            target: NoteTarget(slug, index),
+            title: item.text,
+            child: _RowGestures(
             onTap: touch ? onToggleNotes : openEditor,
             onDoubleTap: touch ? openEditor : null,
             child: Padding(
@@ -935,6 +981,7 @@ class _ItemTile extends StatelessWidget {
                 ],
               ),
             ),
+          ),
           ),
         ),
         // Not on a phone: a tap on the row already opens the notes, and the
