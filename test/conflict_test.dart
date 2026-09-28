@@ -36,6 +36,42 @@ Project project({
 
 void main() {
   group('merge', () {
+    test('same titles in different sections do not merge into each other', () {
+      final local = ProjectMarkdown.parse(
+        '# List\n\n## A\n\n- [ ] Review\n  Local A\n',
+        slug: 'list',
+      );
+      final remote = ProjectMarkdown.parse(
+        '# List\n\n## B\n\n- [ ] Review\n  Remote B\n\n'
+        '## A\n\n- [x] Review\n  Remote A\n',
+        slug: 'list',
+      );
+      final merged = ProjectMerge.merge(local: local, remote: remote);
+      expect(merged.items, hasLength(2));
+      expect(merged.items.first.block, 'A');
+      expect(merged.items.first.done, isTrue);
+      expect(merged.items.first.notes, contains('Remote A'));
+      expect(merged.items.first.notes, isNot(contains('Remote B')));
+      expect(merged.items.last.block, 'B');
+    });
+
+    test('repeated tasks in one section match one occurrence at a time', () {
+      final local = project(
+        items: const [ChecklistItem(text: 'Review', notes: 'Local')],
+      );
+      final remote = project(
+        items: const [
+          ChecklistItem(text: 'Review', notes: 'First'),
+          ChecklistItem(text: 'Review', notes: 'Second'),
+        ],
+      );
+      final merged = ProjectMerge.merge(local: local, remote: remote);
+      expect(merged.items, hasLength(2));
+      expect(merged.items.first.notes, contains('Local'));
+      expect(merged.items.first.notes, contains('First'));
+      expect(merged.items.last.notes, 'Second');
+    });
+
     test('keeps items from both sides, local order first', () {
       final local = project(
         items: const [

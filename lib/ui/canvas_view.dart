@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../markdown/canvas_cards.dart';
+import '../markdown/portal_links.dart';
 import '../models/canvas_layout.dart';
 import '../models/checklist_item.dart';
 import '../models/project.dart';
@@ -312,7 +313,7 @@ class CanvasViewState extends State<CanvasView> {
     if (chosen == null || !mounted) return;
     final title = candidates.firstWhere((item) => item.text == chosen).title;
     widget.onPlaceCard!(
-      '[${project.title}: $title](${project.fileSlug}.md#note=${Uri.encodeComponent(chosen)})',
+      '[${project.title}: $title](${PortalLinks.reference(project, widget.slug)}.md#note=${Uri.encodeComponent(chosen)})',
       CanvasSpot(x: scene.dx, y: scene.dy, width: 260),
     );
   }
@@ -322,8 +323,8 @@ class CanvasViewState extends State<CanvasView> {
         .firstMatch(widget.cards[index].markdown);
     if (projectMatch != null) {
       final state = context.read<AppState>();
-      final project = state.projects.where((project) =>
-          project.fileSlug == projectMatch.group(1)).firstOrNull;
+      final project = PortalLinks.resolve(projectMatch.group(1)!,
+          widget.slug, state.projects);
       if (project != null) state.select(project.slug);
       return;
     }
@@ -1466,9 +1467,9 @@ class CanvasViewState extends State<CanvasView> {
         if (value is NoteTarget && value.index < project.items.length) {
           final item = project.items[value.index];
           markdown = '[${project.title}: ${item.title}]'
-              '(${project.fileSlug}.md#note=${Uri.encodeComponent(item.text)})';
+              '(${PortalLinks.reference(project, widget.slug)}.md#note=${Uri.encodeComponent(item.text)})';
         } else {
-          markdown = '[${project.title}](${project.fileSlug}.md#project)';
+          markdown = '[${project.title}](${PortalLinks.reference(project, widget.slug)}.md#project)';
         }
         widget.onPlaceCard?.call(markdown,
           CanvasSpot(x: scene.dx, y: scene.dy, width: 280));
@@ -2550,8 +2551,7 @@ class CanvasViewState extends State<CanvasView> {
         .firstMatch(markdown);
     if (match == null) return;
     final state = context.read<AppState>();
-    final project = state.projects.where((project) =>
-        project.fileSlug == match.group(1)).firstOrNull;
+    final project = PortalLinks.resolve(match.group(1)!, widget.slug, state.projects);
     if (project == null) return;
     final noteText = match.group(3);
     final itemIndex = noteText == null ? -1 : project.items.indexWhere(
@@ -3029,6 +3029,7 @@ class _CardOnCanvas extends StatelessWidget {
                                     ),
                                     child: portal != null
                                         ? _PortalPreview(
+                                            canvasSlug: slug,
                                             fileSlug: portal.group(1)!,
                                             noteText: portal.group(3) == null
                                           ? null
@@ -3190,12 +3191,14 @@ class _ZoomedText extends TextScaler {
 /// A picture on the canvas, at whatever width the card is.
 class _PortalPreview extends StatefulWidget {
   const _PortalPreview({
+    required this.canvasSlug,
     required this.fileSlug,
     this.noteText,
     required this.selected,
   });
 
   final String fileSlug;
+  final String canvasSlug;
   final String? noteText;
   final bool selected;
 
@@ -3238,9 +3241,8 @@ class _PortalPreviewState extends State<_PortalPreview> {
     super.dispose();
   }
 
-  Project? _project(AppState state) => state.projects
-      .where((project) => project.fileSlug == widget.fileSlug)
-      .firstOrNull;
+  Project? _project(AppState state) => PortalLinks.resolve(
+      widget.fileSlug, widget.canvasSlug, state.projects);
 
   void _notesChanged(String markdown) {
     _pending = markdown;

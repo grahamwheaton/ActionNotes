@@ -506,6 +506,7 @@ class CanvasLayout {
     this.settings = const {},
     this.drawings = const {},
     this.sha,
+    this.dirty = false,
   });
 
   /// Section title to the spots of its cards, in the order the cards are in
@@ -522,6 +523,9 @@ class CanvasLayout {
 
   /// The blob SHA GitHub last gave us for the layout file.
   final String? sha;
+
+  /// Local-only upload state; never included in the shared layout JSON.
+  final bool dirty;
 
   static const empty = CanvasLayout();
 
@@ -550,11 +554,14 @@ class CanvasLayout {
     Map<String, CanvasSettings>? settings,
     Map<String, List<CanvasShape>>? drawings,
     String? sha,
+    bool clearSha = false,
+    bool? dirty,
   }) => CanvasLayout(
     sections: sections ?? this.sections,
     settings: settings ?? this.settings,
     drawings: drawings ?? this.drawings,
-    sha: sha ?? this.sha,
+    sha: clearSha ? null : (sha ?? this.sha),
+    dirty: dirty ?? this.dirty,
   );
 
   /// Back to standard drops the entry rather than writing one that says
