@@ -609,6 +609,35 @@ class ProjectSidebar extends StatefulWidget {
 class _ProjectSidebarState extends State<ProjectSidebar> {
   final _filter = TextEditingController();
   final _filterFocus = FocusNode();
+  final Set<String> _pinned = {};
+  SharedPreferences? _preferences;
+  int _projectFilter = 3;
+  bool get _desktop => !widget.drawerMode && !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.windows;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_desktop) _loadPins();
+  }
+
+  Future<void> _loadPins() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _preferences = preferences;
+      _pinned.addAll(preferences.getStringList('android_pinned_projects') ?? []);
+    });
+  }
+
+  Future<void> _togglePin(String slug) async {
+    final preferences = _preferences;
+    if (preferences == null) return;
+    setState(() {
+      if (!_pinned.remove(slug)) _pinned.add(slug);
+    });
+    await preferences.setStringList('android_pinned_projects', _pinned.toList());
+  }
 
   @override
   void dispose() {
@@ -638,9 +667,18 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
     }
 
     final filtering = _filter.text.trim().isNotEmpty;
-    final projects = _visible(state.projects);
+    final projects = _visible(state.projects).where((p) => !_desktop ||
+        (_projectFilter != 1 || _pinned.contains(p.slug))).where((p) =>
+        !_desktop || _projectFilter != 4 || p.isShared).toList();
+    if (_desktop && _projectFilter == 2) {
+      projects.sort((a, b) {
+        final order = (b.updated ?? b.created ?? DateTime(1970))
+            .compareTo(a.updated ?? a.created ?? DateTime(1970));
+        return order != 0 ? order : a.title.compareTo(b.title);
+      });
+    }
 
-    return Column(
+    final content = Column(
       children: [
         if (!widget.pushOnTap || widget.drawerMode) ...[
           const _SidebarHeader(),
@@ -648,6 +686,24 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
             controller: _filter,
             focusNode: _filterFocus,
             onChanged: () => setState(() {}),
+          ),
+          if (_desktop) Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                for (final (index, label) in [
+                  (0, 'All'), (1, 'Pinned'), (2, 'Recent'), (3, 'Groups'), (4, 'Shared'),
+                ]) Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: ChoiceChip(
+                    label: Text(label), selected: _projectFilter == index,
+                    showCheckmark: false, visualDensity: VisualDensity.compact,
+                    onSelected: (_) => setState(() => _projectFilter = index),
+                  ),
+                ),
+              ]),
+            ),
           ),
           const _ProjectsLabel(),
         ],
@@ -657,14 +713,19 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
           child: state.projects.isEmpty
               ? const _NoProjects()
               : projects.isEmpty
-              ? const _NoMatches()
+              ? _desktop && _projectFilter == 1 && !filtering
+                  ? const Center(child: Text('Pin a project to find it here.'))
+                  : _desktop && _projectFilter == 4 && !filtering
+                      ? const Center(child: Text('No shared projects yet.'))
+                      : const _NoMatches()
               : RefreshIndicator(
                   onRefresh: state.sync,
                   child: _ProjectList(
                     // While something is typed, the groups are set aside and
                     // every match is shown together: you are looking for a
                     // project, not for where you filed it.
-                    filtered: filtering ? projects : null,
+                    filtered: filtering || (_desktop && _projectFilter != 3)
+                        ? projects : null,
                     selectedSlug: widget.selectedSlug,
                     pushOnTap: widget.pushOnTap || widget.drawerMode,
                     onSelect: widget.onSelect,
@@ -674,6 +735,14 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
         ),
         if (!widget.pushOnTap || widget.drawerMode) const _SidebarFooter(),
       ],
+    );
+    if (!_desktop) return content;
+    return _ProjectCardScope(
+      compact: true, pinned: Set.unmodifiable(_pinned), onPin: _togglePin,
+      child: ColoredBox(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        child: content,
+      ),
     );
   }
 }
@@ -1516,16 +1585,24 @@ class _ProjectTile extends StatelessWidget {
   ) {
     final state = context.read<AppState>();
 
-    final home = _AndroidProjectScope.maybeOf(context);
-    if (home != null && onSelect == null) {
-      return _AndroidProjectCard(
-        project: project,
+    final home = _ProjectCardScope.maybeOf(context);
+    if (home != null && (onSelect == null || home.compact)) {
+      return _ProjectCard(
+        project: project, compact: home.compact, selected: selected,
         pinned: home.pinned.contains(project.slug),
         onPin: () => home.onPin(project.slug),
         actions: actions,
-        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-          builder: (_) => ChecklistView(slug: project.slug),
-        )),
+        onTap: () {
+          if (onSelect != null) {
+            onSelect!(project.slug);
+          } else if (pushOnTap) {
+            Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => ChecklistView(slug: project.slug),
+            ));
+          } else {
+            state.select(project.slug);
+          }
+        },
       );
     }
 
@@ -1994,7 +2071,7 @@ class _AndroidProjectsHomeState extends State<_AndroidProjectsHome> {
       return a.title.toLowerCase().compareTo(b.title.toLowerCase());
     });
     final groups = _destination == 0 && _filter == 3;
-    return _AndroidProjectScope(
+    return _ProjectCardScope(
       pinned: Set.unmodifiable(_pinned),
       onPin: _togglePin,
       child: Scaffold(
@@ -2121,20 +2198,24 @@ class _AndroidProjectsHomeState extends State<_AndroidProjectsHome> {
   }
 }
 
-class _AndroidProjectScope extends InheritedWidget {
-  const _AndroidProjectScope({required this.pinned, required this.onPin,
-    required super.child});
+class _ProjectCardScope extends InheritedWidget {
+  const _ProjectCardScope({required this.pinned, required this.onPin,
+    required super.child, this.compact = false});
+  final bool compact;
   final Set<String> pinned;
   final ValueChanged<String> onPin;
-  static _AndroidProjectScope? maybeOf(BuildContext context) =>
-      context.dependOnInheritedWidgetOfExactType<_AndroidProjectScope>();
+  static _ProjectCardScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_ProjectCardScope>();
   @override
-  bool updateShouldNotify(_AndroidProjectScope oldWidget) => true;
+  bool updateShouldNotify(_ProjectCardScope oldWidget) => true;
 }
 
-class _AndroidProjectCard extends StatelessWidget {
-  const _AndroidProjectCard({required this.project, required this.pinned,
-    required this.onPin, required this.onTap, required this.actions});
+class _ProjectCard extends StatelessWidget {
+  const _ProjectCard({required this.project, required this.pinned,
+    required this.onPin, required this.onTap, required this.actions,
+    this.compact = false, this.selected = false});
+  final bool compact;
+  final bool selected;
   final Project project;
   final bool pinned;
   final VoidCallback onPin;
@@ -2162,9 +2243,10 @@ class _AndroidProjectCard extends StatelessWidget {
           };
     final timestamp = project.updated?.toLocal();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+      padding: EdgeInsets.fromLTRB(compact ? 8 : 12, 0, compact ? 8 : 12, 6),
       child: Material(
-        color: pinned ? scheme.primaryContainer.withValues(alpha: .3)
+        color: selected ? scheme.primaryContainer
+            : pinned ? scheme.primaryContainer.withValues(alpha: .3)
             : scheme.surface,
         borderRadius: BorderRadius.circular(18),
         child: InkWell(
@@ -2178,17 +2260,17 @@ class _AndroidProjectCard extends StatelessWidget {
                 ProjectMode.feed => 'Timeline project',
                 ProjectMode.kanban => 'Kanban board',
               }, child: Container(
-                width: 46, height: 46,
+                width: compact ? 34 : 46, height: compact ? 34 : 46,
                 decoration: BoxDecoration(color: colour.withValues(alpha: .13),
                   borderRadius: BorderRadius.circular(12)),
-                child: Icon(icon, color: colour, size: 28),
+                child: Icon(icon, color: colour, size: compact ? 22 : 28),
               )),
               const SizedBox(width: 12),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(project.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+                  Text(project.title, maxLines: compact ? 1 : 2, overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700)),
+                      fontSize: compact ? 14 : null, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 4),
                   Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
@@ -2248,3 +2330,4 @@ class _AndroidProjectCard extends StatelessWidget {
     return '${date.day}/${date.month}/${date.year}';
   }
 }
+
