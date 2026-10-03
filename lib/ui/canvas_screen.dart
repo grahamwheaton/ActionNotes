@@ -13,6 +13,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../markdown/canvas_cards.dart';
+import '../markdown/portal_links.dart';
 import '../markdown/canvas_placement.dart';
 import '../models/project.dart';
 import '../models/canvas_layout.dart';
@@ -270,7 +271,7 @@ class _CanvasScreenState extends State<CanvasScreen> {
   void _openLinkedNote(String fileSlug, String title) {
     final state = context.read<AppState>();
     for (final project in state.projects) {
-      if (project.fileSlug != fileSlug) continue;
+      if (project != PortalLinks.resolve(fileSlug, slug, state.projects)) continue;
       final index = project.items.indexWhere((item) => item.text == title);
       if (index < 0) continue;
       state.revealItem(project.slug, index);

@@ -43,8 +43,10 @@ class FakeLocalStore implements LocalStore {
     String slug,
     CanvasLayout layout, {
     String sourceId = NotesSource.mineId,
+    bool preserveDirty = false,
   }) async {
-    if (layout.isEmpty) {
+    if (preserveDirty && (_layouts(sourceId)[slug]?.dirty ?? false)) return;
+    if (layout.isEmpty && !layout.dirty) {
       _layouts(sourceId).remove(slug);
     } else {
       _layouts(sourceId)[slug] = layout;

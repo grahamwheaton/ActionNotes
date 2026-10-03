@@ -25,24 +25,24 @@ class ProjectMerge {
   ProjectMerge._();
 
   static Project merge({required Project local, required Project remote}) {
-    final remaining = <String, ChecklistItem>{};
-    for (final item in remote.items) {
-      remaining[_key(item.text)] = item;
-    }
+    // Match one occurrence at a time, within its section. A title is not an
+    // identity: several clients can each have a task called "Review".
+    final remaining = [...remote.items];
 
     final items = <ChecklistItem>[];
 
     // Local order leads, so the list still looks like the one in front of you.
     for (final item in local.items) {
-      final counterpart = remaining.remove(_key(item.text));
+      final index = remaining.indexWhere(
+        (other) =>
+            other.block == item.block && _key(other.text) == _key(item.text),
+      );
+      final counterpart = index < 0 ? null : remaining.removeAt(index);
       items.add(counterpart == null ? item : _combine(item, counterpart));
     }
 
     // Anything only on GitHub goes after, in its own order.
-    for (final item in remote.items) {
-      final counterpart = remaining.remove(_key(item.text));
-      if (counterpart != null) items.add(counterpart);
-    }
+    items.addAll(remaining);
 
     return local.copyWith(
       // A rename on either side has to lose; the local title is the one the

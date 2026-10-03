@@ -443,11 +443,22 @@ typed out of habit — and rewritten to the portable form when the app saves the
 note. `[[slug|custom label]]` keeps the label. A wikilink naming a project that
 does not exist is left exactly as written rather than turned into a dead link.
 
+### Canvas portals
+
+Canvas cards use `[List](list.md#project)` or
+`[Note](list.md#note=URL-encoded-item-text)` for editable portals. Relative
+targets resolve inside the canvas's notebook. A portal to another notebook
+uses `source-id~list.md` instead; `mine~list.md` explicitly names the personal
+notebook. These qualified targets are app links, not paths to files in the
+current GitHub repository. They contain no access tokens. Existing relative
+portals keep their spelling and no longer fall back to a different notebook.
+
 ## Conflicts
 
 Nothing in the format records which device wrote a file, so a project edited in
-two places is reconciled by content: items are matched on their text and the
-union is kept. That is the app's behaviour, not a property of the format — the
+two places is reconciled by content: items are matched on their text within
+the same section, one occurrence at a time, and unmatched occurrences from
+both sides are kept. That is the app's behaviour, not a property of the format — the
 files themselves are ordinary markdown, and a merge done by hand or by git is
 equally valid.
 

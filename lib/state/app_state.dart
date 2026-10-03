@@ -789,6 +789,11 @@ class AppState extends ChangeNotifier {
     // projects, rather than the desktop quietly missing a list.
     final notebookProblem = await _catchUpOnNotebooks();
 
+    // Retry offline canvas edits before pulling arrangements from GitHub.
+    for (final slug in _pendingLayoutUpdates.toList()) {
+      if (projectBySlug(slug) != null) await _writeLayout(slug);
+    }
+
     // Each notebook is its own repo, so each is its own sync. One that fails
     // says so without stopping the others: a shared notebook whose token has
     // been revoked should not take your own notes offline with it.
@@ -807,6 +812,8 @@ class AppState extends ChangeNotifier {
       final result = await _syncService.sync(
         source.config,
         sourceId: source.id,
+        projects: _projects.where((p) => p.sourceId == source.id).toList(),
+        persistProjects: false,
       );
       synced.addAll(result.projects);
       combined.addAll(result.merged);
@@ -838,6 +845,19 @@ class AppState extends ChangeNotifier {
     }
 
     _projects = _reconcile(before, synced);
+    // Only reconciled copies may reach disk. The service's snapshot can be
+    // older than an edit already saved while its network request was running.
+    for (final slug in _projects.map((p) => p.slug).toList()) {
+      final current = projectBySlug(slug);
+      if (current != null) {
+        await _localStore.save(current, sourceId: current.sourceId);
+      }
+    }
+    for (final old in before.values) {
+      if (projectBySlug(old.slug) == null) {
+        await _localStore.delete(old.fileSlug, sourceId: old.sourceId);
+      }
+    }
     // A merge is said out loud but never asked about. Somebody should know
     // their list grew a line they did not write, and should not have to
     // decide anything about it.
@@ -869,6 +889,7 @@ class AppState extends ChangeNotifier {
     for (final project in synced) {
       final current = live.remove(project.slug);
       final start = before[project.slug];
+      if (current == null && start != null) continue; // Deleted locally.
 
       // Every edit stamps a new time, so a changed stamp is an edit; the
       // dirty check is there for the edit that lands inside the same
@@ -896,7 +917,9 @@ class AppState extends ChangeNotifier {
     // deleted, or moved into another notebook — and putting it back here
     // would resurrect it every time.
     for (final project in live.values) {
-      if (!before.containsKey(project.slug)) reconciled.add(project);
+      if (!before.containsKey(project.slug) || project.dirty) {
+        reconciled.add(project);
+      }
     }
 
     return reconciled
@@ -1687,8 +1710,9 @@ class AppState extends ChangeNotifier {
       _fileSlug(slug),
       sourceId: sourceOf(slug).id,
     );
-    if (layout.isEmpty) return;
+    if (layout.isEmpty && !layout.dirty) return;
     _layouts[slug] = layout;
+    if (layout.dirty) _pendingLayoutUpdates.add(slug);
     notifyListeners();
   }
 
@@ -2015,7 +2039,7 @@ class AppState extends ChangeNotifier {
     bool remember = true,
   }) async {
     if (remember) _rememberCanvas(slug, section);
-    _layouts[slug] = layoutFor(slug).withSection(section, spots);
+    _layouts[slug] = layoutFor(slug).withSection(section, spots).copyWith(dirty: true);
     notifyListeners();
 
     // Settled for a moment first: dragging a card across a canvas would
@@ -2023,6 +2047,8 @@ class AppState extends ChangeNotifier {
     _pendingLayoutUpdates.add(slug);
     _layoutTimers[slug]?.cancel();
     _layoutTimers[slug] = Timer(_pushDelay, () => _pushLayout(slug));
+    await _localStore.saveLayout(_fileSlug(slug), layoutFor(slug),
+        sourceId: sourceOf(slug).id);
   }
 
   Future<void> _renameCanvasSection(String slug, String from, String to) async {
@@ -2034,6 +2060,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> _pushLayout(String slug) async {
     _pendingLayoutUpdates.add(slug);
+    _layouts[slug] = layoutFor(slug).copyWith(dirty: true);
     _layoutWrites++;
     try {
       await _writeLayout(slug);
@@ -2042,12 +2069,27 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<void> _writeLayout(
+  final Map<String, Future<void>> _layoutUploads = {};
+
+  Future<void> _writeLayout(String slug, {bool requireRemoteSave = false}) {
+    final previous = _layoutUploads[slug] ?? Future<void>.value();
+    final next = previous.then((_) => _writeLayoutNow(slug,
+        requireRemoteSave: requireRemoteSave));
+    final settled = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _layoutUploads[slug] = settled;
+    unawaited(settled.then((_) {
+      if (identical(_layoutUploads[slug], settled)) _layoutUploads.remove(slug);
+    }));
+    return next;
+  }
+
+  Future<void> _writeLayoutNow(
     String slug, {
     bool requireRemoteSave = false,
   }) async {
     _layoutTimers.remove(slug)?.cancel();
-    final layout = layoutFor(slug);
+    final layout = layoutFor(slug).copyWith(dirty: true);
+    _layouts[slug] = layout;
     await _localStore.saveLayout(
       _fileSlug(slug),
       layout,
@@ -2064,10 +2106,12 @@ class AppState extends ChangeNotifier {
       // Adopt the SHA whatever else has happened in the meantime, the same as
       // a project push does: throwing it away is what made every later write
       // fail against a SHA GitHub had already moved past.
-      if (layoutFor(slug).toJsonString() == layout.toJsonString()) {
+      final unchanged = layoutFor(slug).toJsonString() == layout.toJsonString();
+      if (unchanged) {
         _pendingLayoutUpdates.remove(slug);
       }
-      _layouts[slug] = layoutFor(slug).copyWith(sha: pushed.sha);
+      _layouts[slug] = layoutFor(slug).copyWith(sha: pushed.sha,
+          clearSha: pushed.sha == null, dirty: !unchanged);
       await _localStore.saveLayout(
         _fileSlug(slug),
         _layouts[slug]!,
@@ -2076,7 +2120,7 @@ class AppState extends ChangeNotifier {
     } catch (_) {
       if (requireRemoteSave) rethrow;
       // An arrangement is worth no interruption. It is saved on the device and
-      // the next change will try again.
+      // normal sync will retry, including after a restart.
     }
   }
 
