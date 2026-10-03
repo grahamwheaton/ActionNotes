@@ -22,7 +22,7 @@ void main() {
         value: state,
         child: MaterialApp(theme: AppTheme.light(), home: Scaffold(
           body: SizedBox(width: 320, child: ProjectSidebar(
-            drawerMode: drawer, pushOnTap: !drawer,
+            selectedSlug: null, drawerMode: drawer, pushOnTap: !drawer,
             onSelect: drawer ? state.select : null,
           )),
         )),
