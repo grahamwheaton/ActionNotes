@@ -2106,7 +2106,7 @@ class _AndroidProjectsHomeState extends State<_AndroidProjectsHome> {
                               child: Text(_destination == 2
                                   ? 'No shared projects yet.'
                                   : _filter == 1 ? 'Pin a project to find it here.'
-                                  : 'Create your first project to get started.',
+                                  : 'No projects yet',
                                 textAlign: TextAlign.center),
                             ),
                             for (final project in visible) _ProjectTile(
