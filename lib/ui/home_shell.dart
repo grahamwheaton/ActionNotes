@@ -44,7 +44,8 @@ class HomeShell extends StatelessWidget {
       },
       child: LayoutBuilder(
         builder: (context, constraints) =>
-            !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+            !kIsWeb && defaultTargetPlatform == TargetPlatform.android &&
+                constraints.maxWidth < sidebarBreakpoint
             ? const _AndroidProjectsHome()
             : constraints.maxWidth >= sidebarBreakpoint
             ? const _TwoPaneLayout()

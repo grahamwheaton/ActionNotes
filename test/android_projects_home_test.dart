@@ -2,7 +2,6 @@ import 'package:actionnotes/models/project.dart';
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/ui/home_shell.dart';
 import 'package:actionnotes/ui/theme.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -12,8 +11,6 @@ import 'support/fakes.dart';
 
 void main() {
   testWidgets('Android pins persist and groups still collapse', (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.android;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     tester.view.physicalSize = const Size(400, 850);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -40,6 +37,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byTooltip('Unpin project'), findsOneWidget);
     expect(find.byTooltip('Pin project'), findsNothing);
+    await tester.ensureVisible(find.text('Groups'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Groups'));
     await tester.pumpAndSettle();
     expect(find.text('Home'), findsOneWidget);
@@ -57,11 +56,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Ideas'), findsWidgets);
     expect(tester.takeException(), isNull);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
 
   testWidgets('Windows keeps its existing project layout', (tester) async {
-    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
-    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     tester.view.physicalSize = const Size(1000, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -75,5 +72,5 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(NavigationBar), findsNothing);
     expect(find.byType(ProjectSidebar), findsOneWidget);
-  });
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 }
