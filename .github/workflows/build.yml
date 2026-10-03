@@ -143,7 +143,7 @@ jobs:
     name: Android APK (release)
     runs-on: ubuntu-latest
     needs: check
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.version != '' || github.ref == 'refs/heads/codex/android-ui-test-build'
     env:
       # Read at job level so the signing step's `if` can see whether the
       # keystore secret is configured.
@@ -243,11 +243,11 @@ jobs:
             echo "keyPassword=$KEY_PASSWORD"
           } > android/key.properties
 
-      - run: flutter build apk --release
+      - run: flutter build apk --release --build-name 0.31.1-ui-test --build-number 50
 
       - name: Record whether it was signed
         env:
-          TAG: ${{ inputs.version || github.ref_name }}
+          TAG: v0.31.1-ui-test
         run: |
           set -euo pipefail
           mv build/app/outputs/flutter-apk/app-release.apk "actionnotes-$TAG.apk"
