@@ -948,6 +948,9 @@ class _TableBlockState extends State<_TableBlock> {
           ),
           )),
           Row(children: [
+            Expanded(child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
             TextButton.icon(
               onPressed: () => widget.onChanged(_asMarkdown([
                 ...rows, List.filled(rows.first.length, ''),
@@ -979,7 +982,7 @@ class _TableBlockState extends State<_TableBlock> {
                     child: Text('Remove last column')),
               ],
             ),
-            const Spacer(),
+            ])),
             IconButton(
               tooltip: 'Remove table', icon: const Icon(Icons.delete_outline),
               onPressed: widget.onRemove,
