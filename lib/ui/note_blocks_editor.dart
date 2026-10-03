@@ -735,13 +735,14 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
   @override
   Widget build(BuildContext context) {
-    // A note is prose, so it gets a readable measure rather than running the
-    // full width of a desktop window — but it sits against the left margin,
-    // under the title, rather than floating in the middle of a wide one.
+    // Tables use the available pane; notes containing only prose retain a
+    // readable measure against the left margin.
     return Align(
       alignment: Alignment.topLeft,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760),
+        constraints: BoxConstraints(maxWidth:
+          _rows.any((row) => row.block.type == NoteBlockType.table)
+            ? double.infinity : 760),
         child: Listener(
           onPointerDown: _onPointerDown,
           onPointerMove: _onPointerMove,
@@ -892,14 +893,16 @@ class _TableBlockState extends State<_TableBlock> {
       child: Padding(
         padding: const EdgeInsets.all(8),
         child: Column(children: [
-          Scrollbar(
+          LayoutBuilder(builder: (context, constraints) => Scrollbar(
             controller: _scroll,
-            thumbVisibility: rows.first.length > 4,
+            thumbVisibility: rows.first.length * 150.0 > constraints.maxWidth,
             child: SingleChildScrollView(
             controller: _scroll,
             scrollDirection: Axis.horizontal,
             child: SizedBox(
-              width: rows.first.length * 150.0,
+              width: constraints.maxWidth.isFinite &&
+                  constraints.maxWidth > rows.first.length * 150.0
+                ? constraints.maxWidth : rows.first.length * 150.0,
               child: Table(
                 border: TableBorder.all(color: theme.colorScheme.outlineVariant),
                 children: [
@@ -943,7 +946,7 @@ class _TableBlockState extends State<_TableBlock> {
               ),
             ),
           ),
-          ),
+          )),
           Row(children: [
             TextButton.icon(
               onPressed: () => widget.onChanged(_asMarkdown([

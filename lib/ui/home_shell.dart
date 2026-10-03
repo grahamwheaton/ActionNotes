@@ -612,7 +612,7 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
   final Set<String> _pinned = {};
   SharedPreferences? _preferences;
   int _projectFilter = 3;
-  bool get _desktop => !widget.drawerMode && !kIsWeb &&
+  bool get _desktop => !kIsWeb &&
       defaultTargetPlatform == TargetPlatform.windows;
 
   @override
@@ -680,8 +680,8 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
 
     final content = Column(
       children: [
-        if (!widget.pushOnTap || widget.drawerMode) ...[
-          const _SidebarHeader(),
+        if (_desktop || !widget.pushOnTap || widget.drawerMode) ...[
+          if (!widget.pushOnTap || widget.drawerMode) const _SidebarHeader(),
           _SidebarSearch(
             controller: _filter,
             focusNode: _filterFocus,
@@ -2330,4 +2330,3 @@ class _ProjectCard extends StatelessWidget {
     return '${date.day}/${date.month}/${date.year}';
   }
 }
-
