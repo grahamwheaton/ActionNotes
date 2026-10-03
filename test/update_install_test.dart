@@ -241,6 +241,8 @@ void main() {
       WidgetTester tester, {
       required UpdateInstaller? installer,
       bool withFile = true,
+      bool compact = false,
+      bool checkFirst = true,
     }) async {
       PackageInfo.setMockInitialValues(
         appName: 'ActionNotes',
@@ -277,20 +279,42 @@ void main() {
         ),
       );
       await state.init();
-      await state.checkForUpdate();
+      if (checkFirst) await state.checkForUpdate();
 
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
           value: state,
           child: MaterialApp(
             theme: AppTheme.light(),
-            home: Scaffold(body: UpdateBanner(installer: installer)),
+            home: Scaffold(body: UpdateBanner(installer: installer,
+                compact: compact)),
           ),
         ),
       );
       await tester.pumpAndSettle();
       return state;
     }
+
+    testWidgets('check action becomes install and hands over the update',
+        (tester) async {
+      final installer = _FakeInstaller();
+      final state = await pumpBanner(tester, installer: installer,
+          compact: true, checkFirst: false);
+      addTearDown(state.dispose);
+      expect(find.text('Check for update'), findsOneWidget);
+      await tester.tap(find.text('Check for update'));
+      await tester.pumpAndSettle();
+      expect(find.text('Check for update'), findsNothing);
+      expect(find.text('Install update'), findsOneWidget);
+      await tester.tap(find.text('Install update'));
+      await tester.pump();
+      installer.report(0.4);
+      await tester.pump();
+      expect(find.text('Downloading 40%'), findsOneWidget);
+      installer.finish();
+      await tester.pumpAndSettle();
+      expect(installer.handed, endsWith('actionnotes-v0.14.0.apk'));
+    });
 
     testWidgets('offers Install where the system can take the file', (
       tester,

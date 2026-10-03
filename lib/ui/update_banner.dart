@@ -145,8 +145,15 @@ class _UpdateBannerState extends State<UpdateBanner> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final update = context.watch<AppState>().update;
-    if (update == null) return const SizedBox.shrink();
+    final state = context.watch<AppState>();
+    final update = state.update;
+    if (update == null) {
+      if (!widget.compact) return const SizedBox.shrink();
+      return OutlinedButton(
+        onPressed: state.checkingUpdate ? null : () => state.checkForUpdate(),
+        child: Text(state.checkingUpdate ? 'Checking...' : 'Check for update'),
+      );
+    }
 
     final installs = _canInstall && update.downloadUrl != null;
     final busy = _progress != null;
@@ -156,7 +163,7 @@ class _UpdateBannerState extends State<UpdateBanner> {
         onPressed: busy ? null : () => installs ? _install(update) : _open(update),
         child: Text(busy
             ? 'Downloading ${(_progress! * 100).round()}%'
-            : 'Update app'),
+            : installs ? 'Install update' : 'View update'),
       );
     }
 

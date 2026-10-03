@@ -362,15 +362,7 @@ class _UpdateRow extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        if (update != null)
-          const UpdateBanner(compact: true)
-        else
-          OutlinedButton(
-            onPressed: state.checkingUpdate
-                ? null
-                : () => context.read<AppState>().checkForUpdate(),
-            child: const Text('Check now'),
-          ),
+        const UpdateBanner(compact: true),
       ],
     );
   }
