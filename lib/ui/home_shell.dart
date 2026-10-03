@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
@@ -42,7 +44,10 @@ class HomeShell extends StatelessWidget {
       },
       child: LayoutBuilder(
         builder: (context, constraints) =>
-            constraints.maxWidth >= sidebarBreakpoint
+            !kIsWeb && defaultTargetPlatform == TargetPlatform.android &&
+                constraints.maxWidth < sidebarBreakpoint
+            ? const _AndroidProjectsHome()
+            : constraints.maxWidth >= sidebarBreakpoint
             ? const _TwoPaneLayout()
             : const _SinglePaneLayout(),
       ),
@@ -1511,6 +1516,19 @@ class _ProjectTile extends StatelessWidget {
   ) {
     final state = context.read<AppState>();
 
+    final home = _AndroidProjectScope.maybeOf(context);
+    if (home != null && onSelect == null) {
+      return _AndroidProjectCard(
+        project: project,
+        pinned: home.pinned.contains(project.slug),
+        onPin: () => home.onPin(project.slug),
+        actions: actions,
+        onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+          builder: (_) => ChecklistView(slug: project.slug),
+        )),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
       child: Material(
@@ -1914,4 +1932,319 @@ Future<void> confirmDeleteProject(BuildContext context, Project project) async {
   );
 
   if (confirmed == true) await state.deleteProject(project.slug);
+}
+
+
+/// Android's project landing screen; the desktop sidebar remains independent.
+class _AndroidProjectsHome extends StatefulWidget {
+  const _AndroidProjectsHome();
+
+  @override
+  State<_AndroidProjectsHome> createState() => _AndroidProjectsHomeState();
+}
+
+class _AndroidProjectsHomeState extends State<_AndroidProjectsHome> {
+  static const _pinsKey = 'android_pinned_projects';
+  final Set<String> _pinned = {};
+  SharedPreferences? _preferences;
+  int _filter = 0;
+  int _destination = 0;
+  bool _newestFirst = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPins();
+  }
+
+  Future<void> _loadPins() async {
+    final preferences = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _preferences = preferences;
+      _pinned.addAll(preferences.getStringList(_pinsKey) ?? []);
+    });
+  }
+
+  Future<void> _togglePin(String slug) async {
+    final preferences = _preferences;
+    if (preferences == null) return;
+    setState(() {
+      if (!_pinned.remove(slug)) _pinned.add(slug);
+    });
+    await preferences.setStringList(_pinsKey, _pinned.toList());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final scheme = Theme.of(context).colorScheme;
+    final projects = state.projects.where((project) =>
+        _destination != 2 || project.isShared).toList();
+    final pinnedCount = projects.where((p) => _pinned.contains(p.slug)).length;
+    final recent = _destination == 1 || _filter == 2;
+    final visible = projects.where((p) => _filter != 1 ||
+        _destination == 1 || _pinned.contains(p.slug)).toList();
+    visible.sort((a, b) {
+      if (recent || _newestFirst) {
+        final order = (b.updated ?? b.created ?? DateTime(1970))
+            .compareTo(a.updated ?? a.created ?? DateTime(1970));
+        if (order != 0) return order;
+      }
+      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
+    });
+    final groups = _destination == 0 && _filter == 3;
+    return _AndroidProjectScope(
+      pinned: Set.unmodifiable(_pinned),
+      onPin: _togglePin,
+      child: Scaffold(
+        backgroundColor: scheme.surfaceContainerLow,
+        drawer: const MobileProjectDrawer(),
+        appBar: AppBar(
+          backgroundColor: scheme.surfaceContainerLow,
+          titleSpacing: 0,
+          title: const Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [Text('ActionNotes'), AppVersionLabel()],
+          ),
+          actions: [
+            IconButton(
+              tooltip: 'Daily note',
+              icon: const Icon(Icons.today_outlined),
+              onPressed: () => openDailyNote(context, openAfter: true),
+            ),
+            const _SearchAction(), const _SyncAction(), const _SettingsAction(),
+          ],
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          backgroundColor: scheme.primary,
+          foregroundColor: scheme.onPrimary,
+          onPressed: () => createProject(context, openAfter: true),
+          icon: const Icon(Icons.add),
+          label: const Text('New project'),
+        ),
+        bottomNavigationBar: NavigationBar(
+          selectedIndex: _destination,
+          onDestinationSelected: (index) => setState(() {
+            _destination = index;
+            _filter = 0;
+          }),
+          destinations: const [
+            NavigationDestination(icon: Icon(Icons.folder_outlined),
+                selectedIcon: Icon(Icons.folder), label: 'Projects'),
+            NavigationDestination(icon: Icon(Icons.schedule), label: 'Recent'),
+            NavigationDestination(icon: Icon(Icons.people_outline), label: 'Shared'),
+          ],
+        ),
+        body: Column(children: [
+          if (_destination == 0)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 8, 12),
+              child: Row(children: [
+                Expanded(child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest.withValues(alpha: .5),
+                    borderRadius: BorderRadius.circular(28),
+                  ),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(children: [
+                      for (final (index, label) in [
+                        (0, 'All ${projects.length}'),
+                        (1, 'Pinned $pinnedCount'),
+                        (2, 'Recent'), (3, 'Groups'),
+                      ]) Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: ChoiceChip(
+                          label: Text(label), selected: _filter == index,
+                          showCheckmark: false, side: BorderSide.none,
+                          selectedColor: scheme.primaryContainer,
+                          backgroundColor: Colors.transparent,
+                          onSelected: (_) => setState(() => _filter = index),
+                        ),
+                      ),
+                    ]),
+                  ),
+                )),
+                PopupMenuButton<bool>(
+                  tooltip: 'Sort projects', icon: const Icon(Icons.sort),
+                  onSelected: (value) => setState(() => _newestFirst = value),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: true, child: Text('Last edited')),
+                    PopupMenuItem(value: false, child: Text('Name')),
+                  ],
+                ),
+              ]),
+            ),
+          if (_destination == 2)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Align(alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => AddNotebookDialog.show(context),
+                  icon: const Icon(Icons.add), label: const Text('Add a notebook'),
+                ),
+              ),
+            ),
+          if (groups) const _ProjectsLabel(),
+          if (state.message != null) _MessageBar(message: state.message!),
+          if (!state.isConfigured) const _SetupPrompt(),
+          const UpdateBanner(),
+          Expanded(child: state.loading
+              ? const Center(child: CircularProgressIndicator())
+              : RefreshIndicator(
+                  onRefresh: state.sync,
+                  child: groups
+                      ? const _ProjectList(filtered: null, selectedSlug: null,
+                          pushOnTap: true)
+                      : ListView(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.only(bottom: 100),
+                          children: [
+                            if (visible.isEmpty) Padding(
+                              padding: const EdgeInsets.all(32),
+                              child: Text(_destination == 2
+                                  ? 'No shared projects yet.'
+                                  : _filter == 1 ? 'Pin a project to find it here.'
+                                  : 'No projects yet',
+                                textAlign: TextAlign.center),
+                            ),
+                            for (final project in visible) _ProjectTile(
+                              project: project, selected: false, pushOnTap: true,
+                            ),
+                          ],
+                        ),
+                )),
+        ]),
+      ),
+    );
+  }
+}
+
+class _AndroidProjectScope extends InheritedWidget {
+  const _AndroidProjectScope({required this.pinned, required this.onPin,
+    required super.child});
+  final Set<String> pinned;
+  final ValueChanged<String> onPin;
+  static _AndroidProjectScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_AndroidProjectScope>();
+  @override
+  bool updateShouldNotify(_AndroidProjectScope oldWidget) => true;
+}
+
+class _AndroidProjectCard extends StatelessWidget {
+  const _AndroidProjectCard({required this.project, required this.pinned,
+    required this.onPin, required this.onTap, required this.actions});
+  final Project project;
+  final bool pinned;
+  final VoidCallback onPin;
+  final VoidCallback onTap;
+  final List<ContextMenuAction> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.read<AppState>();
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final canvas = project.items.isEmpty && project.blocks.isNotEmpty &&
+        project.blocks.every((b) => state.isCanvas(project.slug, b.title));
+    final (label, icon, colour) = canvas
+        ? ('Canvas', Icons.dashboard_outlined, const Color(0xFF009E85))
+        : switch (project.mode) {
+            ProjectMode.tasks => ('Tasks', Icons.check_box_outlined,
+                const Color(0xFF9B65DD)),
+            ProjectMode.notes => ('Notes', Icons.notes_outlined,
+                const Color(0xFF2CA856)),
+            ProjectMode.feed => ('Daily', Icons.timeline,
+                const Color(0xFF287DDA)),
+            ProjectMode.kanban => ('Board', Icons.view_column_outlined,
+                const Color(0xFF287DDA)),
+          };
+    final timestamp = project.updated?.toLocal();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+      child: Material(
+        color: pinned ? scheme.primaryContainer.withValues(alpha: .3)
+            : scheme.surface,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18), onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+            child: Row(children: [
+              Tooltip(message: canvas ? 'Canvas project' : switch(project.mode) {
+                ProjectMode.tasks => 'Tasks project',
+                ProjectMode.notes => 'Notes project',
+                ProjectMode.feed => 'Timeline project',
+                ProjectMode.kanban => 'Kanban board',
+              }, child: Container(
+                width: 46, height: 46,
+                decoration: BoxDecoration(color: colour.withValues(alpha: .13),
+                  borderRadius: BorderRadius.circular(12)),
+                child: Icon(icon, color: colour, size: 28),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(project.title, maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Container(width: 7, height: 7, decoration: BoxDecoration(
+                        color: colour, shape: BoxShape.circle)),
+                      Text(label, style: theme.textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant)),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                        decoration: BoxDecoration(color: scheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(6)),
+                        child: Text('${project.items.length}',
+                          semanticsLabel: '${project.items.length} items',
+                          style: theme.textTheme.bodySmall),
+                      ),
+                      if (project.isShared) Tooltip(
+                        message: 'In ${state.sourceOf(project.slug).name}',
+                        child: Icon(Icons.folder_shared_outlined, size: 15,
+                          color: scheme.primary)),
+                      if (project.dirty) Tooltip(message: 'Waiting to sync',
+                        child: Icon(Icons.cloud_upload_outlined, size: 15,
+                          color: scheme.onSurfaceVariant)),
+                    ]),
+                  if (timestamp != null) Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(_lastEdited(timestamp),
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant)),
+                  ),
+                ])),
+              Column(mainAxisSize: MainAxisSize.min, children: [
+                IconButton(
+                  tooltip: pinned ? 'Unpin project' : 'Pin project',
+                  visualDensity: VisualDensity.compact,
+                  icon: Icon(pinned ? Icons.push_pin : Icons.push_pin_outlined,
+                    size: 18, color: pinned ? scheme.primary : scheme.outline),
+                  onPressed: onPin,
+                ),
+                ItemMenuButton(actions: actions, tooltip: 'Project actions'),
+              ]),
+            ]),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _lastEdited(DateTime date) {
+    final now = DateTime.now();
+    final days = DateTime(now.year, now.month, now.day)
+        .difference(DateTime(date.year, date.month, date.day)).inDays;
+    final time = '${date.hour.toString().padLeft(2, '0')}:'
+        '${date.minute.toString().padLeft(2, '0')}';
+    if (days == 0) return 'Today $time';
+    if (days == 1) return 'Yesterday $time';
+    if (days > 1 && days < 7) return '$days days ago';
+    return '${date.day}/${date.month}/${date.year}';
+  }
 }
