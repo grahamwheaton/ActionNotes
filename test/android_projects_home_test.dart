@@ -46,7 +46,7 @@ void main() {
       expect(text('Gamma'), findsOneWidget);
       await tester.tap(find.descendant(of: root, matching: find.byTooltip('Sort projects')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Stars').last);
+      await tester.tap(find.widgetWithText(CheckedPopupMenuItem<ProjectSort>, 'Stars'));
       await tester.pumpAndSettle();
       expect(state.viewPreferences.projectSort, ProjectSort.stars);
       await state.toggleProjectPin('gamma');

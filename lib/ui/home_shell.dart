@@ -583,8 +583,9 @@ class _SidebarResizeHandle extends StatelessWidget {
             state.viewPreferences.copyWith(sidebarWidth: 280)),
           child: SizedBox(width: 12, height: double.infinity,
             child: ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerLow,
-              child: Center(child: Icon(Icons.drag_indicator, size: 12,
-                color: Theme.of(context).colorScheme.outline)))),
+              child: Center(child: RotatedBox(quarterTurns: 1,
+                child: Icon(Icons.drag_handle, size: 12,
+                  color: Theme.of(context).colorScheme.outline))))),
         ),
       ),
     );

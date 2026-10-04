@@ -41,6 +41,10 @@ class NoteFormatting {
   String? get fontFamily => switch (font) {
     'Serif' => 'serif', 'Monospace' => 'monospace', _ => null,
   };
+  List<String>? get fontFallback => switch (font) {
+    'Serif' => const ['Georgia', 'Noto Serif'],
+    'Monospace' => const ['Consolas', 'Courier New'], _ => null,
+  };
 
   NoteFormatting copyWith({double? horizontalMargin, double? verticalMargin,
     double? fontSize, double? lineHeight, double? paragraphSpacing,

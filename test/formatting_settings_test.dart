@@ -20,7 +20,10 @@ void main() {
     addTearDown(state.dispose);
     await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(value: state,
       child: MaterialApp(theme: AppTheme.light(), home: const SettingsScreen())));
-    await tester.scrollUntilVisible(find.text('Formatting'), 400);
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(find.text('Formatting'), 400,
+      scrollable: find.descendant(of: find.byType(SettingsScreen),
+          matching: find.byType(Scrollable)).first);
     await tester.tap(find.text('Formatting'));
     await tester.pumpAndSettle();
     expect(find.byType(FormattingSettingsScreen), findsOneWidget);
