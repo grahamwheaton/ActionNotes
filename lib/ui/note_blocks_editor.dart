@@ -902,6 +902,7 @@ class _TableBlockState extends State<_TableBlock> {
         child: Column(children: [
           LayoutBuilder(builder: (context, constraints) => Scrollbar(
             controller: _scroll,
+            interactive: true,
             thumbVisibility: rows.first.length * 150.0 > constraints.maxWidth,
             child: SingleChildScrollView(
             controller: _scroll,
