@@ -151,6 +151,18 @@ void main() {
       await settle(state);
     });
 
+    test('a folder is enough to count as set up, with no GitHub account',
+        () async {
+      final state = newState();
+      await state.init();
+      expect(state.isConfigured, isFalse);
+
+      await state.addFolderNotebook(root.path, folderName: 'Work');
+
+      expect(state.isConfigured, isTrue);
+      await settle(state);
+    });
+
     test('the choice is remembered', () async {
       final state = newState();
       await state.init();

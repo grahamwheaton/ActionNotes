@@ -325,7 +325,11 @@ class AppState extends ChangeNotifier {
   bool get loading => _loading;
   bool get syncing => _syncing;
   String? get message => _message;
-  bool get isConfigured => _config.isComplete;
+
+  /// Whether there is somewhere to sync to. A notebook in a folder counts: it
+  /// needs no GitHub account, so asking for one would be asking for something
+  /// it will never use.
+  bool get isConfigured => _config.isComplete || folderSources.isNotEmpty;
   int get pendingCount => _projects.where((p) => p.dirty).length;
 
   /// Which project the desktop layout is showing in its detail pane.
