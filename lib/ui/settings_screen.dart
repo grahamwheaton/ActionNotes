@@ -9,6 +9,7 @@ import 'project_copy_actions.dart';
 import 'shared_notebooks.dart';
 import 'sign_in_dialog.dart';
 import 'update_banner.dart';
+import 'formatting_settings.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -279,6 +280,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
           const _ThemePicker(),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.format_size),
+            title: const Text('Formatting'),
+            subtitle: const Text('Page margins, fonts, spacing and sidebar width'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => const FormattingSettingsScreen())),
+          ),
           const SizedBox(height: 24),
           Text(
             'Updates',

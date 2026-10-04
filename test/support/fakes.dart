@@ -6,6 +6,7 @@ import 'package:actionnotes/models/canvas_layout.dart';
 import 'package:actionnotes/models/notes_source.dart';
 import 'package:actionnotes/models/project.dart';
 import 'package:actionnotes/models/sidebar_layout.dart';
+import 'package:actionnotes/models/view_preferences.dart';
 import 'package:actionnotes/storage/attachment_store.dart';
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/storage/github_client.dart';
@@ -124,6 +125,16 @@ class FakeAttachmentStore extends AttachmentStore {
 /// Reports no repo configured by default, so nothing tries to reach the
 /// network unless a test opts in with a complete config.
 class FakeSettingsStore implements SettingsStore {
+  ViewPreferences viewPreferences = const ViewPreferences();
+  Set<String> projectPins = {};
+  @override
+  Future<ViewPreferences> loadViewPreferences() async => viewPreferences;
+  @override
+  Future<void> saveViewPreferences(ViewPreferences value) async => viewPreferences = value;
+  @override
+  Future<Set<String>> loadProjectPins() async => Set.of(projectPins);
+  @override
+  Future<void> saveProjectPins(Set<String> value) async => projectPins = Set.of(value);
   FakeSettingsStore({
     this.config = const GitHubConfig(
       owner: '',
@@ -213,12 +224,13 @@ AppState newTestState(
   GitHubConfig? config,
   SyncService? syncService,
   FakeAttachmentStore? attachments,
+  FakeSettingsStore? settingsStore,
 }) {
   return AppState(
     localStore: store,
-    settingsStore: config == null
+    settingsStore: settingsStore ?? (config == null
         ? FakeSettingsStore()
-        : FakeSettingsStore(config: config),
+        : FakeSettingsStore(config: config)),
     syncService: syncService ?? SyncService(localStore: store),
     attachmentStore: attachments,
   );

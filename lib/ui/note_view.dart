@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../markdown/project_links.dart';
 import '../state/app_state.dart';
+import '../models/view_preferences.dart';
 import '../storage/attachment_store.dart';
 import 'context_menu.dart';
 import 'image_viewer.dart';
@@ -93,22 +94,24 @@ class NoteView extends StatelessWidget {
 MarkdownStyleSheet _styleSheet(BuildContext context) {
   final theme = Theme.of(context);
   final scheme = theme.colorScheme;
-  final body = NoteTypography.body(theme);
+  final format = context.watch<AppState?>()?.viewPreferences.formatting
+      ?? const NoteFormatting();
+  final body = NoteTypography.body(theme, format);
 
   final mono = body.copyWith(
     fontFamily: 'monospace',
-    fontSize: NoteTypography.size - 1.5,
+    fontSize: format.fontSize - 1.5,
     height: 1.45,
   );
 
   return MarkdownStyleSheet(
     p: body,
-    h1: NoteTypography.heading(theme, 1),
-    h2: NoteTypography.heading(theme, 2),
-    h3: NoteTypography.heading(theme, 3),
-    h4: NoteTypography.heading(theme, 4),
-    h5: NoteTypography.heading(theme, 5),
-    h6: NoteTypography.heading(theme, 6),
+    h1: NoteTypography.heading(theme, 1, format),
+    h2: NoteTypography.heading(theme, 2, format),
+    h3: NoteTypography.heading(theme, 3, format),
+    h4: NoteTypography.heading(theme, 4, format),
+    h5: NoteTypography.heading(theme, 5, format),
+    h6: NoteTypography.heading(theme, 6, format),
     h1Padding: EdgeInsets.only(top: NoteTypography.spaceAbove(1)),
     h2Padding: EdgeInsets.only(top: NoteTypography.spaceAbove(2)),
     h3Padding: EdgeInsets.only(top: NoteTypography.spaceAbove(3)),
@@ -140,7 +143,7 @@ MarkdownStyleSheet _styleSheet(BuildContext context) {
     horizontalRuleDecoration: BoxDecoration(
       border: Border(top: BorderSide(color: scheme.outlineVariant)),
     ),
-    blockSpacing: 10,
+    blockSpacing: format.paragraphSpacing,
   );
 }
 

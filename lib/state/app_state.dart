@@ -16,6 +16,7 @@ import '../models/kanban_board.dart';
 import '../models/notes_source.dart';
 import '../models/project.dart';
 import '../models/sidebar_layout.dart';
+import '../models/view_preferences.dart';
 import '../storage/attachment_store.dart';
 import '../storage/github_client.dart';
 import '../storage/share_code.dart';
@@ -501,6 +502,27 @@ class AppState extends ChangeNotifier {
   /// whenever it changes, so the override survives a restart.
   ThemeMode get themeMode => _themeMode;
 
+  ViewPreferences _viewPreferences = const ViewPreferences();
+  ViewPreferences get viewPreferences => _viewPreferences;
+  Set<String> _projectPins = {};
+  Set<String> get projectPins => Set.unmodifiable(_projectPins);
+  Future<void> _viewSave = Future<void>.value();
+
+  Future<void> setViewPreferences(ViewPreferences value,
+      {bool persist = true}) {
+    _viewPreferences = value;
+    notifyListeners();
+    if (!persist) return Future<void>.value();
+    return _viewSave = _viewSave.then((_) =>
+        _settingsStore.saveViewPreferences(value));
+  }
+
+  Future<void> toggleProjectPin(String slug) async {
+    if (!_projectPins.remove(slug)) _projectPins.add(slug);
+    notifyListeners();
+    await _settingsStore.saveProjectPins(Set.of(_projectPins));
+  }
+
   Future<void> setThemeMode(ThemeMode mode) async {
     if (_themeMode == mode) return;
     _themeMode = mode;
@@ -552,6 +574,8 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     _themeMode = await _settingsStore.loadThemeMode();
+    _viewPreferences = await _settingsStore.loadViewPreferences();
+    _projectPins = await _settingsStore.loadProjectPins();
     _login = await _settingsStore.loadLogin();
     _displayName = await _settingsStore.loadName();
     _sidebar = await _settingsStore.loadSidebar();

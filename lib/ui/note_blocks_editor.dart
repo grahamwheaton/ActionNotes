@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../markdown/note_blocks.dart';
+import '../models/view_preferences.dart';
+import '../state/app_state.dart';
+import 'package:provider/provider.dart';
 import 'block_type_menu.dart';
 import 'inline_format.dart';
 import 'markdown_text_controller.dart';
@@ -735,14 +738,11 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
 
   @override
   Widget build(BuildContext context) {
-    // Tables use the available pane; notes containing only prose retain a
-    // readable measure against the left margin.
+    // All blocks use the available note pane, inside the chosen margins.
     return Align(
       alignment: Alignment.topLeft,
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth:
-          _rows.any((row) => row.block.type == NoteBlockType.table)
-            ? double.infinity : 760),
+        constraints: const BoxConstraints(),
         child: Listener(
           onPointerDown: _onPointerDown,
           onPointerMove: _onPointerMove,
@@ -755,12 +755,13 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   }
 
   Widget _buildList() {
+    final format = context.watch<AppState?>()?.viewPreferences.formatting
+        ?? const NoteFormatting();
     return ListView.builder(
       shrinkWrap: widget.shrinkWrap,
       physics: widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
-      padding: widget.shrinkWrap
-          ? const EdgeInsets.fromLTRB(16, 0, 0, 0)
-          : const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      padding: EdgeInsets.symmetric(horizontal: format.horizontalMargin,
+          vertical: widget.shrinkWrap ? format.paragraphSpacing : format.verticalMargin),
       itemCount: _rows.length,
       itemBuilder: (context, index) => KeyedSubtree(
         key: _rows[index].boxKey,
@@ -889,6 +890,8 @@ class _TableBlockState extends State<_TableBlock> {
   Widget build(BuildContext context) {
     final rows = cells;
     final theme = Theme.of(context);
+    final format = context.watch<AppState?>()?.viewPreferences.formatting
+        ?? const NoteFormatting();
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(8),
@@ -932,8 +935,8 @@ class _TableBlockState extends State<_TableBlock> {
                                       },
                                     ),
                             ),
-                            style: row == 0 ? theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.bold) : theme.textTheme.bodyMedium,
+                            style: NoteTypography.body(theme, format).copyWith(
+                              fontWeight: row == 0 ? FontWeight.bold : FontWeight.normal),
                             onChanged: (value) {
                               final next = [for (final cells in rows) [...cells]];
                               next[row][column] = value;
@@ -1057,12 +1060,12 @@ class _TextBlock extends StatelessWidget {
   /// Replaces the menu's own Paste when the note can take an image.
   final Future<void> Function()? onPaste;
 
-  TextStyle _styleFor(ThemeData theme) {
+  TextStyle _styleFor(ThemeData theme, NoteFormatting format) {
     // The same scale the rendered note uses, so a heading does not change
     // size the moment you stop editing it.
     final style = switch (row.block.type) {
-      NoteBlockType.heading => NoteTypography.heading(theme, row.block.level),
-      _ => NoteTypography.body(theme),
+      NoteBlockType.heading => NoteTypography.heading(theme, row.block.level, format),
+      _ => NoteTypography.body(theme, format),
     };
 
     if (row.block.type == NoteBlockType.task && row.block.done) {
@@ -1229,7 +1232,9 @@ class _TextBlock extends StatelessWidget {
     final theme = Theme.of(context);
     final block = row.block;
 
-    final style = _styleFor(theme);
+    final format = context.watch<AppState?>()?.viewPreferences.formatting
+        ?? const NoteFormatting();
+    final style = _styleFor(theme, format);
 
     // Every marker beside the text — the handle, a bullet, a checkbox — is
     // centred on a box exactly one line tall, so they all sit on the first
@@ -1247,7 +1252,7 @@ class _TextBlock extends StatelessWidget {
         top: block.type == NoteBlockType.heading
             ? NoteTypography.spaceAbove(block.level)
             : 1,
-        bottom: 1,
+        bottom: format.paragraphSpacing,
         // Each nesting level steps the whole row across, marker included.
         left: block.indent * 20,
       ),

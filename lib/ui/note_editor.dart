@@ -396,10 +396,8 @@ class _NoteEditorState extends State<NoteEditor> {
     );
 
     return Padding(
-      // Barely any horizontal inset: the block gutter already indents the
-      // text, and stacking margins on top of it pushed notes well clear of
-      // the edge on a phone.
-      padding: const EdgeInsets.fromLTRB(2, 4, 2, 0),
+      // The block editor owns page margins, avoiding two separate insets.
+      padding: EdgeInsets.zero,
       child: NoteImageTarget(
         key: _images,
         slug: widget.slug,

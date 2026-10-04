@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/view_preferences.dart';
 
 /// A calm, paper-like surface with one accent colour — close in spirit to the
 /// Microsoft notes apps: plenty of white space, no chrome competing with text.
@@ -64,15 +65,18 @@ class NoteTypography {
   static const height = 1.6;
   static const size = 15.5;
 
-  static TextStyle body(ThemeData theme) => theme.textTheme.bodyLarge!.copyWith(
-        fontSize: size,
-        height: height,
+  static TextStyle body(ThemeData theme,
+      [NoteFormatting format = const NoteFormatting()]) => theme.textTheme.bodyLarge!.copyWith(
+        fontSize: format.fontSize,
+        fontFamily: format.fontFamily,
+        height: format.lineHeight,
         color: theme.colorScheme.onSurface,
       );
 
   /// Each level steps down enough to tell apart at a glance. Levels past four
   /// stop shrinking and go quiet instead, rather than becoming unreadable.
-  static TextStyle heading(ThemeData theme, int level) {
+  static TextStyle heading(ThemeData theme, int level,
+      [NoteFormatting format = const NoteFormatting()]) {
     final (double fontSize, FontWeight weight) = switch (level) {
       1 => (27, FontWeight.w700),
       2 => (22, FontWeight.w700),
@@ -82,7 +86,8 @@ class NoteTypography {
     };
 
     return theme.textTheme.bodyLarge!.copyWith(
-      fontSize: fontSize,
+      fontSize: fontSize * format.headingScale * format.fontSize / size,
+      fontFamily: format.fontFamily,
       fontWeight: weight,
       height: 1.3,
       letterSpacing: -0.2,
