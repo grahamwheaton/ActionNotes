@@ -6,8 +6,10 @@ import '../models/notes_source.dart';
 import '../models/project.dart';
 import '../state/app_state.dart';
 import '../storage/github_account.dart';
+import '../storage/folder_picker.dart';
 import '../storage/github_client.dart';
 import '../storage/share_code.dart';
+import '../storage/vault.dart';
 import 'repo_picker.dart';
 
 /// Everything a person sees about notebooks shared with them.
@@ -24,7 +26,7 @@ class SharedNotebooksCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final state = context.watch<AppState>();
-    final shared = state.sharedSources;
+    final shared = state.codeSources;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -51,8 +53,9 @@ class SharedNotebooksCard extends StatelessWidget {
         const SizedBox(height: 12),
         // Only once there is somebody to be told apart from. Asking a
         // person with no shared notebooks who they are is a question
-        // about nothing.
-        if (shared.isNotEmpty) const _YourNameField(),
+        // about nothing. A notebook in a folder counts: it is shared with
+        // whoever else has the folder.
+        if (state.sharedSources.isNotEmpty) const _YourNameField(),
         for (final source in shared) _NotebookRow(source: source),
         if (shared.isNotEmpty) const SizedBox(height: 8),
         OutlinedButton.icon(
@@ -151,7 +154,9 @@ class _NotebookRow extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              Icons.folder_shared_outlined,
+              source.isFolder
+                  ? Icons.folder_outlined
+                  : Icons.folder_shared_outlined,
               color: theme.colorScheme.primary,
             ),
             const SizedBox(width: 12),
@@ -167,7 +172,14 @@ class _NotebookRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    count == 1 ? '1 project' : '$count projects',
+                    source.isFolder
+                        ? '${count == 1 ? '1 project' : '$count projects'}'
+                              ' · ${source.where}'
+                        : count == 1
+                        ? '1 project'
+                        : '$count projects',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -175,10 +187,13 @@ class _NotebookRow extends StatelessWidget {
                 ],
               ),
             ),
-            TextButton(
-              onPressed: () => ShareCodeDialog.show(context, source),
-              child: const Text('Share'),
-            ),
+            // A folder has no code to hand out: whoever should be in it opens
+            // the same folder from their own OneDrive or Google Drive.
+            if (!source.isFolder)
+              TextButton(
+                onPressed: () => ShareCodeDialog.show(context, source),
+                child: const Text('Share'),
+              ),
             IconButton(
               icon: const Icon(Icons.more_horiz),
               tooltip: 'More',
@@ -201,10 +216,15 @@ class _NotebookRow extends StatelessWidget {
         title: Text('Stop using ${source.name}?'),
         // Said plainly, because the difference between this and deleting is
         // the whole of what someone is worried about when they press it.
-        content: const Text(
-          'It disappears from your devices. Nothing in it is deleted, and the '
-          'other people keep it exactly as it is. You can paste the code '
-          'again later to get it back.',
+        content: Text(
+          source.isFolder
+              ? 'It disappears from this device. Nothing in the folder is '
+                    'deleted, and anybody else using it keeps it exactly as '
+                    'it is. You can add the folder again later to get it '
+                    'back.'
+              : 'It disappears from your devices. Nothing in it is deleted, '
+                    'and the other people keep it exactly as it is. You can '
+                    'paste the code again later to get it back.',
         ),
         actions: [
           TextButton(
@@ -232,10 +252,17 @@ class _NotebookRow extends StatelessWidget {
 class AddNotebookDialog extends StatefulWidget {
   const AddNotebookDialog({super.key});
 
-  static Future<void> show(BuildContext context) => showDialog<void>(
-    context: context,
-    builder: (_) => const AddNotebookDialog(),
-  );
+  /// Opens the dialog. If the person says they would rather use a folder, the
+  /// folder dialog opens in its place.
+  static Future<void> show(BuildContext context) async {
+    final folder = await showDialog<bool>(
+      context: context,
+      builder: (_) => const AddNotebookDialog(),
+    );
+    if (folder == true && context.mounted) {
+      await AddFolderNotebookDialog.show(context);
+    }
+  }
 
   @override
   State<AddNotebookDialog> createState() => _AddNotebookDialogState();
@@ -422,6 +449,12 @@ class _AddNotebookDialogState extends State<AddNotebookDialog> {
         ),
       ),
       actions: [
+        // A folder is the third way in, for a notebook kept in OneDrive,
+        // Google Drive or Dropbox rather than a GitHub repo.
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(true),
+          child: const Text('Use a folder'),
+        ),
         TextButton(
           onPressed: _busy ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
@@ -725,5 +758,289 @@ class ShareProjectDialog {
     // to the list lands on it where it now is, rather than on a page saying
     // it has gone when it plainly has not.
     if (problem == null && navigator.canPop()) navigator.pop();
+  }
+}
+
+
+/// Notebooks kept in a folder on this device.
+///
+/// The folder is the whole of the setup. OneDrive, Google Drive or Dropbox
+/// keeps it in step across devices and people; ActionNotes only reads and
+/// writes files in it, so there is nothing to sign in to and no key to hand
+/// round.
+class FolderNotebooksCard extends StatelessWidget {
+  const FolderNotebooksCard({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final folders = context.watch<AppState>().folderSources;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Folder notebooks',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          folders.isEmpty
+              ? 'Keep a notebook in a folder instead of a GitHub repo — a '
+                    'work one in OneDrive, a family one in Google Drive. '
+                    'Pick the folder and it is either connected, if there is '
+                    'a notebook in it already, or set up.'
+              : 'To share one of these, share the folder from OneDrive or '
+                    'Google Drive. The other person adds that same folder '
+                    'here.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        for (final source in folders) _NotebookRow(source: source),
+        if (folders.isNotEmpty) const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () => AddFolderNotebookDialog.show(context),
+          icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+          label: const Text('Add a folder'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Picks a folder, says what will happen to it, and does it.
+///
+/// One step for the person — choose the folder — and the app works out the
+/// rest: a folder that already holds a notebook is connected to, and one that
+/// does not is set up. What it is about to do is said before it does it,
+/// because "set up" writes into a folder that may be somebody's OneDrive.
+class AddFolderNotebookDialog extends StatefulWidget {
+  const AddFolderNotebookDialog({super.key});
+
+  static Future<void> show(BuildContext context) => showDialog<void>(
+    context: context,
+    builder: (_) => const AddFolderNotebookDialog(),
+  );
+
+  @override
+  State<AddFolderNotebookDialog> createState() =>
+      _AddFolderNotebookDialogState();
+}
+
+class _AddFolderNotebookDialogState extends State<AddFolderNotebookDialog> {
+  final _name = TextEditingController();
+  final _you = TextEditingController();
+
+  PickedFolder? _folder;
+  FolderProbe? _probe;
+  bool _busy = false;
+  String? _problem;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _you.dispose();
+    super.dispose();
+  }
+
+  Future<void> _choose() async {
+    final state = context.read<AppState>();
+    setState(() {
+      _busy = true;
+      _problem = null;
+    });
+
+    try {
+      final picked = await FolderPicker.pick();
+      if (picked == null || !mounted) {
+        if (mounted) setState(() => _busy = false);
+        return;
+      }
+
+      // Looked at, not changed: nothing is written until the button is
+      // pressed.
+      final probe = await state.probeFolder(picked.path);
+      if (!mounted) return;
+      setState(() {
+        _folder = picked;
+        _probe = probe;
+        _busy = false;
+        if (_name.text.trim().isEmpty && probe.info?.name.isNotEmpty == true) {
+          _name.text = probe.info!.name;
+        }
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _problem = error is StoreException
+            ? error.message
+            : 'That folder could not be opened.';
+      });
+    }
+  }
+
+  Future<void> _add() async {
+    final folder = _folder;
+    if (folder == null) return;
+
+    final state = context.read<AppState>();
+    if (state.needsName && _you.text.trim().isEmpty) {
+      setState(
+        () => _problem = 'Put your name in, so the others know who wrote what.',
+      );
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _problem = null;
+    });
+
+    if (_you.text.trim().isNotEmpty) {
+      await state.setDisplayName(_you.text.trim());
+    }
+
+    final problem = await state.addFolderNotebook(
+      folder.path,
+      folderName: folder.name,
+      label: _name.text.trim(),
+    );
+
+    if (!mounted) return;
+    if (problem == null) {
+      Navigator.of(context).pop();
+      return;
+    }
+    setState(() {
+      _busy = false;
+      _problem = problem;
+    });
+  }
+
+  String _describe(FolderProbe probe) {
+    final count = probe.projects == 1
+        ? '1 project'
+        : '${probe.projects} projects';
+    return switch (probe.state) {
+      FolderState.notebook =>
+        'There is a notebook in this folder already ($count). Connecting '
+            'changes nothing in it.',
+      FolderState.unmarked =>
+        'This folder already holds projects ($count). They are used as they '
+            'are; a small settings file is added so your other devices '
+            'recognise the folder.',
+      FolderState.empty =>
+        'Nothing of ActionNotes is in this folder yet. Setting it up adds a '
+            '"projects" folder and a small settings file, and leaves '
+            'everything else alone.',
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final probe = _probe;
+
+    return AlertDialog(
+      title: const Text('Add a folder notebook'),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Choose a folder that OneDrive, Google Drive or Dropbox keeps '
+                'up to date on this device. Whoever else should be in the '
+                'notebook chooses the same folder from their own copy.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _choose,
+                icon: const Icon(Icons.folder_open_outlined, size: 18),
+                label: Text(_folder == null ? 'Choose a folder' : 'Choose another'),
+              ),
+              if (_folder != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _folder!.name.isEmpty ? _folder!.path : _folder!.name,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+              if (probe != null) ...[
+                const SizedBox(height: 4),
+                Text(
+                  _describe(probe),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _name,
+                  enabled: !_busy,
+                  decoration: const InputDecoration(
+                    labelText: 'Call it (optional)',
+                    hintText: 'Work, Family, Holiday…',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              if (probe != null && context.watch<AppState>().needsName) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _you,
+                  enabled: !_busy,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: const InputDecoration(
+                    labelText: 'Your name',
+                    hintText: 'What the others should see',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              if (_problem != null) ...[
+                const SizedBox(height: 14),
+                Text(
+                  _problem!,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+              ],
+              if (_busy) ...[
+                const SizedBox(height: 16),
+                const Center(child: CircularProgressIndicator()),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _busy || _folder == null ? null : _add,
+          child: Text(
+            probe == null || probe.state == FolderState.empty
+                ? 'Set it up'
+                : 'Connect',
+          ),
+        ),
+      ],
+    );
   }
 }

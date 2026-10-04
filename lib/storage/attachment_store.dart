@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+import 'folder_store.dart';
 import 'github_client.dart';
 
 /// On-device copy of note attachments.
@@ -59,7 +60,8 @@ class AttachmentStore {
     return file;
   }
 
-  /// Returns the local copy, fetching it from GitHub if it is not cached yet.
+  /// Returns the local copy, fetching it from the notebook if it is not cached
+  /// yet.
   /// Returns null when the image cannot be reached, so the UI can show a
   /// placeholder rather than fail.
   Future<File?> resolve(String repoPath, GitHubConfig config) async {
@@ -67,7 +69,7 @@ class AttachmentStore {
     if (local != null) return local;
     if (!config.isComplete) return null;
 
-    final client = GitHubClient(config);
+    final client = openStore(config);
     try {
       final bytes = await client.readBytes(repoPath);
       if (bytes == null) return null;

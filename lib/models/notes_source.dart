@@ -1,3 +1,4 @@
+import '../storage/folder_store.dart';
 import '../storage/github_client.dart';
 
 /// Where a project comes from: your own repo, or one someone shared with you.
@@ -13,6 +14,11 @@ enum SourceKind {
 
   /// A repo someone handed you a share code for.
   shared,
+
+  /// A folder on this device — usually one that OneDrive, Google Drive or
+  /// Dropbox keeps in step. The folder is chosen on each device, so unlike the
+  /// others this one is never carried from device to device by the app.
+  folder,
 }
 
 class NotesSource {
@@ -56,18 +62,52 @@ class NotesSource {
         label: label,
       );
 
+  /// The id a folder notebook gets: the identity written into the folder
+  /// itself, so every device that opens it agrees on what it is called.
+  static String idForVault(String vaultId) => 'folder-$vaultId';
+
+  static NotesSource inFolder(
+    FolderConfig config, {
+    required String vaultId,
+    String label = '',
+  }) => NotesSource(
+    id: idForVault(vaultId),
+    kind: SourceKind.folder,
+    config: config,
+    label: label,
+  );
+
   bool get isMine => kind == SourceKind.mine;
+  bool get isFolder => kind == SourceKind.folder;
+
+  /// Reached with a share code, which is the only kind that can be handed to
+  /// somebody else as one.
+  bool get isCodeShared => kind == SourceKind.shared;
 
   /// What the sidebar and settings call it.
   String get name {
     if (label.trim().isNotEmpty) return label.trim();
     if (isMine) return 'My notes';
+    final folder = config;
+    if (folder is FolderConfig) {
+      return folder.displayName.isEmpty ? 'Folder' : folder.displayName;
+    }
     return config.repo.isEmpty ? 'Shared' : config.repo;
   }
 
   /// Where it actually is, said out loud: what a person needs to check when
   /// two shared notebooks are called similar things.
-  String get where => '${config.owner}/${config.repo}';
+  String get where {
+    final folder = config;
+    if (folder is FolderConfig) {
+      // An Android address is opaque and means nothing to read; the name of
+      // the folder is what a person can check.
+      return folder.path.startsWith('content://')
+          ? 'Folder ${folder.displayName}'.trim()
+          : folder.path;
+    }
+    return '${config.owner}/${config.repo}';
+  }
 
   NotesSource copyWith({GitHubConfig? config, String? label}) => NotesSource(
     id: id,
@@ -78,21 +118,44 @@ class NotesSource {
 
   /// The token is deliberately not here: this is what goes into ordinary
   /// preferences, and a token belongs in the keystore beside it.
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'kind': kind.name,
-    'owner': config.owner,
-    'repo': config.repo,
-    'branch': config.branch,
-    if (label.trim().isNotEmpty) 'label': label.trim(),
-  };
+  Map<String, dynamic> toJson() {
+    final folder = config;
+    return {
+      'id': id,
+      'kind': kind.name,
+      if (folder is FolderConfig) ...{
+        'path': folder.path,
+        if (folder.displayName.isNotEmpty) 'folderName': folder.displayName,
+      } else ...{
+        'owner': config.owner,
+        'repo': config.repo,
+        'branch': config.branch,
+      },
+      if (label.trim().isNotEmpty) 'label': label.trim(),
+    };
+  }
 
   /// Reads one back, with the token supplied from wherever tokens are kept.
   static NotesSource? fromJson(Map<String, dynamic> json, String token) {
     final id = json['id'];
+    if (id is! String || id.isEmpty) return null;
+
+    if (json['kind'] == SourceKind.folder.name) {
+      final path = json['path'];
+      if (path is! String || path.isEmpty) return null;
+      return NotesSource(
+        id: id,
+        kind: SourceKind.folder,
+        label: json['label'] as String? ?? '',
+        config: FolderConfig(
+          path: path,
+          displayName: json['folderName'] as String? ?? '',
+        ),
+      );
+    }
+
     final owner = json['owner'];
     final repo = json['repo'];
-    if (id is! String || id.isEmpty) return null;
     if (owner is! String || repo is! String) return null;
 
     return NotesSource(
@@ -118,21 +181,11 @@ class NotesSource {
       other.id == id &&
       other.kind == kind &&
       other.label == label &&
-      other.config.owner == config.owner &&
-      other.config.repo == config.repo &&
-      other.config.branch == config.branch &&
+      other.config.locationKey == config.locationKey &&
       other.config.token == config.token;
 
   @override
-  int get hashCode => Object.hash(
-    id,
-    kind,
-    label,
-    config.owner,
-    config.repo,
-    config.branch,
-    config.token,
-  );
+  int get hashCode => Object.hash(id, kind, label, config.locationKey, config.token);
 
   @override
   String toString() => 'NotesSource($id, $where)';

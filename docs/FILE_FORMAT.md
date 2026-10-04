@@ -451,6 +451,31 @@ union is kept. That is the app's behaviour, not a property of the format — the
 files themselves are ordinary markdown, and a merge done by hand or by git is
 equally valid.
 
+## Where a notebook lives
+
+The layout above — `projects/`, `archive/`, `attachments/`, canvas layouts — is
+the same whether the notebook is a GitHub repo or an ordinary folder, which is
+how a notebook kept in OneDrive, Google Drive or Dropbox works.
+
+A notebook kept in a folder has one extra file, written when the folder is first
+set up:
+
+```json
+{
+  "app": "ActionNotes",
+  "format": 1,
+  "id": "k3j9x0q2m7ab",
+  "name": "Work",
+  "created": "2026-10-04T18:30:00.000Z"
+}
+```
+
+at `.actionnotes/vault.json`. It exists so a notebook has the same identity on
+every device that opens it — the folder's path differs between devices, so the
+path cannot be what identifies it. Nothing else in the notes depends on it, and
+deleting it only means the app gives the folder a new identity next time it is
+connected.
+
 ## Why this shape
 
 It is plain markdown, so GitHub renders it, Claude and ChatGPT can read a whole

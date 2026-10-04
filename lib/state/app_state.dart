@@ -18,6 +18,7 @@ import '../models/project.dart';
 import '../models/sidebar_layout.dart';
 import '../models/view_preferences.dart';
 import '../storage/attachment_store.dart';
+import '../storage/folder_store.dart';
 import '../storage/github_client.dart';
 import '../storage/share_code.dart';
 import '../storage/image_encoder.dart';
@@ -27,6 +28,7 @@ import '../storage/notebook_index.dart';
 import '../storage/settings_store.dart';
 import '../storage/sync_service.dart';
 import '../storage/update_check.dart';
+import '../storage/vault.dart';
 
 /// A restart must wait until the user resolves an unsaved draft or failed sync.
 class UpdatePreparationException implements Exception {
@@ -156,8 +158,20 @@ class AppState extends ChangeNotifier {
   /// Every notebook: yours first, then any shared with you.
   List<NotesSource> get sources => List.unmodifiable(_sources);
 
+  /// Every notebook that is not yours, however it is reached — a shared repo
+  /// or a folder. They behave alike (projects move between them, other people
+  /// may write in them) so most of the app wants this list.
   List<NotesSource> get sharedSources =>
       _sources.where((source) => !source.isMine).toList();
+
+  /// The ones reached with a share code, which are the only ones a code can be
+  /// made for and the only ones your other devices are told about.
+  List<NotesSource> get codeSources =>
+      _sources.where((source) => source.isCodeShared).toList();
+
+  /// Notebooks that live in a folder on this device.
+  List<NotesSource> get folderSources =>
+      _sources.where((source) => source.isFolder).toList();
 
   /// The notebook a project belongs to, or your own when it is not one the
   /// app knows about — which is what everything was before sharing.
@@ -998,6 +1012,10 @@ class AppState extends ChangeNotifier {
   Future<void> forgetSharedNotebook(String id) async {
     if (id == NotesSource.mineId) return;
 
+    // A folder was never in the list your devices share, so letting go of one
+    // has nothing to tell them.
+    final wasCode = _sources.any((s) => s.id == id && s.isCodeShared);
+
     _sources = _sources.where((source) => source.id != id).toList();
     _projects = _projects.where((p) => p.sourceId != id).toList();
     if (projectBySlug(_selectedSlug ?? '') == null) _selectedSlug = null;
@@ -1006,7 +1024,7 @@ class AppState extends ChangeNotifier {
     await _localStore.forget(id);
     notifyListeners();
 
-    if (_config.isComplete) {
+    if (wasCode && _config.isComplete) {
       final stored = await _syncService.readNotebooks(_config);
       if (!stored.isEmpty) {
         await _syncService.writeNotebooks(
@@ -1020,25 +1038,112 @@ class AppState extends ChangeNotifier {
   /// The code to hand someone so they can reach a shared notebook.
   ///
   /// Null for your own, which has no code: the token in it is the one that
-  /// reaches everything you have.
+  /// reaches everything you have. Null for a folder too: it has no key to give,
+  /// because whoever should have it opens the same folder from their own
+  /// OneDrive or Google Drive.
   String? shareCodeFor(String sourceId) {
     final source = _sources.firstWhere(
       (source) => source.id == sourceId,
       orElse: () => NotesSource.ownedBy(_config),
     );
-    return source.isMine ? null : ShareCode.encode(source.config);
+    return source.isCodeShared ? ShareCode.encode(source.config) : null;
+  }
+
+  Future<String?> _testFolder(FolderConfig config) async {
+    if (!config.isComplete) return 'Pick a folder first.';
+    final client = _syncService.clientFor(config);
+    try {
+      await client.checkAccess();
+      return null;
+    } on StoreException catch (error) {
+      return error.message;
+    } catch (_) {
+      return 'That folder could not be opened.';
+    } finally {
+      client.dispose();
+    }
+  }
+
+  /// Looks inside a folder without changing it, so the person can be told
+  /// what picking it will do — connect to a notebook that is already there,
+  /// or set one up.
+  Future<FolderProbe> probeFolder(String path) =>
+      Vault(openFolderBackend(path)).probe();
+
+  /// Takes on a notebook that lives in a folder: connects to the one that is
+  /// there, or sets one up if the folder has none.
+  ///
+  /// Setting up writes a `projects/` folder and a small `.actionnotes/` file
+  /// and touches nothing else in the folder. Connecting changes nothing.
+  ///
+  /// Returns null when it worked, or a sentence saying why not.
+  Future<String?> addFolderNotebook(
+    String path, {
+    String folderName = '',
+    String label = '',
+  }) async {
+    if (path.trim().isEmpty) return 'Pick a folder first.';
+
+    // Opened before anything is kept, so a folder that cannot be used says so
+    // now rather than becoming a notebook that never loads.
+    final draft = FolderConfig(path: path, displayName: folderName);
+    final problem = await testConnection(draft);
+    if (problem != null) return problem;
+
+    final VaultInfo info;
+    try {
+      info = await Vault(
+        openFolderBackend(path),
+      ).open(name: label.trim().isEmpty ? folderName : label);
+    } on StoreException catch (error) {
+      return error.message;
+    } on FileSystemException catch (error) {
+      return 'Could not set up a notebook in that folder: '
+          '${error.osError?.message ?? error.message}';
+    } catch (_) {
+      return 'Could not set up a notebook in that folder.';
+    }
+
+    final id = NotesSource.idForVault(info.id);
+    if (_sources.any((source) => source.id == id)) {
+      return 'You already have that notebook.';
+    }
+    if (_sources.any(
+      (source) => source.config.locationKey == draft.locationKey,
+    )) {
+      return 'That folder is already one of your notebooks.';
+    }
+
+    // The name it was set up with, unless this device was asked to call it
+    // something else.
+    final shown = label.trim().isNotEmpty
+        ? label.trim()
+        : (info.name.isNotEmpty ? info.name : folderName);
+
+    _sources = [
+      ..._sources,
+      NotesSource.inFolder(draft, vaultId: info.id, label: shown),
+    ];
+    await _settingsStore.saveSharedSources(_sources);
+    // Somebody who has just pointed at a shared folder is about to see
+    // whether it works with the other person.
+    _sharedActivity();
+    notifyListeners();
+    await sync();
+    return null;
   }
 
   /// Checks the repo is reachable with these details. Returns null on success,
   /// or a message explaining what went wrong.
   Future<String?> testConnection(GitHubConfig config) async {
+    if (config is FolderConfig) return _testFolder(config);
     if (!config.isComplete) return 'Fill in owner, repo, branch and token.';
 
     final client = _syncService.clientFor(config);
     try {
       await client.checkAccess();
       return null;
-    } on GitHubException catch (error) {
+    } on StoreException catch (error) {
       return switch (error.statusCode) {
         401 =>
           'Token rejected. Check it was copied in full and has not expired.',
@@ -1426,12 +1531,14 @@ class AppState extends ChangeNotifier {
       await attachments.save(repoPath, encoded.bytes);
       return '![$name]'
           '(${AttachmentStore.markdownPath(project.fileSlug, name)})';
-    } on GitHubException catch (error) {
+    } on StoreException catch (error) {
       _message = 'Could not upload the image: ${error.message}';
       notifyListeners();
       return null;
     } catch (_) {
-      _message = 'Could not reach GitHub to upload the image.';
+      _message = _configFor(slug) is FolderConfig
+          ? 'Could not write the image to the folder.'
+          : 'Could not reach GitHub to upload the image.';
       notifyListeners();
       return null;
     }

@@ -262,6 +262,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _TokenFallback(controller: _token, onChanged: () => setState(() {})),
           const SizedBox(height: 24),
           const SharedNotebooksCard(),
+          const SizedBox(height: 24),
+          const FolderNotebooksCard(),
           const SizedBox(height: 20),
           Align(
             alignment: Alignment.centerLeft,
