@@ -8,6 +8,7 @@ import 'package:pasteboard/pasteboard.dart';
 import 'package:provider/provider.dart';
 
 import '../markdown/canvas_cards.dart';
+import '../markdown/portal_links.dart';
 import '../markdown/canvas_placement.dart';
 import '../markdown/feed_days.dart';
 import '../markdown/note_conversation.dart';
@@ -1857,7 +1858,7 @@ class _SectionCanvasState extends State<_SectionCanvas> {
             onOpenLinkedNote: (fileSlug, title) {
               final state = context.read<AppState>();
               for (final project in state.projects) {
-                if (project.fileSlug != fileSlug) continue;
+                if (project != PortalLinks.resolve(fileSlug, slug, state.projects)) continue;
                 final index = project.items.indexWhere((item) => item.text == title);
                 if (index < 0) continue;
                 state.select(project.slug);

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -13,7 +14,36 @@ import '../models/project.dart';
 /// Every edit lands here first, so an edit made with no signal is never lost —
 /// it just sits with `dirty: true` until a sync can push it.
 class LocalStore {
+  LocalStore({Future<Directory> Function()? documentsDirectory})
+    : _documentsDirectory =
+          documentsDirectory ?? getApplicationDocumentsDirectory;
+
+  final Future<Directory> Function() _documentsDirectory;
   final Map<String, Directory> _roots = {};
+  final Map<String, Future<void>> _writes = {};
+
+  // Project and layout writes share a metadata file. Keep their read/modify/
+  // write operations in order, including edits arriving during a sync save.
+  Future<void> _enqueue(
+    String source,
+    String slug,
+    Future<void> Function() write,
+  ) {
+    final key = Project.keyOf(source, slug);
+    final previous = _writes[key] ?? Future<void>.value();
+    final next = previous.then((_) => write());
+    final settled = next.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    _writes[key] = settled;
+    unawaited(
+      settled.then((_) {
+        if (identical(_writes[key], settled)) _writes.remove(key);
+      }),
+    );
+    return next;
+  }
 
   /// Each notebook gets its own folder, so two of them can hold a project of
   /// the same name without one writing over the other.
@@ -25,7 +55,7 @@ class LocalStore {
     final known = _roots[sourceId];
     if (known != null) return known;
 
-    final base = await getApplicationDocumentsDirectory();
+    final base = await _documentsDirectory();
     final dir = Directory(
       sourceId == NotesSource.mineId
           ? '${base.path}/actionnotes/projects'
@@ -54,6 +84,7 @@ class LocalStore {
       File('${root.path}/$slug.canvas.json');
 
   Future<List<Project>> loadAll({String sourceId = NotesSource.mineId}) async {
+    await Future.wait(_writes.values.toList());
     final root = await _ensureRoot(sourceId);
     final projects = <Project>[];
 
@@ -82,23 +113,21 @@ class LocalStore {
     return projects;
   }
 
-  Future<void> save(
-    Project project, {
-    String sourceId = NotesSource.mineId,
-  }) async {
-    final root = await _ensureRoot(sourceId);
-    await _markdownFile(
-      root,
-      project.fileSlug,
-    ).writeAsString(ProjectMarkdown.serialize(project));
-    // Merged rather than replaced: the canvas layout keeps its own SHA in
-    // here, and writing the project would otherwise forget it.
-    final meta =
-        Map<String, dynamic>.from(await _readMeta(root, project.fileSlug))
-          ..['sha'] = project.sha
-          ..['dirty'] = project.dirty;
-    await _metaFile(root, project.fileSlug).writeAsString(jsonEncode(meta));
-  }
+  Future<void> save(Project project, {String sourceId = NotesSource.mineId}) =>
+      _enqueue(sourceId, project.fileSlug, () async {
+        final root = await _ensureRoot(sourceId);
+        await _markdownFile(
+          root,
+          project.fileSlug,
+        ).writeAsString(ProjectMarkdown.serialize(project));
+        // Merged rather than replaced: the canvas layout keeps its own SHA in
+        // here, and writing the project would otherwise forget it.
+        final meta =
+            Map<String, dynamic>.from(await _readMeta(root, project.fileSlug))
+              ..['sha'] = project.sha
+              ..['dirty'] = project.dirty;
+        await _metaFile(root, project.fileSlug).writeAsString(jsonEncode(meta));
+      });
 
   /// Where this project's canvases put things, or an empty layout when it has
   /// none — which is every project until one is made.
@@ -106,14 +135,16 @@ class LocalStore {
     String slug, {
     String sourceId = NotesSource.mineId,
   }) async {
+    await (_writes[Project.keyOf(sourceId, slug)] ?? Future<void>.value());
     final root = await _ensureRoot(sourceId);
     final file = _layoutFile(root, slug);
-    if (!await file.exists()) return CanvasLayout.empty;
-
     final meta = await _readMeta(root, slug);
-    return CanvasLayout.parse(
-      await file.readAsString(),
+    final layout = await file.exists()
+        ? CanvasLayout.parse(await file.readAsString())
+        : CanvasLayout.empty;
+    return layout.copyWith(
       sha: meta['canvasSha'] as String?,
+      dirty: meta['canvasDirty'] as bool? ?? false,
     );
   }
 
@@ -121,9 +152,12 @@ class LocalStore {
     String slug,
     CanvasLayout layout, {
     String sourceId = NotesSource.mineId,
-  }) async {
+    bool preserveDirty = false,
+  }) => _enqueue(sourceId, slug, () async {
     final root = await _ensureRoot(sourceId);
     final file = _layoutFile(root, slug);
+    final meta = Map<String, dynamic>.from(await _readMeta(root, slug));
+    if (preserveDirty && meta['canvasDirty'] == true) return;
 
     if (layout.isEmpty) {
       if (await file.exists()) await file.delete();
@@ -131,24 +165,23 @@ class LocalStore {
       await file.writeAsString(layout.toJsonString());
     }
 
-    final meta = Map<String, dynamic>.from(await _readMeta(root, slug))
-      ..['canvasSha'] = layout.sha;
+    meta
+      ..['canvasSha'] = layout.sha
+      ..['canvasDirty'] = layout.dirty;
     await _metaFile(root, slug).writeAsString(jsonEncode(meta));
-  }
+  });
 
-  Future<void> delete(
-    String slug, {
-    String sourceId = NotesSource.mineId,
-  }) async {
-    final root = await _ensureRoot(sourceId);
-    for (final file in [
-      _markdownFile(root, slug),
-      _metaFile(root, slug),
-      _layoutFile(root, slug),
-    ]) {
-      if (await file.exists()) await file.delete();
-    }
-  }
+  Future<void> delete(String slug, {String sourceId = NotesSource.mineId}) =>
+      _enqueue(sourceId, slug, () async {
+        final root = await _ensureRoot(sourceId);
+        for (final file in [
+          _markdownFile(root, slug),
+          _metaFile(root, slug),
+          _layoutFile(root, slug),
+        ]) {
+          if (await file.exists()) await file.delete();
+        }
+      });
 
   Future<Map<String, dynamic>> _readMeta(Directory root, String slug) async {
     final file = _metaFile(root, slug);

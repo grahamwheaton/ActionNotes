@@ -84,8 +84,12 @@ class SyncService {
   Future<SyncResult> sync(
     GitHubConfig config, {
     String sourceId = NotesSource.mineId,
+    List<Project>? projects,
+    bool persistProjects = true,
   }) async {
-    final local = await localStore.loadAll(sourceId: sourceId);
+    // AppState supplies its live snapshot and persists only after reconciling
+    // edits made during the request. Standalone callers still own their cache.
+    final local = projects ?? await localStore.loadAll(sourceId: sourceId);
 
     if (!config.isComplete) {
       return SyncResult(
@@ -113,7 +117,12 @@ class SyncService {
       // Push anything edited offline first, so a pull cannot clobber it.
       for (final project in local.where((p) => p.dirty)) {
         justPushed.add(project.fileSlug);
-        final outcome = await _pushMerging(client, project, sourceId: sourceId);
+        final outcome = await _pushMerging(
+          client,
+          project,
+          sourceId: sourceId,
+          persist: persistProjects,
+        );
         if (outcome.project != null) {
           byslug[project.fileSlug] = outcome.project!;
         }
@@ -143,7 +152,7 @@ class SyncService {
         if (present.contains(slug) || justPushed.contains(slug)) continue;
 
         byslug.remove(slug);
-        await localStore.delete(slug, sourceId: sourceId);
+        if (persistProjects) await localStore.delete(slug, sourceId: sourceId);
       }
 
       for (final entry in listing) {
@@ -162,7 +171,7 @@ class SyncService {
         ).copyWith(sourceId: sourceId);
 
         byslug[slug] = remote;
-        await localStore.save(remote, sourceId: sourceId);
+        if (persistProjects) await localStore.save(remote, sourceId: sourceId);
       }
 
       final projects = byslug.values.toList()
@@ -237,6 +246,7 @@ class SyncService {
     GitHubClient client,
     Project project, {
     required String sourceId,
+    bool persist = true,
   }) async {
     var toPush = project;
     var combined = false;
@@ -252,7 +262,7 @@ class SyncService {
           sha: toPush.sha,
         );
         final pushed = toPush.copyWith(sha: sha, dirty: false);
-        await localStore.save(pushed, sourceId: sourceId);
+        if (persist) await localStore.save(pushed, sourceId: sourceId);
         return _PushOutcome(project: pushed, merged: combined);
       } on GitHubException catch (error) {
         // 409 means the file moved on under us. 422 means our SHA was
@@ -291,7 +301,7 @@ class SyncService {
 
     // Still being outrun after three goes. The combined copy is kept locally
     // and stays dirty, so the next sync carries it rather than it being lost.
-    await localStore.save(toPush, sourceId: sourceId);
+    if (persist) await localStore.save(toPush, sourceId: sourceId);
     return _PushOutcome(project: toPush, merged: combined);
   }
 
@@ -496,17 +506,26 @@ class SyncService {
           project.fileSlug,
           sourceId: sourceId,
         );
+        if (known.dirty) continue;
         if (!known.isEmpty && known.sha == entry.value) continue;
 
         final file = await client.readFile(entry.key);
         if (file == null) continue;
 
+        // An edit may have been saved while the remote read was in flight.
+        if ((await localStore.loadLayout(
+          project.fileSlug,
+          sourceId: sourceId,
+        )).dirty) {
+          continue;
+        }
         final layout = CanvasLayout.parse(file.content, sha: file.sha);
         pulled[project.slug] = layout;
         await localStore.saveLayout(
           project.fileSlug,
           layout,
           sourceId: sourceId,
+          preserveDirty: true,
         );
       }
     } catch (_) {
@@ -550,15 +569,20 @@ class SyncService {
       // Nothing left to arrange: take the file away rather than leave an empty
       // one implying the project still has a canvas.
       if (layout.sha != null) {
+        Future<void> remove(String sha) => client.deleteFile(
+          path: path,
+          sha: sha,
+          message: 'Remove canvas layout for $slug',
+        );
         try {
-          await client.deleteFile(
-            path: path,
-            sha: layout.sha!,
-            message: 'Remove canvas layout for $slug',
-          );
-        } on GitHubException {
-          // It is already gone, or cannot be removed; either way there is
-          // nothing here worth interrupting anyone over.
+          await remove(layout.sha!);
+        } on GitHubException catch (error) {
+          if (error.statusCode == 409 || error.statusCode == 422) {
+            final current = await client.readFile(path);
+            if (current != null) await remove(current.sha);
+          } else if (error.statusCode != 404) {
+            rethrow;
+          }
         }
       }
       return CanvasLayout.empty;
