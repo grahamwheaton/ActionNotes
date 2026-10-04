@@ -171,8 +171,11 @@ class SettingsStore {
         final id = entry['id'];
         if (id is! String || id.isEmpty) continue;
 
-        final token = await _readSharedToken(id);
-        if (token.isEmpty) continue;
+        // A folder has no token to have lost. It is kept for as long as the
+        // system still lets the app open it, which the sync reports.
+        final isFolder = entry['kind'] == SourceKind.folder.name;
+        final token = isFolder ? '' : await _readSharedToken(id);
+        if (!isFolder && token.isEmpty) continue;
 
         final source = NotesSource.fromJson(entry, token);
         if (source != null && source.config.isComplete) sources.add(source);
@@ -184,7 +187,8 @@ class SettingsStore {
     return sources;
   }
 
-  /// Writes the shared notebooks. Yours is saved by [save] as it always was.
+  /// Writes the notebooks that are not yours — shared by code, or in a
+  /// folder. Yours is saved by [save] as it always was.
   Future<void> saveSharedSources(List<NotesSource> sources) async {
     final prefs = await SharedPreferences.getInstance();
     final shared = sources.where((source) => !source.isMine).toList();
@@ -194,7 +198,7 @@ class SettingsStore {
       jsonEncode([for (final source in shared) source.toJson()]),
     );
 
-    for (final source in shared) {
+    for (final source in shared.where((source) => !source.isFolder)) {
       await _secure.write(
         key: _sharedTokenKey(source.id),
         value: source.config.token,

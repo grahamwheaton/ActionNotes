@@ -6,6 +6,7 @@ import '../models/canvas_layout.dart';
 import '../models/notes_source.dart';
 import '../models/project.dart';
 import '../models/sidebar_layout.dart';
+import 'folder_store.dart';
 import 'github_client.dart';
 import 'notebook_index.dart';
 import 'local_store.dart';
@@ -13,6 +14,10 @@ import 'local_store.dart';
 final _md = RegExp(r'\.md$');
 
 String _slugOf(String path) => path.split('/').last.replaceAll(_md, '');
+
+/// What to call the place a notebook lives, in a sentence about it.
+String _hostOf(GitHubConfig config) =>
+    config is FolderConfig ? 'the folder' : 'GitHub';
 
 class SyncResult {
   const SyncResult({
@@ -61,19 +66,19 @@ class _PushOutcome {
 class SyncService {
   SyncService({
     required this.localStore,
-    GitHubClient Function(GitHubConfig)? clientFactory,
-  }) : _clientFactory = clientFactory ?? GitHubClient.new;
+    RemoteStore Function(GitHubConfig)? clientFactory,
+  }) : _clientFactory = clientFactory ?? openStore;
 
   final LocalStore localStore;
 
   /// How a client is built for a config. Injected so tests can stub the HTTP
   /// layer without reaching the network.
-  final GitHubClient Function(GitHubConfig) _clientFactory;
+  final RemoteStore Function(GitHubConfig) _clientFactory;
 
   /// How this service reaches GitHub, so that anything else needing a client
   /// — checking a share code, say — reaches it the same way rather than
   /// building its own and going round whatever a test has put in place.
-  GitHubClient clientFor(GitHubConfig config) => _clientFactory(config);
+  RemoteStore clientFor(GitHubConfig config) => _clientFactory(config);
 
   /// Brings one notebook into step with its repo.
   ///
@@ -90,7 +95,9 @@ class SyncService {
     if (!config.isComplete) {
       return SyncResult(
         projects: local,
-        error: 'Add your GitHub repo and token in Settings to sync.',
+        error: config is FolderConfig
+            ? 'This notebook\'s folder is not set up.'
+            : 'Add your GitHub repo and token in Settings to sync.',
         pending: local.where((p) => p.dirty).length,
       );
     }
@@ -179,18 +186,22 @@ class SyncService {
         merged: merged,
         layouts: layouts,
       );
-    } on GitHubException catch (error) {
+    } on StoreException catch (error) {
       return SyncResult(
         projects: local,
         error: error.isFatal
-            ? 'GitHub rejected the request (${error.statusCode}): ${error.message}'
+            ? config is FolderConfig
+                  ? error.message
+                  : 'GitHub rejected the request (${error.statusCode}): ${error.message}'
             : 'Sync failed: ${error.message}',
         pending: local.where((p) => p.dirty).length,
       );
     } catch (error) {
       return SyncResult(
         projects: local,
-        error: 'Could not reach GitHub. Your edits are saved on this device.',
+        error: config is FolderConfig
+            ? 'Could not read the folder. Your edits are saved on this device.'
+            : 'Could not reach GitHub. Your edits are saved on this device.',
         pending: local.where((p) => p.dirty).length,
       );
     } finally {
@@ -234,7 +245,7 @@ class SyncService {
   /// somebody else pushed in between — which is ordinary when two people are
   /// on the same list, not a failure.
   Future<_PushOutcome> _pushMerging(
-    GitHubClient client,
+    RemoteStore client,
     Project project, {
     required String sourceId,
   }) async {
@@ -254,7 +265,7 @@ class SyncService {
         final pushed = toPush.copyWith(sha: sha, dirty: false);
         await localStore.save(pushed, sourceId: sourceId);
         return _PushOutcome(project: pushed, merged: combined);
-      } on GitHubException catch (error) {
+      } on StoreException catch (error) {
         // 409 means the file moved on under us. 422 means our SHA was
         // rejected outright, which happens when the local copy never had one
         // but the file exists on GitHub — the same situation.
@@ -395,7 +406,7 @@ class SyncService {
         sha: index.sha,
       );
       return null;
-    } on GitHubException catch (error) {
+    } on StoreException catch (error) {
       return 'The shared notebooks could not be saved to your repo: '
           '${error.message}';
     } catch (_) {
@@ -456,10 +467,10 @@ class SyncService {
         sha: existing?.sha,
       );
       return null;
-    } on GitHubException catch (error) {
+    } on StoreException catch (error) {
       return 'Could not write the archive: ${error.message}';
     } catch (_) {
-      return 'Could not reach GitHub to write the archive.';
+      return 'Could not reach ${_hostOf(config)} to write the archive.';
     } finally {
       client.dispose();
     }
@@ -477,7 +488,7 @@ class SyncService {
   /// moved are fetched — the same bargain the projects themselves get, so
   /// checking often stays affordable.
   Future<Map<String, CanvasLayout>> _pullLayouts(
-    GitHubClient client,
+    RemoteStore client,
     List<Project> projects, {
     required String sourceId,
   }) async {
@@ -541,7 +552,7 @@ class SyncService {
   }
 
   Future<CanvasLayout> _writeLayoutWith(
-    GitHubClient client,
+    RemoteStore client,
     String path,
     String slug,
     CanvasLayout layout,
@@ -556,7 +567,7 @@ class SyncService {
             sha: layout.sha!,
             message: 'Remove canvas layout for $slug',
           );
-        } on GitHubException {
+        } on StoreException {
           // It is already gone, or cannot be removed; either way there is
           // nothing here worth interrupting anyone over.
         }
@@ -573,7 +584,7 @@ class SyncService {
 
     try {
       return layout.copyWith(sha: await write(layout.sha));
-    } on GitHubException catch (error) {
+    } on StoreException catch (error) {
       if (error.statusCode != 409 && error.statusCode != 422) rethrow;
       final current = await client.readFile(path);
       return layout.copyWith(sha: await write(current?.sha));
@@ -610,10 +621,11 @@ class SyncService {
       await _deleteAttachmentDirectory(client, project);
       await _deleteLayout(client, project);
       return null;
-    } on GitHubException catch (error) {
-      return 'Removed here, but GitHub still has the file: ${error.message}';
+    } on StoreException catch (error) {
+      return 'Removed here, but ${_hostOf(config)} still has the file: '
+          '${error.message}';
     } catch (_) {
-      return 'Removed here, but GitHub could not be reached.';
+      return 'Removed here, but ${_hostOf(config)} could not be reached.';
     } finally {
       client.dispose();
     }
@@ -628,7 +640,7 @@ class SyncService {
   ///
   /// Swallowed like the attachments, and for the same reason: the project
   /// itself is gone, and a leftover file is untidy rather than broken.
-  Future<void> _deleteLayout(GitHubClient client, Project project) async {
+  Future<void> _deleteLayout(RemoteStore client, Project project) async {
     try {
       final path = CanvasLayout.path(project.fileSlug);
       // The folder, not the file: listing a single file gives back the file
@@ -653,7 +665,7 @@ class SyncService {
   /// gone, and a leftover image is untidy rather than broken, so it is not
   /// worth reporting an error over.
   Future<void> _deleteAttachmentDirectory(
-    GitHubClient client,
+    RemoteStore client,
     Project project,
   ) async {
     try {

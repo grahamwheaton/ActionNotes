@@ -272,6 +272,45 @@ normally again.
 Android and Windows both build in CI. Neither binary has been run by a human
 yet, so treat the first launch on each platform as untested.
 
+## Notebooks in a folder (OneDrive, Google Drive, Dropbox)
+
+*Experimental — on the `experimental-sharing` branch.*
+
+A notebook does not have to live in a GitHub repo. **Settings → Folder
+notebooks → Add a folder** keeps one in any folder on the device, and the
+cloud app you already use does the syncing:
+
+- **Work vault in OneDrive**, **family vault in Google Drive**: pick a folder
+  inside the OneDrive / Google Drive / Dropbox folder on this device. Nothing to
+  sign in to, no tokens, no app registration — ActionNotes only reads and writes
+  files, and the sync app carries them to your other devices and to anyone the
+  folder is shared with.
+- **Set up or connect, in one step.** A folder that already holds a notebook is
+  connected to without changing anything in it. A folder that does not has a
+  `projects/` folder and a small `.actionnotes/vault.json` added, and everything
+  else in it is left alone. What it is about to do is shown before it does it.
+- **Same layout as the repo** (`projects/`, `attachments/`, `archive/`, …), so a
+  notebook can be moved between a repo and a folder by copying it, and the
+  files are still plain markdown you can open anywhere.
+- **Sharing is the folder's.** To bring someone in, share the folder from
+  OneDrive or Google Drive; they add the same folder in their own app. Edits
+  from two people are reconciled by the same merge as for repos.
+- **Windows and Android.** On Windows any folder path works. On Android the
+  system folder picker is used (the Storage Access Framework), which is how
+  OneDrive and Google Drive folders are reachable on a phone.
+
+Differences from a repo notebook worth knowing:
+
+- Which folder is a *per-device* choice, so folder notebooks are not copied to
+  your other devices through your private repo the way shared (code) notebooks
+  are. Add the folder on each device; the notebook recognises itself by the id
+  in `.actionnotes/vault.json`.
+- No commit history. Use the cloud app's version history instead.
+- If the cloud app makes a conflict copy (`name-DESKTOP-1.md`,
+  `name (1).md`) it shows up as a separate project; delete whichever is stale.
+- A drive that is not mounted, or has not finished syncing, is reported as an
+  error rather than treated as "everything was deleted".
+
 ## Working with the notes repo
 
 Claude keeps the action list in the notes repo current while working on the

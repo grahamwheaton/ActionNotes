@@ -65,7 +65,9 @@ class NotebookIndex {
   static NotebookIndex of(Iterable<NotesSource> sources, {String? sha}) {
     return NotebookIndex([
       for (final source in sources)
-        if (!source.isMine)
+        // Only the ones a code can reach. A folder is chosen on each device,
+        // and its path on this one means nothing on another.
+        if (source.isCodeShared)
           NotebookEntry(
             code: ShareCode.encode(source.config),
             label: source.label,

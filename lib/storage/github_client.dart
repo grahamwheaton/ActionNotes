@@ -2,6 +2,13 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'remote_store.dart';
+
+// The types the sync code shares with other stores used to live here, and a
+// great deal still imports them from here.
+export 'remote_store.dart'
+    show RemoteEntry, RemoteFile, RemoteStore, StoreException;
+
 /// Where the notes live: a repo, a branch, and a token that can write to it.
 class GitHubConfig {
   const GitHubConfig({
@@ -21,56 +28,34 @@ class GitHubConfig {
       repo.isNotEmpty &&
       branch.isNotEmpty &&
       token.isNotEmpty;
+
+  /// Where this points, said once, for telling two configs apart.
+  String get locationKey => '$owner/$repo@$branch';
 }
 
-/// A file as GitHub reports it.
-class RemoteFile {
-  const RemoteFile({
-    required this.path,
-    required this.sha,
-    required this.content,
-  });
-
-  final String path;
-  final String sha;
-  final String content;
-}
-
-/// One file in a listing: where it is and what it currently says, without
-/// its contents.
-class RemoteEntry {
-  const RemoteEntry({required this.path, required this.sha});
-
-  final String path;
-  final String sha;
-}
-
-class GitHubException implements Exception {
-  GitHubException(this.statusCode, this.message);
-
-  final int statusCode;
-  final String message;
-
-  /// True when retrying will not help — bad token, missing repo, and so on.
-  bool get isFatal =>
-      statusCode == 401 || statusCode == 403 || statusCode == 404;
+/// A request GitHub refused or could not answer.
+///
+/// A [StoreException] like any other store's, so the code that handles one
+/// handles all of them; the name stays for the places that mean GitHub.
+class GitHubException extends StoreException {
+  GitHubException(super.statusCode, super.message);
 
   @override
   String toString() => 'GitHub $statusCode: $message';
 }
 
 /// Thin wrapper over the handful of GitHub REST endpoints the app needs.
-class GitHubClient {
+class GitHubClient implements RemoteStore {
   GitHubClient(this.config, {http.Client? client})
     : _client = client ?? http.Client();
 
   static const _base = 'https://api.github.com';
-  static const projectsDir = 'projects';
+  static const projectsDir = StoreLayout.projectsDir;
 
   /// Where completed items go when a list is tidied. Deliberately not under
   /// `projects/`, which is scanned: an archive is kept, not shown.
-  static const archiveDir = 'archive';
-  static const attachmentsDir = 'attachments';
+  static const archiveDir = StoreLayout.archiveDir;
+  static const attachmentsDir = StoreLayout.attachmentsDir;
 
   final GitHubConfig config;
   final http.Client _client;
@@ -100,10 +85,12 @@ class GitHubClient {
   }
 
   /// Verifies the token can reach the repo. Throws [GitHubException] if not.
+  @override
   Future<void> checkAccess() => _getRepo();
 
   /// Whether the repo is private, which decides whether anything sensitive
   /// may be written into it.
+  @override
   Future<bool> repoIsPrivate() async {
     final response = await _getRepo();
     final decoded = jsonDecode(response.body);
@@ -115,6 +102,7 @@ class GitHubClient {
 
   /// Lists a directory's files, with their SHAs, which a delete needs.
   /// An absent directory is not an error.
+  @override
   Future<Map<String, String>> listDirectory(String path) async {
     final response = await _client.get(_contentsUri(path), headers: _headers);
     if (response.statusCode == 404) return const {};
@@ -136,6 +124,7 @@ class GitHubClient {
   /// has, which is what makes a poll cheap: one request says which files have
   /// moved on, so only those have to be fetched. Reading every file on every
   /// sync is what made checking often too expensive to do.
+  @override
   Future<List<RemoteEntry>> listProjects() async {
     final response = await _client.get(
       _contentsUri(projectsDir),
@@ -162,6 +151,7 @@ class GitHubClient {
         .toList();
   }
 
+  @override
   Future<RemoteFile?> readFile(String path) async {
     final response = await _client.get(_contentsUri(path), headers: _headers);
     if (response.statusCode == 404) return null;
@@ -188,6 +178,7 @@ class GitHubClient {
   /// Creates or updates a file. [sha] must be the SHA we last read for an
   /// update; passing a stale one makes GitHub reject the write with 409, which
   /// is how we notice someone else edited the file.
+  @override
   Future<String> writeFile({
     required String path,
     required String content,
@@ -202,6 +193,7 @@ class GitHubClient {
 
   /// Reads a file's raw bytes. Used for note attachments, which are binary and
   /// live in a private repo, so they cannot simply be fetched by URL.
+  @override
   Future<List<int>?> readBytes(String path) async {
     final response = await _client.get(
       _contentsUri(path),
@@ -216,6 +208,7 @@ class GitHubClient {
 
   /// Creates or updates a file from raw bytes — an attached image, or the
   /// UTF-8 text [writeFile] hands it. [sha] works as it does there.
+  @override
   Future<String> writeBytes({
     required String path,
     required List<int> bytes,
@@ -241,6 +234,7 @@ class GitHubClient {
     return (json['content'] as Map<String, dynamic>)['sha'] as String;
   }
 
+  @override
   Future<void> deleteFile({
     required String path,
     required String sha,
@@ -262,6 +256,7 @@ class GitHubClient {
     }
   }
 
+  @override
   void dispose() => _client.close();
 
   static String _errorMessage(http.Response response) {
