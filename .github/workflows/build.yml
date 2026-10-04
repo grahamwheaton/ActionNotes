@@ -48,8 +48,31 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
-      - run: flutter analyze
-      - run: flutter test
+      # DIAGNOSTIC (experimental-sharing only): echo findings as annotations,
+      # because run logs cannot be downloaded from the environment this
+      # branch is being developed in. To be reverted before merging.
+      - name: Analyze
+        run: |
+          set +e
+          flutter analyze > analyze.txt 2>&1
+          code=$?
+          cat analyze.txt
+          if [ $code -ne 0 ]; then
+            body=$(grep -E '(error|warning|info) •' analyze.txt | head -80 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=flutter analyze::${body}"
+          fi
+          exit $code
+      - name: Test
+        run: |
+          set +e
+          flutter test --reporter expanded --no-color > test.txt 2>&1
+          code=$?
+          tail -n 200 test.txt
+          if [ $code -ne 0 ]; then
+            body=$(grep -E -A14 '\[E\]' test.txt | head -120 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+            echo "::error title=flutter test::${body}"
+          fi
+          exit $code
 
 
       # Says which of the four signing secrets Actions can see, and nothing
