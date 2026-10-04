@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/notes_source.dart';
 import '../models/sidebar_layout.dart';
+import '../models/view_preferences.dart';
 import 'github_client.dart';
 
 /// Repo coordinates go in preferences; the token goes in the platform keystore.
@@ -19,6 +20,33 @@ class SettingsStore {
   static const _sharedKey = 'shared_sources';
   static const _nameKey = 'display_name';
   static const _sidebarKey = 'sidebar_layout';
+  static const _viewKey = 'view_preferences';
+
+  Future<ViewPreferences> loadViewPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      final json = jsonDecode(prefs.getString(_viewKey) ?? '{}');
+      return json is Map<String, dynamic>
+          ? ViewPreferences.fromJson(json) : const ViewPreferences();
+    } on FormatException {
+      return const ViewPreferences();
+    }
+  }
+
+  Future<void> saveViewPreferences(ViewPreferences value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_viewKey, jsonEncode(value.toJson()));
+  }
+
+  Future<Set<String>> loadProjectPins() async {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList('android_pinned_projects') ?? []).toSet();
+  }
+
+  Future<void> saveProjectPins(Set<String> pins) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList('android_pinned_projects', pins.toList());
+  }
 
   /// A shared repo's token, kept in the keystore beside your own.
   static String _sharedTokenKey(String id) => 'shared_token_$id';

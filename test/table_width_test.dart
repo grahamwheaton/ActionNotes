@@ -25,7 +25,9 @@ void main() {
         final scroll = find.byWidgetPredicate((widget) =>
             widget is SingleChildScrollView &&
             widget.scrollDirection == Axis.horizontal);
-        await tester.drag(scroll, const Offset(-150, 0));
+        // Drag the visible scrollbar thumb, avoiding text selection in cells.
+        await tester.dragFrom(tester.getBottomLeft(scroll) + const Offset(60, -2),
+            const Offset(120, 0));
         await tester.pumpAndSettle();
         expect(tester.getTopLeft(find.byType(Table)).dx, lessThan(0));
       }

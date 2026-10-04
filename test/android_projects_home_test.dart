@@ -1,76 +1,84 @@
 import 'package:actionnotes/models/project.dart';
+import 'package:actionnotes/models/checklist_item.dart';
+import 'package:actionnotes/models/view_preferences.dart';
 import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/ui/home_shell.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'support/fakes.dart';
 
 void main() {
-  testWidgets('Android pins persist and groups still collapse', (tester) async {
-    tester.view.physicalSize = const Size(400, 850);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    SharedPreferences.setMockInitialValues({});
-    final state = newTestState(FakeLocalStore());
-    await state.init();
-    addTearDown(state.dispose);
-    await state.createProject('Shopping');
-    await state.createProject('Ideas');
-    await state.setMode('ideas', ProjectMode.notes);
-    await state.addGroup('Home');
-    await state.placeProject('shopping', group: 'Home');
-    await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
-      value: state,
-      child: MaterialApp(theme: AppTheme.light(), home: const HomeShell()),
-    ));
-    await tester.pumpAndSettle();
-    expect(find.byType(NavigationBar), findsOneWidget);
-    await tester.tap(find.byTooltip('Pin project').first);
-    await tester.pumpAndSettle();
-    final preferences = await SharedPreferences.getInstance();
-    expect(preferences.getStringList('android_pinned_projects'), hasLength(1));
-    await tester.tap(find.text('Pinned 1'));
-    await tester.pumpAndSettle();
-    expect(find.byTooltip('Unpin project'), findsOneWidget);
-    expect(find.byTooltip('Pin project'), findsNothing);
-    await tester.ensureVisible(find.text('Groups'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Groups'));
-    await tester.pumpAndSettle();
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Shopping'), findsOneWidget);
-    await tester.tap(find.text('Home'));
-    await tester.pumpAndSettle();
-    expect(find.text('Shopping'), findsNothing);
-    await tester.tap(find.text('Home'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Shopping'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byTooltip('Open navigation menu'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Ideas').first);
-    await tester.pumpAndSettle();
-    expect(find.text('Ideas'), findsWidgets);
-    expect(tester.takeException(), isNull);
-  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
-
-  testWidgets('Windows keeps its existing project layout', (tester) async {
-    tester.view.physicalSize = const Size(1000, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    final state = newTestState(FakeLocalStore());
-    await state.init();
-    addTearDown(state.dispose);
-    await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(
-      value: state,
-      child: MaterialApp(theme: AppTheme.light(), home: const HomeShell()),
-    ));
-    await tester.pumpAndSettle();
-    expect(find.byType(NavigationBar), findsNothing);
-    expect(find.byType(ProjectSidebar), findsOneWidget);
-  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
+  for (final platform in [TargetPlatform.android, TargetPlatform.windows]) {
+    testWidgets('$platform groups, pins and sorting stay in step', (tester) async {
+      tester.view.physicalSize = Size(platform == TargetPlatform.android ? 400 : 1200, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final store = FakeLocalStore();
+      store.saved.addAll({
+        'alpha': Project(slug: 'alpha', title: 'Alpha', updated: DateTime(2026, 1, 1)),
+        'beta': Project(slug: 'beta', title: 'Beta', updated: DateTime(2026, 1, 2),
+          items: const [ChecklistItem(text: 'Important', starred: true)]),
+        'gamma': Project(slug: 'gamma', title: 'Gamma', updated: DateTime(2026, 1, 3)),
+      });
+      final settings = FakeSettingsStore();
+      final state = newTestState(store, settingsStore: settings);
+      await state.init();
+      addTearDown(state.dispose);
+      await state.addGroup('Work');
+      await state.placeProject('beta', group: 'Work');
+      await state.placeProject('gamma', group: 'Work');
+      await tester.pumpWidget(ChangeNotifierProvider<AppState>.value(value: state,
+        child: MaterialApp(theme: AppTheme.light(), home: const HomeShell())));
+      await tester.pumpAndSettle();
+      final root = platform == TargetPlatform.windows
+          ? find.byType(ProjectSidebar) : find.byType(Scaffold).first;
+      Finder text(String value) => find.descendant(of: root, matching: find.text(value));
+      double y(String value) => tester.getTopLeft(text(value).first).dy;
+      expect(find.byType(ChoiceChip), findsNothing);
+      expect(text('Work'), findsOneWidget);
+      expect(y('Gamma'), lessThan(y('Beta')));
+      await state.toggleProjectPin('gamma');
+      await tester.pumpAndSettle();
+      expect(y('Gamma'), lessThan(y('Alpha')));
+      expect(text('Gamma'), findsOneWidget);
+      await tester.tap(find.descendant(of: root, matching: find.byTooltip('Sort projects')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(CheckedPopupMenuItem<ProjectSort>, 'Stars'));
+      await tester.pumpAndSettle();
+      expect(state.viewPreferences.projectSort, ProjectSort.stars);
+      await state.toggleProjectPin('gamma');
+      await tester.pumpAndSettle();
+      expect(y('Beta'), lessThan(y('Gamma')));
+      await tester.tap(text('Work'));
+      await tester.pumpAndSettle();
+      expect(text('Beta'), findsNothing);
+      await tester.tap(text('Work'));
+      await tester.pumpAndSettle();
+      expect(text('Beta'), findsOneWidget);
+      await state.toggleProjectPin('beta');
+      await tester.pumpAndSettle();
+      if (platform == TargetPlatform.android) {
+        await tester.tap(find.byTooltip('Open navigation menu'));
+        await tester.pumpAndSettle();
+        final sidebar = find.byType(ProjectSidebar);
+        expect(find.descendant(of: sidebar, matching: find.text('Stars')), findsOneWidget);
+        expect(find.descendant(of: sidebar, matching: find.byTooltip('Unpin project')), findsOneWidget);
+      }
+      final before = state.viewPreferences.sidebarWidth;
+      await tester.drag(find.byKey(const ValueKey('sidebar_resize_handle')), const Offset(50, 0));
+      await tester.pumpAndSettle();
+      expect(state.viewPreferences.sidebarWidth, greaterThan(before));
+      expect(settings.viewPreferences.sidebarWidth, state.viewPreferences.sidebarWidth);
+      final restarted = newTestState(store, settingsStore: settings);
+      await restarted.init();
+      addTearDown(restarted.dispose);
+      expect(restarted.projectPins, contains('beta'));
+      expect(restarted.viewPreferences.projectSort, ProjectSort.stars);
+      expect(restarted.viewPreferences.sidebarWidth, state.viewPreferences.sidebarWidth);
+      expect(tester.takeException(), isNull);
+    }, variant: TargetPlatformVariant.only(platform));
+  }
 }

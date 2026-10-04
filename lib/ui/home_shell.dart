@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../models/project.dart';
 import '../models/sidebar_layout.dart';
+import '../models/view_preferences.dart';
 import '../markdown/feed_days.dart';
 import '../state/app_state.dart';
 import 'checklist_view.dart';
@@ -267,12 +267,16 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
 
     return Scaffold(
       body: LayoutBuilder(builder: (context, constraints) {
-        final contentWidth = constraints.maxWidth - (_sidebarCollapsed ? 0 : 280);
+        final sidebarWidth = state.viewPreferences.sidebarWidth
+            .clamp(220.0, (constraints.maxWidth - 360).clamp(220.0, 600.0))
+            .toDouble();
+        final contentWidth = constraints.maxWidth -
+            (_sidebarCollapsed ? 0 : sidebarWidth + 12);
         final paneWidth = (contentWidth - 8).clamp(1.0, double.infinity).toDouble();
         return Row(
         children: [
           if (!_sidebarCollapsed) SizedBox(
-            width: 280,
+            width: sidebarWidth,
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceContainerLow,
@@ -288,6 +292,8 @@ class _TwoPaneLayoutState extends State<_TwoPaneLayout> {
               ),
             ),
           ),
+          if (!_sidebarCollapsed) _SidebarResizeHandle(width: sidebarWidth,
+              maxWidth: (constraints.maxWidth - 360).clamp(220.0, 600.0).toDouble()),
           _pane(state, theme, 0,
               width: _split ? paneWidth * _splitFraction : null),
           if (_split) MouseRegion(
@@ -526,29 +532,64 @@ class MobileProjectDrawer extends StatelessWidget {
   final String? selectedSlug;
 
   @override
-  Widget build(BuildContext context) => Drawer(
-    child: SafeArea(
-      child: ProjectSidebar(
-        selectedSlug: selectedSlug,
-        drawerMode: true,
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final maxWidth = (MediaQuery.sizeOf(context).width - 48)
+        .clamp(220.0, 600.0).toDouble();
+    final width = state.viewPreferences.sidebarWidth.clamp(220.0, maxWidth).toDouble();
+    return Drawer(width: width + 12, child: Row(children: [
+      Expanded(child: SafeArea(child: ProjectSidebar(
+        selectedSlug: selectedSlug, drawerMode: true,
         onSelect: (slug) {
           final navigator = Navigator.of(context);
-          // Closing the drawer restores the current route before changing the
-          // project, so a swipe or Back never leaves a drawer behind.
           navigator.pop();
           if (slug == selectedSlug) return;
           final route = MaterialPageRoute<void>(
-            builder: (_) => ChecklistView(slug: slug),
-          );
+            builder: (_) => ChecklistView(slug: slug));
           if (selectedSlug == null) {
             navigator.push(route);
           } else {
             navigator.pushReplacement(route);
           }
         },
+      ))),
+      _SidebarResizeHandle(width: width, maxWidth: maxWidth),
+    ]));
+  }
+}
+
+class _SidebarResizeHandle extends StatelessWidget {
+  const _SidebarResizeHandle({required this.width, required this.maxWidth});
+  final double width, maxWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.read<AppState>();
+    return Tooltip(message: 'Drag to resize sidebar; double-tap to reset',
+      child: MouseRegion(cursor: SystemMouseCursors.resizeColumn,
+        child: GestureDetector(
+          key: const ValueKey('sidebar_resize_handle'),
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragStart: (_) => state.setViewPreferences(
+            state.viewPreferences.copyWith(sidebarWidth: width), persist: false),
+          onHorizontalDragUpdate: (details) => state.setViewPreferences(
+            state.viewPreferences.copyWith(sidebarWidth:
+              (state.viewPreferences.sidebarWidth + details.delta.dx)
+                  .clamp(220.0, maxWidth).toDouble()),
+            persist: false),
+          onHorizontalDragEnd: (_) => state.setViewPreferences(state.viewPreferences),
+          onHorizontalDragCancel: () => state.setViewPreferences(state.viewPreferences),
+          onDoubleTap: () => state.setViewPreferences(
+            state.viewPreferences.copyWith(sidebarWidth: 280)),
+          child: SizedBox(width: 12, height: double.infinity,
+            child: ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerLow,
+              child: Center(child: RotatedBox(quarterTurns: 1,
+                child: Icon(Icons.drag_handle, size: 12,
+                  color: Theme.of(context).colorScheme.outline))))),
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class _SinglePaneLayout extends StatelessWidget {
@@ -609,139 +650,39 @@ class ProjectSidebar extends StatefulWidget {
 class _ProjectSidebarState extends State<ProjectSidebar> {
   final _filter = TextEditingController();
   final _filterFocus = FocusNode();
-  final Set<String> _pinned = {};
-  SharedPreferences? _preferences;
-  int _projectFilter = 3;
-  bool get _desktop => !kIsWeb &&
-      defaultTargetPlatform == TargetPlatform.windows;
-
-  @override
-  void initState() {
-    super.initState();
-    if (_desktop) _loadPins();
-  }
-
-  Future<void> _loadPins() async {
-    final preferences = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _preferences = preferences;
-      _pinned.addAll(preferences.getStringList('android_pinned_projects') ?? []);
-    });
-  }
-
-  Future<void> _togglePin(String slug) async {
-    final preferences = _preferences;
-    if (preferences == null) return;
-    setState(() {
-      if (!_pinned.remove(slug)) _pinned.add(slug);
-    });
-    await preferences.setStringList('android_pinned_projects', _pinned.toList());
-  }
 
   @override
   void dispose() {
-    _filter.dispose();
-    _filterFocus.dispose();
+    _filter.dispose(); _filterFocus.dispose();
     super.dispose();
-  }
-
-  /// Narrows the list as you type. Only titles: searching inside items and
-  /// notes is what the full search screen is for, and mixing the two would
-  /// make this box answer a question it did not ask.
-  List<Project> _visible(List<Project> projects) {
-    final query = _filter.text.trim().toLowerCase();
-    if (query.isEmpty) return projects;
-    return [
-      for (final project in projects)
-        if (project.title.toLowerCase().contains(query)) project,
-    ];
   }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-
-    if (state.loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    final filtering = _filter.text.trim().isNotEmpty;
-    final projects = _visible(state.projects).where((p) => !_desktop ||
-        (_projectFilter != 1 || _pinned.contains(p.slug))).where((p) =>
-        !_desktop || _projectFilter != 4 || p.isShared).toList();
-    if (_desktop && _projectFilter == 2) {
-      projects.sort((a, b) {
-        final order = (b.updated ?? b.created ?? DateTime(1970))
-            .compareTo(a.updated ?? a.created ?? DateTime(1970));
-        return order != 0 ? order : a.title.compareTo(b.title);
-      });
-    }
-
-    final content = Column(
-      children: [
-        if (_desktop || !widget.pushOnTap || widget.drawerMode) ...[
+    if (state.loading) return const Center(child: CircularProgressIndicator());
+    final query = _filter.text.trim().toLowerCase();
+    final matches = query.isEmpty ? null : state.projects
+        .where((project) => project.title.toLowerCase().contains(query)).toList();
+    return _ProjectCardScope(
+      compact: true, pinned: state.projectPins, onPin: state.toggleProjectPin,
+      child: ColoredBox(color: Theme.of(context).colorScheme.surfaceContainerLow,
+        child: Column(children: [
           if (!widget.pushOnTap || widget.drawerMode) const _SidebarHeader(),
-          _SidebarSearch(
-            controller: _filter,
-            focusNode: _filterFocus,
-            onChanged: () => setState(() {}),
-          ),
-          if (_desktop) Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(children: [
-                for (final (index, label) in [
-                  (0, 'All'), (1, 'Pinned'), (2, 'Recent'), (3, 'Groups'), (4, 'Shared'),
-                ]) Padding(
-                  padding: const EdgeInsets.only(right: 4),
-                  child: ChoiceChip(
-                    label: Text(label), selected: _projectFilter == index,
-                    showCheckmark: false, visualDensity: VisualDensity.compact,
-                    onSelected: (_) => setState(() => _projectFilter = index),
-                  ),
-                ),
-              ]),
-            ),
-          ),
+          _SidebarSearch(controller: _filter, focusNode: _filterFocus,
+            onChanged: () => setState(() {})),
           const _ProjectsLabel(),
-        ],
-        if (state.message != null) _MessageBar(message: state.message!),
-        if (!state.isConfigured) const _SetupPrompt(),
-        Expanded(
-          child: state.projects.isEmpty
-              ? const _NoProjects()
-              : projects.isEmpty
-              ? _desktop && _projectFilter == 1 && !filtering
-                  ? const Center(child: Text('Pin a project to find it here.'))
-                  : _desktop && _projectFilter == 4 && !filtering
-                      ? const Center(child: Text('No shared projects yet.'))
-                      : const _NoMatches()
-              : RefreshIndicator(
-                  onRefresh: state.sync,
-                  child: _ProjectList(
-                    // While something is typed, the groups are set aside and
-                    // every match is shown together: you are looking for a
-                    // project, not for where you filed it.
-                    filtered: filtering || (_desktop && _projectFilter != 3)
-                        ? projects : null,
+          if (state.message != null) _MessageBar(message: state.message!),
+          if (!state.isConfigured) const _SetupPrompt(),
+          Expanded(child: state.projects.isEmpty ? const _NoProjects()
+              : matches != null && matches.isEmpty ? const _NoMatches()
+              : RefreshIndicator(onRefresh: state.sync,
+                  child: _ProjectList(filtered: matches,
                     selectedSlug: widget.selectedSlug,
                     pushOnTap: widget.pushOnTap || widget.drawerMode,
-                    onSelect: widget.onSelect,
-                    onOpenInNewTab: widget.onOpenInNewTab,
-                  ),
-                ),
-        ),
-        if (!widget.pushOnTap || widget.drawerMode) const _SidebarFooter(),
-      ],
-    );
-    if (!_desktop) return content;
-    return _ProjectCardScope(
-      compact: true, pinned: Set.unmodifiable(_pinned), onPin: _togglePin,
-      child: ColoredBox(
-        color: Theme.of(context).colorScheme.surfaceContainerLow,
-        child: content,
+                    onSelect: widget.onSelect, onOpenInNewTab: widget.onOpenInNewTab))),
+          if (!widget.pushOnTap || widget.drawerMode) const _SidebarFooter(),
+        ]),
       ),
     );
   }
@@ -754,84 +695,54 @@ class _ProjectSidebarState extends State<ProjectSidebar> {
 /// using, and burying it under the headings of things you have finished
 /// organising would be the wrong way round.
 class _ProjectList extends StatelessWidget {
-  const _ProjectList({
-    required this.filtered,
-    required this.selectedSlug,
-    required this.pushOnTap,
-    this.onSelect,
-    this.onOpenInNewTab,
-  });
-
-  /// The matches, when something is typed in the box — in which case the
-  /// groups are set aside entirely. Null when nothing is being searched for.
+  const _ProjectList({required this.filtered, required this.selectedSlug,
+    required this.pushOnTap, this.allowed, this.onSelect, this.onOpenInNewTab});
   final List<Project>? filtered;
+  final Set<String>? allowed;
   final String? selectedSlug;
   final bool pushOnTap;
-  final ValueChanged<String>? onSelect;
-  final ValueChanged<String>? onOpenInNewTab;
+  final ValueChanged<String>? onSelect, onOpenInNewTab;
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final padding = EdgeInsets.only(bottom: pushOnTap ? 96 : 12);
-
+    final pins = state.projectPins;
+    final sort = state.viewPreferences.projectSort;
+    bool included(Project project) => allowed == null || allowed!.contains(project.slug);
+    Widget tile(Project project) => _ProjectTile(project: project,
+      selected: project.slug == selectedSlug, pushOnTap: pushOnTap,
+      onSelect: onSelect, onOpenInNewTab: onOpenInNewTab);
+    final pinned = sort.sorted((filtered ?? state.projects)
+        .where(included).where((project) => pins.contains(project.slug)));
     final matches = filtered;
-    if (matches != null) {
-      return ListView.builder(
-        padding: padding,
-        itemCount: matches.length,
-        itemBuilder: (context, index) => _ProjectTile(
-          project: matches[index],
-          selected: matches[index].slug == selectedSlug,
-          pushOnTap: pushOnTap,
-          onSelect: onSelect,
-          onOpenInNewTab: onOpenInNewTab,
-        ),
-      );
-    }
-
     final loose = state.looseProjects;
-
+    final looseSorted = sort.sorted(loose.where(included)
+        .where((project) => !pins.contains(project.slug)));
     return ListView(
-      padding: padding,
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.only(bottom: pushOnTap ? 100 : 12),
       children: [
-        for (var index = 0; index < loose.length; index++)
-          _DropBefore(
-            group: null,
-            at: index,
-            child: _ProjectTile(
-              project: loose[index],
-              selected: loose[index].slug == selectedSlug,
-              pushOnTap: pushOnTap,
-              onSelect: onSelect,
-              onOpenInNewTab: onOpenInNewTab,
-            ),
-          ),
-        // The end of the ungrouped run, so something can be dragged out of a
-        // group and dropped below everything rather than only above
-        // something.
-        _DropBefore(group: null, at: loose.length, tall: loose.isEmpty),
-        for (final group in state.sidebar.groups) ...[
-          _GroupHeading(group: group),
-          if (!group.collapsed)
-            for (var index = 0; index < state.projectsIn(group).length; index++)
-              _DropBefore(
-                group: group.name,
-                at: index,
-                child: _ProjectTile(
-                  project: state.projectsIn(group)[index],
-                  selected: state.projectsIn(group)[index].slug == selectedSlug,
-                  pushOnTap: pushOnTap,
-                  onSelect: onSelect,
-                  onOpenInNewTab: onOpenInNewTab,
-                ),
-              ),
-          if (!group.collapsed)
-            _DropBefore(
-              group: group.name,
-              at: state.projectsIn(group).length,
-              tall: state.projectsIn(group).isEmpty,
-            ),
+        for (final project in pinned) tile(project),
+        if (pinned.isNotEmpty) const Divider(height: 16),
+        if (matches != null)
+          for (final project in sort.sorted(matches.where(included)
+              .where((project) => !pins.contains(project.slug)))) tile(project)
+        else ...[
+          for (final project in looseSorted) _DropBefore(group: null,
+            at: loose.indexOf(project), child: tile(project)),
+          _DropBefore(group: null, at: loose.length, tall: looseSorted.isEmpty),
+          for (final group in state.sidebar.groups)
+            if (allowed == null || state.projectsIn(group).any(included)) ...[
+              _GroupHeading(group: group),
+              if (!group.collapsed) ...[
+                for (final project in sort.sorted(state.projectsIn(group)
+                    .where(included).where((project) => !pins.contains(project.slug))))
+                  _DropBefore(group: group.name,
+                    at: state.projectsIn(group).indexOf(project), child: tile(project)),
+                _DropBefore(group: group.name, at: state.projectsIn(group).length,
+                  tall: state.projectsIn(group).isEmpty),
+              ],
+            ],
         ],
       ],
     );
@@ -908,6 +819,7 @@ class _ProjectsLabel extends StatelessWidget {
     return Row(
       children: [
         const Expanded(child: _SidebarLabel('Projects')),
+        const _ProjectSortButton(),
         IconButton(
           tooltip: 'New group',
           icon: const Icon(Icons.create_new_folder_outlined, size: 16),
@@ -2021,179 +1933,77 @@ class _AndroidProjectsHome extends StatefulWidget {
 }
 
 class _AndroidProjectsHomeState extends State<_AndroidProjectsHome> {
-  static const _pinsKey = 'android_pinned_projects';
-  final Set<String> _pinned = {};
-  SharedPreferences? _preferences;
-  int _filter = 0;
   int _destination = 0;
-  bool _newestFirst = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadPins();
-  }
-
-  Future<void> _loadPins() async {
-    final preferences = await SharedPreferences.getInstance();
-    if (!mounted) return;
-    setState(() {
-      _preferences = preferences;
-      _pinned.addAll(preferences.getStringList(_pinsKey) ?? []);
-    });
-  }
-
-  Future<void> _togglePin(String slug) async {
-    final preferences = _preferences;
-    if (preferences == null) return;
-    setState(() {
-      if (!_pinned.remove(slug)) _pinned.add(slug);
-    });
-    await preferences.setStringList(_pinsKey, _pinned.toList());
-  }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final scheme = Theme.of(context).colorScheme;
-    final projects = state.projects.where((project) =>
-        _destination != 2 || project.isShared).toList();
-    final pinnedCount = projects.where((p) => _pinned.contains(p.slug)).length;
-    final recent = _destination == 1 || _filter == 2;
-    final visible = projects.where((p) => _filter != 1 ||
-        _destination == 1 || _pinned.contains(p.slug)).toList();
-    visible.sort((a, b) {
-      if (recent || _newestFirst) {
-        final order = (b.updated ?? b.created ?? DateTime(1970))
-            .compareTo(a.updated ?? a.created ?? DateTime(1970));
-        if (order != 0) return order;
-      }
-      return a.title.toLowerCase().compareTo(b.title.toLowerCase());
-    });
-    final groups = _destination == 0 && _filter == 3;
-    return _ProjectCardScope(
-      pinned: Set.unmodifiable(_pinned),
-      onPin: _togglePin,
+    final shared = _destination == 1;
+    final projects = state.projects.where((project) => !shared || project.isShared).toList();
+    return _ProjectCardScope(pinned: state.projectPins, onPin: state.toggleProjectPin,
       child: Scaffold(
         backgroundColor: scheme.surfaceContainerLow,
         drawer: const MobileProjectDrawer(),
-        appBar: AppBar(
-          backgroundColor: scheme.surfaceContainerLow,
-          titleSpacing: 0,
-          title: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [Text('ActionNotes'), AppVersionLabel()],
-          ),
+        appBar: AppBar(backgroundColor: scheme.surfaceContainerLow, titleSpacing: 0,
+          title: const Column(crossAxisAlignment: CrossAxisAlignment.start,
+            children: [Text('ActionNotes'), AppVersionLabel()]),
           actions: [
-            IconButton(
-              tooltip: 'Daily note',
-              icon: const Icon(Icons.today_outlined),
-              onPressed: () => openDailyNote(context, openAfter: true),
-            ),
+            IconButton(tooltip: 'Daily note', icon: const Icon(Icons.today_outlined),
+              onPressed: () => openDailyNote(context, openAfter: true)),
             const _SearchAction(), const _SyncAction(), const _SettingsAction(),
           ],
         ),
         floatingActionButton: FloatingActionButton.extended(
-          backgroundColor: scheme.primary,
-          foregroundColor: scheme.onPrimary,
+          backgroundColor: scheme.primary, foregroundColor: scheme.onPrimary,
           onPressed: () => createProject(context, openAfter: true),
-          icon: const Icon(Icons.add),
-          label: const Text('New project'),
-        ),
-        bottomNavigationBar: NavigationBar(
-          selectedIndex: _destination,
-          onDestinationSelected: (index) => setState(() {
-            _destination = index;
-            _filter = 0;
-          }),
+          icon: const Icon(Icons.add), label: const Text('New project')),
+        bottomNavigationBar: NavigationBar(selectedIndex: _destination,
+          onDestinationSelected: (index) => setState(() => _destination = index),
           destinations: const [
             NavigationDestination(icon: Icon(Icons.folder_outlined),
-                selectedIcon: Icon(Icons.folder), label: 'Projects'),
-            NavigationDestination(icon: Icon(Icons.schedule), label: 'Recent'),
+              selectedIcon: Icon(Icons.folder), label: 'Projects'),
             NavigationDestination(icon: Icon(Icons.people_outline), label: 'Shared'),
-          ],
-        ),
+          ]),
         body: Column(children: [
-          if (_destination == 0)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 8, 12),
-              child: Row(children: [
-                Expanded(child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest.withValues(alpha: .5),
-                    borderRadius: BorderRadius.circular(28),
-                  ),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(children: [
-                      for (final (index, label) in [
-                        (0, 'All ${projects.length}'),
-                        (1, 'Pinned $pinnedCount'),
-                        (2, 'Recent'), (3, 'Groups'),
-                      ]) Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: ChoiceChip(
-                          label: Text(label), selected: _filter == index,
-                          showCheckmark: false, side: BorderSide.none,
-                          selectedColor: scheme.primaryContainer,
-                          backgroundColor: Colors.transparent,
-                          onSelected: (_) => setState(() => _filter = index),
-                        ),
-                      ),
-                    ]),
-                  ),
-                )),
-                PopupMenuButton<bool>(
-                  tooltip: 'Sort projects', icon: const Icon(Icons.sort),
-                  onSelected: (value) => setState(() => _newestFirst = value),
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: true, child: Text('Last edited')),
-                    PopupMenuItem(value: false, child: Text('Name')),
-                  ],
-                ),
-              ]),
-            ),
-          if (_destination == 2)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Align(alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: () => AddNotebookDialog.show(context),
-                  icon: const Icon(Icons.add), label: const Text('Add a notebook'),
-                ),
-              ),
-            ),
-          if (groups) const _ProjectsLabel(),
+          const _ProjectsLabel(),
+          if (shared) Align(alignment: Alignment.centerRight,
+            child: TextButton.icon(onPressed: () => AddNotebookDialog.show(context),
+              icon: const Icon(Icons.add), label: const Text('Add a notebook'))),
           if (state.message != null) _MessageBar(message: state.message!),
           if (!state.isConfigured) const _SetupPrompt(),
           const UpdateBanner(),
-          Expanded(child: state.loading
-              ? const Center(child: CircularProgressIndicator())
-              : RefreshIndicator(
-                  onRefresh: state.sync,
-                  child: groups
-                      ? const _ProjectList(filtered: null, selectedSlug: null,
-                          pushOnTap: true)
-                      : ListView(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.only(bottom: 100),
-                          children: [
-                            if (visible.isEmpty) Padding(
-                              padding: const EdgeInsets.all(32),
-                              child: Text(_destination == 2
-                                  ? 'No shared projects yet.'
-                                  : _filter == 1 ? 'Pin a project to find it here.'
-                                  : 'No projects yet',
-                                textAlign: TextAlign.center),
-                            ),
-                            for (final project in visible) _ProjectTile(
-                              project: project, selected: false, pushOnTap: true,
-                            ),
-                          ],
-                        ),
-                )),
+          Expanded(child: state.loading ? const Center(child: CircularProgressIndicator())
+              : projects.isEmpty ? Center(child: Text(shared
+                  ? 'No shared projects yet.' : 'No projects yet'))
+              : RefreshIndicator(onRefresh: state.sync,
+                  child: _ProjectList(filtered: null, selectedSlug: null,
+                    pushOnTap: true, allowed: shared
+                        ? projects.map((project) => project.slug).toSet() : null))),
         ]),
       ),
+    );
+  }
+}
+
+class _ProjectSortButton extends StatelessWidget {
+  const _ProjectSortButton();
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final sort = state.viewPreferences.projectSort;
+    return PopupMenuButton<ProjectSort>(
+      tooltip: 'Sort projects', initialValue: sort,
+      onSelected: (value) => state.setViewPreferences(
+          state.viewPreferences.copyWith(projectSort: value)),
+      itemBuilder: (_) => [for (final value in ProjectSort.values)
+        CheckedPopupMenuItem(value: value, checked: sort == value,
+          child: Text(value.label))],
+      child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.sort, size: 18), const SizedBox(width: 4),
+          Text(sort.label, style: Theme.of(context).textTheme.labelMedium),
+        ])),
     );
   }
 }
