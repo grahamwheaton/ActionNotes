@@ -10,7 +10,6 @@ import 'folder_store.dart';
 import 'github_client.dart';
 import 'notebook_index.dart';
 import 'local_store.dart';
-import 'remote_store.dart';
 
 final _md = RegExp(r'\.md$');
 
