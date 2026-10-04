@@ -1,4 +1,5 @@
 import 'package:actionnotes/state/app_state.dart';
+import 'package:actionnotes/models/view_preferences.dart';
 import 'package:actionnotes/ui/context_menu.dart';
 import 'package:actionnotes/ui/home_shell.dart';
 import 'package:actionnotes/ui/theme.dart';
@@ -15,6 +16,7 @@ Future<AppState> pumpSidebar(WidgetTester tester) async {
 
   final state = newTestState(FakeLocalStore());
   await state.init();
+  await state.setViewPreferences(state.viewPreferences.copyWith(projectSort: ProjectSort.alphabetical));
   await state.createProject('Quote');
   await state.createProject('Shopping');
 
@@ -119,3 +121,4 @@ void main() {
     });
   });
 }
+

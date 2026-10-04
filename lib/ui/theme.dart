@@ -69,6 +69,7 @@ class NoteTypography {
       [NoteFormatting format = const NoteFormatting()]) => theme.textTheme.bodyLarge!.copyWith(
         fontSize: format.fontSize,
         fontFamily: format.fontFamily,
+        fontFamilyFallback: format.fontFallback,
         height: format.lineHeight,
         color: theme.colorScheme.onSurface,
       );
@@ -88,6 +89,7 @@ class NoteTypography {
     return theme.textTheme.bodyLarge!.copyWith(
       fontSize: fontSize * format.headingScale * format.fontSize / size,
       fontFamily: format.fontFamily,
+      fontFamilyFallback: format.fontFallback,
       fontWeight: weight,
       height: 1.3,
       letterSpacing: -0.2,

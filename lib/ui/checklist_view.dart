@@ -1239,6 +1239,7 @@ class _InlineNotesState extends State<_InlineNotes> {
               autofocus: true,
               initialMarkdown: _markdown,
               shrinkWrap: true,
+              pageMargins: false,
               onChanged: (markdown) {
                 _markdown = markdown;
                 widget.onChanged(markdown);

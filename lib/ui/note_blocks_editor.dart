@@ -54,6 +54,7 @@ class NoteBlocksEditor extends StatefulWidget {
     this.onRequestImage,
     this.onPaste,
     this.shrinkWrap = false,
+    this.pageMargins = true,
     this.autofocus = false,
     this.placeholder,
   });
@@ -67,6 +68,7 @@ class NoteBlocksEditor extends StatefulWidget {
   /// Lays the blocks out at their natural height instead of scrolling, for
   /// when the note is embedded in a list that scrolls for it.
   final bool shrinkWrap;
+  final bool pageMargins;
   final bool autofocus;
 
   /// Fires whenever the note's markdown changes, so the host can save it.
@@ -760,8 +762,10 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
     return ListView.builder(
       shrinkWrap: widget.shrinkWrap,
       physics: widget.shrinkWrap ? const NeverScrollableScrollPhysics() : null,
-      padding: EdgeInsets.symmetric(horizontal: format.horizontalMargin,
-          vertical: widget.shrinkWrap ? format.paragraphSpacing : format.verticalMargin),
+      padding: widget.pageMargins
+          ? EdgeInsets.symmetric(horizontal: format.horizontalMargin,
+              vertical: format.verticalMargin)
+          : const EdgeInsets.only(left: 16),
       itemCount: _rows.length,
       itemBuilder: (context, index) => KeyedSubtree(
         key: _rows[index].boxKey,
