@@ -5,6 +5,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 
 import '../models/project.dart';
+import '../models/notes_source.dart';
 import '../models/sidebar_layout.dart';
 import '../models/view_preferences.dart';
 import '../markdown/feed_days.dart';
@@ -1871,7 +1872,55 @@ Future<void> createProject(
   if (title == null || !context.mounted) return;
 
   final state = context.read<AppState>();
-  final project = await state.createProject(title);
+  var sourceId = NotesSource.mineId;
+  if (state.sharedSources.isNotEmpty) {
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Where do you want to share it?'),
+        children: [
+          for (final source in state.sources)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(source.id),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  source.isMine
+                      ? Icons.person_outline
+                      : Icons.folder_shared_outlined,
+                ),
+                title: Text(source.name),
+                subtitle: Text(
+                  source.isMine ? 'Keep in my own notes' : source.where,
+                ),
+              ),
+            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+    if (chosen == null || !context.mounted) return;
+    sourceId = chosen;
+  }
+  late final Project project;
+  try {
+    project = await state.createProject(title, sourceId: sourceId);
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Could not create the project in that notebook. Please try again.',
+          ),
+        ),
+      );
+    }
+    return;
+  }
+  if (!context.mounted) return;
   state.select(project.slug);
   if (!openAfter || !context.mounted) return;
 
