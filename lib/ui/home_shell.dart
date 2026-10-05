@@ -2083,7 +2083,10 @@ class _ProjectCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.read<AppState>();
+    final state = context.watch<AppState>();
+    final panelStyle = state.viewPreferences.projectPanelStyle;
+    final detailed = panelStyle == ProjectPanelStyle.detailed;
+    final titlesOnly = panelStyle == ProjectPanelStyle.compact;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final canvas = project.items.isEmpty && project.blocks.isNotEmpty &&
@@ -2111,25 +2114,47 @@ class _ProjectCard extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(18), onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+            padding: EdgeInsets.fromLTRB(10, detailed ? 8 : 4, 4, detailed ? 8 : 4),
             child: Row(children: [
-              Tooltip(message: canvas ? 'Canvas project' : switch(project.mode) {
+              if (!titlesOnly) Tooltip(message: canvas ? 'Canvas project' : switch(project.mode) {
                 ProjectMode.tasks => 'Tasks project',
                 ProjectMode.notes => 'Notes project',
                 ProjectMode.feed => 'Timeline project',
                 ProjectMode.kanban => 'Kanban board',
               }, child: Container(
-                width: compact ? 34 : 46, height: compact ? 34 : 46,
+                width: compact || !detailed ? 34 : 46, height: compact || !detailed ? 34 : 46,
                 decoration: BoxDecoration(color: colour.withValues(alpha: .13),
                   borderRadius: BorderRadius.circular(12)),
-                child: Icon(icon, color: colour, size: compact ? 22 : 28),
+                child: Icon(icon, color: colour, size: compact || !detailed ? 22 : 28),
               )),
-              const SizedBox(width: 12),
+              if (!titlesOnly) const SizedBox(width: 10),
               Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(project.title, maxLines: compact ? 1 : 2, overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontSize: compact ? 14 : null, fontWeight: FontWeight.w700)),
+                  Row(children: [
+                    Expanded(child: Text(project.title,
+                      maxLines: compact || !detailed ? 1 : 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontSize: detailed ? (compact ? 14 : null) : (compact ? 16 : 18),
+                        fontWeight: FontWeight.w700))),
+                    if (!detailed && !titlesOnly) Padding(
+                      padding: const EdgeInsets.only(left: 6),
+                      child: Text('${project.items.length}',
+                        semanticsLabel: '${project.items.length} items',
+                        style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant))),
+                  ]),
+                  if (!detailed && !titlesOnly) Row(children: [
+                    if (timestamp != null) Flexible(child: Text(_lastEdited(timestamp),
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant))),
+                    if (project.isShared) Padding(padding: const EdgeInsets.only(left: 6),
+                      child: Tooltip(message: 'In ${state.sourceOf(project.slug).name}',
+                        child: Icon(Icons.folder_shared_outlined, size: 14, color: scheme.primary))),
+                    if (project.dirty) Padding(padding: const EdgeInsets.only(left: 6),
+                      child: Tooltip(message: 'Waiting to sync',
+                        child: Icon(Icons.cloud_upload_outlined, size: 14, color: scheme.onSurfaceVariant))),
+                  ]),
+                  if (detailed) ...[
                   const SizedBox(height: 4),
                   Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
@@ -2159,8 +2184,10 @@ class _ProjectCard extends StatelessWidget {
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: scheme.onSurfaceVariant)),
                   ),
+                  ],
                 ])),
-              Column(mainAxisSize: MainAxisSize.min, children: [
+              Flex(direction: detailed ? Axis.vertical : Axis.horizontal,
+                mainAxisSize: MainAxisSize.min, children: [
                 IconButton(
                   tooltip: pinned ? 'Unpin project' : 'Pin project',
                   visualDensity: VisualDensity.compact,
@@ -2189,3 +2216,4 @@ class _ProjectCard extends StatelessWidget {
     return '${date.day}/${date.month}/${date.year}';
   }
 }
+

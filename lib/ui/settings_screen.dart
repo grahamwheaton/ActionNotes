@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import '../models/view_preferences.dart';
 import '../storage/github_account.dart';
 import '../storage/github_client.dart';
 import 'repo_picker.dart';
@@ -282,6 +283,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 12),
           const _ThemePicker(),
+          const _ProjectPanelPicker(),
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.format_size),
@@ -555,6 +557,31 @@ class _Field extends StatelessWidget {
           hintText: hint,
           suffixIcon: suffix,
         ),
+      ),
+    );
+  }
+}
+
+
+class _ProjectPanelPicker extends StatelessWidget {
+  const _ProjectPanelPicker();
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.view_list_outlined),
+      title: const Text('Project panel'),
+      subtitle: const Text('Compact: titles only. Medium: title, count and last edited. Detailed: all information.'),
+      trailing: DropdownButton<ProjectPanelStyle>(
+        value: state.viewPreferences.projectPanelStyle,
+        onChanged: (value) {
+          if (value != null) state.setViewPreferences(
+            state.viewPreferences.copyWith(projectPanelStyle: value));
+        },
+        items: [for (final style in ProjectPanelStyle.values)
+          DropdownMenuItem(value: style, child: Text(style.label))],
       ),
     );
   }
