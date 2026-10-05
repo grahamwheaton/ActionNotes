@@ -7,6 +7,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('project panel style persists and older settings default to medium', () async {
+    SharedPreferences.setMockInitialValues({});
+    expect(ViewPreferences.fromJson({}).projectPanelStyle, ProjectPanelStyle.medium);
+    expect(ViewPreferences.fromJson({'projectPanelStyle': 'invalid'}).projectPanelStyle,
+      ProjectPanelStyle.medium);
+    for (final style in ProjectPanelStyle.values) {
+      final prefs = const ViewPreferences().copyWith(projectPanelStyle: style);
+      await SettingsStore().saveViewPreferences(prefs);
+      expect((await SettingsStore().loadViewPreferences()).projectPanelStyle, style);
+      expect(prefs.copyWith(sidebarWidth: 340).projectPanelStyle, style);
+    }
+  });
   test('preferences round-trip and preserve existing device pins', () async {
     SharedPreferences.setMockInitialValues({'android_pinned_projects': ['work']});
     final store = SettingsStore();
@@ -47,3 +59,4 @@ void main() {
     expect(order(ProjectSort.stars), ['beta', 'alpha', 'zulu']);
   });
 }
+

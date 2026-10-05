@@ -75,23 +75,33 @@ class NoteFormatting {
   );
 }
 
+enum ProjectPanelStyle {
+  compact('Compact'), medium('Medium'), detailed('Detailed');
+  const ProjectPanelStyle(this.label);
+  final String label;
+}
+
 class ViewPreferences {
   const ViewPreferences({this.sidebarWidth = 280,
     this.projectSort = ProjectSort.recent,
+    this.projectPanelStyle = ProjectPanelStyle.medium,
     this.formatting = const NoteFormatting()});
   final double sidebarWidth;
   final ProjectSort projectSort;
+  final ProjectPanelStyle projectPanelStyle;
   final NoteFormatting formatting;
 
-  ViewPreferences copyWith({double? sidebarWidth, ProjectSort? projectSort,
+  ViewPreferences copyWith({double? sidebarWidth, ProjectSort? projectSort, ProjectPanelStyle? projectPanelStyle,
     NoteFormatting? formatting}) => ViewPreferences(
     sidebarWidth: sidebarWidth ?? this.sidebarWidth,
     projectSort: projectSort ?? this.projectSort,
+    projectPanelStyle: projectPanelStyle ?? this.projectPanelStyle,
     formatting: formatting ?? this.formatting,
   );
 
   Map<String, dynamic> toJson() => {
     'sidebarWidth': sidebarWidth, 'projectSort': projectSort.name,
+    'projectPanelStyle': projectPanelStyle.name,
     'formatting': formatting.toJson(),
   };
 
@@ -99,8 +109,11 @@ class ViewPreferences {
     sidebarWidth: _number(json, 'sidebarWidth', 280, 220, 600),
     projectSort: ProjectSort.values.where((sort) => sort.name == json['projectSort'])
         .firstOrNull ?? ProjectSort.recent,
+    projectPanelStyle: ProjectPanelStyle.values.where((style) =>
+        style.name == json['projectPanelStyle']).firstOrNull ?? ProjectPanelStyle.medium,
     formatting: json['formatting'] is Map<String, dynamic>
         ? NoteFormatting.fromJson(json['formatting'] as Map<String, dynamic>)
         : const NoteFormatting(),
   );
 }
+
