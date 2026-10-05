@@ -30,6 +30,48 @@ Future<void> pump(WidgetTester tester, AppState state, Widget screen) async {
 }
 
 void main() {
+  for (final destination in ['Kitchen', 'My notes', 'Cancel']) {
+    testWidgets('new project destination: $destination', (tester) async {
+      final store = FakeLocalStore();
+      final state = stateWith(FakeGitHub(), store);
+      await state.init();
+      await state.addSharedNotebook(ShareCode.encode(theirs), label: 'Kitchen');
+      await pump(
+        tester,
+        state,
+        Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => createProject(context),
+              child: const Text('Create'),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Create'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'Brief');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(state.projects, isEmpty);
+      expect(find.text('Where do you want to share it?'), findsOneWidget);
+      await tester.tap(find.text(destination));
+      await tester.pumpAndSettle();
+      if (destination == 'Cancel') {
+        expect(state.projects, isEmpty);
+      } else {
+        expect(
+          state.projects.single.sourceId,
+          destination == 'Kitchen'
+              ? state.sharedSources.single.id
+              : NotesSource.mineId,
+        );
+      }
+      await tester.pump(const Duration(seconds: 3));
+      state.dispose();
+    });
+  }
+
   group('the shared notebooks section', () {
     testWidgets('says what one is when there are none, and offers to add', (
       tester,

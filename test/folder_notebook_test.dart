@@ -52,6 +52,34 @@ void main() {
   );
 
   group('adding a folder', () {
+    test(
+      'new projects go directly to the chosen folder with unique names',
+      () async {
+        final state = newState();
+        await state.init();
+        await state.addFolderNotebook(root.path, folderName: 'OneDrive');
+        final sourceId = state.folderSources.single.id;
+        await state.createProject('Brief', schedulePush: false);
+        final first = await state.createProject('Brief', sourceId: sourceId);
+        final second = await state.createProject('Brief', sourceId: sourceId);
+        expect(first.fileSlug, 'brief');
+        expect(second.fileSlug, 'brief-2');
+        expect(first.sourceId, sourceId);
+        expect(store.saved, hasLength(1));
+        await eventually(
+          () => File('${root.path}/projects/brief-2.md').existsSync(),
+        );
+        expect(File('${root.path}/projects/brief.md').existsSync(), isTrue);
+        expect(File('${root.path}/projects/brief-2.md').existsSync(), isTrue);
+        await expectLater(
+          state.createProject('Lost', sourceId: 'missing'),
+          throwsStateError,
+        );
+        expect(state.projects, hasLength(3));
+        await settle(state);
+      },
+    );
+
     test('an empty folder is set up, and listed beside your own', () async {
       final state = newState();
       await state.init();

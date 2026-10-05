@@ -1171,11 +1171,23 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  Future<Project> createProject(String title, {bool schedulePush = true}) async {
-    final slug = _uniqueSlug(Project.slugify(title));
+  Future<Project> createProject(
+    String title, {
+    bool schedulePush = true,
+    String sourceId = NotesSource.mineId,
+  }) async {
+    if (sourceId != NotesSource.mineId) {
+      final source = _sources.where((s) => s.id == sourceId).firstOrNull;
+      if (source == null || !source.config.isComplete) {
+        throw StateError('That notebook is no longer available.');
+      }
+    }
+    final fileSlug = _uniqueSlug(Project.slugify(title), sourceId: sourceId);
+    final slug = Project.keyOf(sourceId, fileSlug);
     final now = DateTime.now().toUtc();
     final project = Project(
       slug: slug,
+      sourceId: sourceId,
       title: title.trim(),
       created: now,
       updated: now,
