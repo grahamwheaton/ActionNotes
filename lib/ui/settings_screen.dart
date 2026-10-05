@@ -577,8 +577,10 @@ class _ProjectPanelPicker extends StatelessWidget {
       trailing: DropdownButton<ProjectPanelStyle>(
         value: state.viewPreferences.projectPanelStyle,
         onChanged: (value) {
-          if (value != null) state.setViewPreferences(
-            state.viewPreferences.copyWith(projectPanelStyle: value));
+          if (value != null) {
+            state.setViewPreferences(
+              state.viewPreferences.copyWith(projectPanelStyle: value));
+          }
         },
         items: [for (final style in ProjectPanelStyle.values)
           DropdownMenuItem(value: style, child: Text(style.label))],
