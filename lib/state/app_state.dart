@@ -1577,7 +1577,9 @@ class AppState extends ChangeNotifier {
     final from = projectBySlug(fromSlug);
     final to = projectBySlug(toSlug);
     if (from == null || to == null) return 'That project is no longer here.';
-    if (index >= from.items.length) return 'That item is no longer here.';
+    if (index < 0 || index >= from.items.length) {
+      return 'That item is no longer here.';
+    }
 
     final item = from.items[index];
 
@@ -1589,20 +1591,31 @@ class AppState extends ChangeNotifier {
     }
 
     var notes = item.notes;
-    for (final name in ProjectLinks.attachmentNames(item.notes)) {
+    // Shared project IDs are not repository filenames. Keep each full link
+    // so stale references left by a previous move can also be repaired.
+    final references = RegExp(r'\]\(([^)\s]+)\)')
+        .allMatches(item.notes)
+        .map((match) => match.group(1)!)
+        .where((reference) =>
+            AttachmentStore.resolveRepoPath(reference) != null)
+        .toSet();
+    for (final reference in references) {
+      final sourcePath = AttachmentStore.resolveRepoPath(reference)!;
+      final name = sourcePath.split('/').last;
       final copied = await _copyAttachment(
         name: name,
         fromSlug: fromSlug,
         toSlug: toSlug,
         taken: taken,
+        sourcePath: sourcePath,
       );
       if (copied == null) {
         return 'Could not copy "$name" to ${to.title}, so nothing was moved.';
       }
       taken.add(copied);
       notes = notes.replaceAll(
-        AttachmentStore.markdownPath(fromSlug, name),
-        AttachmentStore.markdownPath(toSlug, copied),
+        ']($reference)',
+        '](${AttachmentStore.markdownPath(to.fileSlug, copied)})',
       );
     }
 
@@ -1638,12 +1651,19 @@ class AppState extends ChangeNotifier {
     required String fromSlug,
     required String toSlug,
     required Set<String> taken,
+    required String sourcePath,
   }) async {
     try {
-      final bytes = await attachments.bytesFor(
+      var bytes = await attachments.bytesFor(
         AttachmentStore.repoPath(_fileSlug(fromSlug), name),
         _configFor(fromSlug),
       );
+      // The old move code uploaded the copy here but could leave the link
+      // unchanged. Prefer that copy, then try the reference in this notebook.
+      if (bytes == null &&
+          sourcePath != AttachmentStore.repoPath(_fileSlug(fromSlug), name)) {
+        bytes = await attachments.bytesFor(sourcePath, _configFor(fromSlug));
+      }
       if (bytes == null) return null;
 
       final copied = AttachmentStore.uniqueFileName(name, taken);
