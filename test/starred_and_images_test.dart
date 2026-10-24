@@ -208,7 +208,7 @@ void main() {
       await pumpShell(tester, state);
       await state.sync();
       await tester.pumpAndSettle();
-      expect(find.textContaining('Synced just now'), findsOneWidget);
+      expect(find.textContaining('Last synced just now'), findsOneWidget);
 
       // An edit is pending until it is pushed, and says so alongside.
       await state.createProject('Work');

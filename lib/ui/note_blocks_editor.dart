@@ -122,7 +122,7 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
   int? _dragFromId;
   bool _dragLeftItsRow = false;
 
-  late final NoteHistory _history = NoteHistory(widget.initialMarkdown);
+  late NoteHistory _history = NoteHistory(widget.initialMarkdown);
 
   /// Typing is coalesced, so undo steps over a word rather than a letter.
   Timer? _historyTimer;
@@ -389,6 +389,29 @@ class NoteBlocksEditorState extends State<NoteBlocksEditor> {
           ? row.block.copyWith(text: row.controller!.text)
           : row.block,
   ]);
+
+  /// Refresh an open editor after its clean project was replaced by sync.
+  /// This is not an edit and must not schedule a local write.
+  void replaceFromExternal(String markdown) {
+    if (this.markdown == markdown) return;
+    _historyTimer?.cancel();
+    for (final row in _rows) {
+      row.dispose();
+    }
+    _rows.clear();
+    _activeId = null;
+    _selectedIds.clear();
+    _anchorId = null;
+    _reachId = null;
+    _history = NoteHistory(markdown);
+    for (final block in NoteBlocks.parse(markdown)) {
+      _rows.add(_row(block));
+    }
+    if (_rows.every((row) => !row.block.isText)) {
+      _rows.add(_row(const NoteBlock.paragraph('')));
+    }
+    setState(() {});
+  }
 
   void _emit({bool structural = false}) {
     final current = markdown;

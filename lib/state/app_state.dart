@@ -839,6 +839,14 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _syncOnce() async {
+    // An editor's debounce is still local work. Save it before deciding that
+    // the cached project is clean enough to replace with a remote version.
+    for (final save in _editorSaves.toList()) {
+      await save();
+    }
+    while (_localWrites > 0) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
     // A push already in flight holds the SHA this sync would write against,
     // so let it land first rather than racing it into a conflict.
     for (var waited = 0; _pushing.isNotEmpty && waited < 30; waited++) {
