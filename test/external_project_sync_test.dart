@@ -155,12 +155,18 @@ void main() {
         '${github.repo(mine.repo)[path]}\n## $today\n\nFirst external entry\n';
     await state.sync();
     await tester.pumpAndSettle();
+    // ignore: avoid_print
+    print('feed sync: first external update rendered');
     expect(find.textContaining('First external entry'), findsWidgets);
 
     github.repo(mine.repo)[path] =
         '${github.repo(mine.repo)[path]}\nSecond external entry\n';
     await state.sync();
+    // ignore: avoid_print
+    print('feed sync: second external update downloaded');
     await tester.pumpAndSettle();
+    // ignore: avoid_print
+    print('feed sync: second external update rendered');
     expect(find.textContaining('Second external entry'), findsWidgets);
     await tester.pumpWidget(const SizedBox());
     await settle(state);
