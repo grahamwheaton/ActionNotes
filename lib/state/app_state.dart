@@ -148,6 +148,8 @@ class AppState extends ChangeNotifier {
   NoteTarget? _openNote;
   NoteTarget? _revealed;
   DateTime? _lastSynced;
+  String? _syncError;
+  List<String> _lastPulled = const [];
   String? _login;
   String? _displayName;
   ThemeMode _themeMode = ThemeMode.system;
@@ -324,6 +326,8 @@ class AppState extends ChangeNotifier {
   String _fileSlug(String slug) => projectBySlug(slug)?.fileSlug ?? slug;
   bool get loading => _loading;
   bool get syncing => _syncing;
+  String? get syncError => _syncError;
+  List<String> get lastPulled => List.unmodifiable(_lastPulled);
   String? get message => _message;
 
   /// Whether there is somewhere to sync to. A notebook in a folder counts: it
@@ -667,6 +671,12 @@ class AppState extends ChangeNotifier {
     _watchAtCurrentRate();
   }
 
+  /// Foregrounding checks the remote immediately and restores polling.
+  Future<void> resumeWatching() {
+    startWatching();
+    return sync();
+  }
+
   void _watchAtCurrentRate() {
     _watch?.cancel();
     final every = watchInterval;
@@ -714,6 +724,14 @@ class AppState extends ChangeNotifier {
 
     _queuedSyncs++;
     _syncChain = _syncChain.then((_) async {
+      try {
+        await _runSync();
+      } finally {
+        _queuedSyncs--;
+      }
+    }, onError: (Object _, StackTrace __) async {
+      // An unexpected failure in an earlier attempt must not poison the
+      // queue: timer ticks, resume and manual sync still need to run.
       try {
         await _runSync();
       } finally {
@@ -804,6 +822,12 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     try {
       await _syncOnce();
+    } catch (error) {
+      // The per-repository service reports expected errors. This also covers
+      // an exception in notebook setup, local storage or reconciliation.
+      _syncError = 'Sync stopped unexpectedly (${error.runtimeType}). Try Sync now.';
+      _message = _syncError;
+      _lastPulled = const [];
     } finally {
       // Whatever went wrong, the app is not syncing any more. Leaving this
       // set meant every later push saw a sync in flight and waited for it
@@ -815,6 +839,11 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> _syncOnce() async {
+    // An editor's debounce is still local work. Save it before deciding that
+    // the cached project is clean enough to replace with a remote version.
+    for (final save in _editorSaves.toList()) {
+      await save();
+    }
     // A push already in flight holds the SHA this sync would write against,
     // so let it land first rather than racing it into a conflict.
     for (var waited = 0; _pushing.isNotEmpty && waited < 30; waited++) {
@@ -837,6 +866,7 @@ class AppState extends ChangeNotifier {
     final synced = <Project>[];
     final problems = <String>[];
     final combined = <String>[];
+    final pulled = <String>[];
 
     for (final source in _sources) {
       if (!source.config.isComplete) {
@@ -852,6 +882,7 @@ class AppState extends ChangeNotifier {
       );
       synced.addAll(result.projects);
       combined.addAll(result.merged);
+      pulled.addAll(result.pulled);
       // An arrangement that arrived is what makes a section a canvas rather
       // than a list, so it goes in alongside the projects it belongs to.
       for (final entry in result.layouts.entries) {
@@ -889,6 +920,12 @@ class AppState extends ChangeNotifier {
       if (combined.isNotEmpty) _mergeNotice(combined),
     ].join('\n');
     if (_message!.isEmpty) _message = null;
+    final syncProblems = [
+      ...problems,
+      if (notebookProblem != null) notebookProblem,
+    ];
+    _syncError = syncProblems.isEmpty ? null : syncProblems.join('\n');
+    _lastPulled = pulled;
     final result = SyncResult(projects: synced, error: _message);
     // Only a sync that actually reached GitHub counts as having heard from
     // it: saying "synced a minute ago" after a failed attempt would be worse

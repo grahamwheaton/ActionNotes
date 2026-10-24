@@ -196,8 +196,7 @@ class _ActionNotesAppState extends State<ActionNotesApp>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      _state.sync();
-      _state.startWatching();
+      unawaited(_state.resumeWatching());
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden) {
       _state.stopWatching();

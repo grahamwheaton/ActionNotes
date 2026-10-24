@@ -1715,13 +1715,26 @@ class _SyncAction extends StatelessWidget {
     }
 
     return IconButton(
-      tooltip: 'Sync with GitHub',
+      tooltip: 'Sync now',
       icon: Badge(
         isLabelVisible: state.pendingCount > 0,
         label: Text('${state.pendingCount}'),
         child: const Icon(Icons.sync),
       ),
-      onPressed: state.sync,
+      onPressed: () async {
+        await state.sync();
+        if (!context.mounted) return;
+        final error = state.syncError;
+        final pulled = state.lastPulled;
+        final text = error != null
+            ? 'Sync failed: $error'
+            : pulled.isEmpty
+                ? 'Synced successfully. No remote project changes.'
+                : 'Synced successfully. Pulled ${pulled.join(', ')}.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(text)),
+        );
+      },
     );
   }
 }
@@ -2016,6 +2029,10 @@ class _AndroidProjectsHomeState extends State<_AndroidProjectsHome> {
           ]),
         body: Column(children: [
           const _ProjectsLabel(),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+            child: Align(alignment: Alignment.centerLeft, child: SyncStatus()),
+          ),
           if (shared) Align(alignment: Alignment.centerRight,
             child: TextButton.icon(onPressed: () => AddNotebookDialog.show(context),
               icon: const Icon(Icons.add), label: const Text('Add a notebook'))),

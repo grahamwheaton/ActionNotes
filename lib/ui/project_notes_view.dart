@@ -81,6 +81,18 @@ class _ProjectNotesViewState extends State<ProjectNotesView> {
 
   @override
   Widget build(BuildContext context) {
+    final remote = context.watch<AppState>().projectBySlug(widget.slug)?.notes;
+    if (remote != null && remote != _initial && _pending == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _pending != null) return;
+        final latest = _state.projectBySlug(widget.slug)?.notes;
+        if (latest == null || latest == _initial) return;
+        _initial = latest;
+        _asConversation = NoteConversation.looksConversational(latest);
+        _editor.currentState?.replaceFromExternal(latest);
+        setState(() {});
+      });
+    }
     final theme = Theme.of(context);
 
     return Column(

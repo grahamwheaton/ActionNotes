@@ -11,6 +11,7 @@ import 'shared_notebooks.dart';
 import 'sign_in_dialog.dart';
 import 'update_banner.dart';
 import 'formatting_settings.dart';
+import 'sync_status.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -261,6 +262,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 4),
           _TokenFallback(controller: _token, onChanged: () => setState(() {})),
+          const SizedBox(height: 20),
+          const SyncStatus(),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: _busy ? null : () async {
+                final state = context.read<AppState>();
+                await state.sync();
+                if (!context.mounted) return;
+                setState(() {
+                  _resultIsError = state.syncError != null;
+                  _result = state.syncError ?? (state.lastPulled.isEmpty
+                      ? 'Synced successfully. No remote project changes.'
+                      : 'Synced successfully. Pulled ${state.lastPulled.join(', ')}.');
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text(_result!)),
+                );
+              },
+              icon: const Icon(Icons.sync),
+              label: const Text('Sync now'),
+            ),
+          ),
           const SizedBox(height: 24),
           const SharedNotebooksCard(),
           const SizedBox(height: 24),

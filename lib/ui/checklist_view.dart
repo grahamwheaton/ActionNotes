@@ -2032,6 +2032,16 @@ class _BlockBodyState extends State<_BlockBody> {
   late AppState _state;
 
   @override
+  void didUpdateWidget(_BlockBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialMarkdown == widget.initialMarkdown) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _pending != null) return;
+      _editor.currentState?.replaceFromExternal(widget.initialMarkdown);
+    });
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     _state = context.read<AppState>();

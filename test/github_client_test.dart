@@ -59,6 +59,23 @@ void main() {
     );
   });
 
+  test('project polls bypass cached Contents responses on the selected branch', () async {
+    final requests = <http.Request>[];
+    final client = GitHubClient(config, client: MockClient((request) async {
+      requests.add(request);
+      return http.Response('[]', 200);
+    }));
+
+    await client.listProjects();
+    await client.listProjects();
+
+    expect(requests, hasLength(2));
+    expect(requests[0].url.queryParameters['ref'], 'main');
+    expect(requests[0].url.queryParameters['_sync'], isNotEmpty);
+    expect(requests[1].url, isNot(requests[0].url));
+    expect(requests[0].headers['Cache-Control'], 'no-cache');
+  });
+
   test('decodes base64 content, including the newlines GitHub inserts',
       () async {
     final wrapped = '${encodeContent('# Hi\n\n- [ ] Item\n')}\n';
