@@ -270,7 +270,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: _busy ? null : () async {
                 final state = context.read<AppState>();
                 await state.sync();
-                if (!mounted) return;
+                if (!context.mounted) return;
                 setState(() {
                   _resultIsError = state.syncError != null;
                   _result = state.syncError ?? (state.lastPulled.isEmpty

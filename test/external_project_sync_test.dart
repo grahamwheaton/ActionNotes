@@ -1,6 +1,5 @@
 import 'package:actionnotes/markdown/feed_days.dart';
 import 'package:actionnotes/models/project.dart';
-import 'package:actionnotes/state/app_state.dart';
 import 'package:actionnotes/ui/checklist_view.dart';
 import 'package:actionnotes/ui/theme.dart';
 import 'package:flutter/material.dart';
@@ -152,12 +151,14 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    github.repo(mine.repo)[path] += '\n## $today\n\nFirst external entry\n';
+    github.repo(mine.repo)[path] =
+        '${github.repo(mine.repo)[path]}\n## $today\n\nFirst external entry\n';
     await state.sync();
     await tester.pumpAndSettle();
     expect(find.textContaining('First external entry'), findsWidgets);
 
-    github.repo(mine.repo)[path] += '\nSecond external entry\n';
+    github.repo(mine.repo)[path] =
+        '${github.repo(mine.repo)[path]}\nSecond external entry\n';
     await state.sync();
     await tester.pumpAndSettle();
     expect(find.textContaining('Second external entry'), findsWidgets);
