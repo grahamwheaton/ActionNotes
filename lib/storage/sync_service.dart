@@ -25,6 +25,7 @@ class SyncResult {
     this.error,
     this.pending = 0,
     this.merged = const [],
+    this.pulled = const [],
     this.layouts = const {},
   });
 
@@ -39,6 +40,9 @@ class SyncResult {
   /// Titles that changed here and on GitHub at the same time and were
   /// combined. Worth mentioning, but nothing to answer.
   final List<String> merged;
+
+  /// Projects whose changed Markdown was downloaded from the remote store.
+  final List<String> pulled;
 
   /// Arrangements that arrived with this sync, keyed by project slug — the
   /// difference between a section being a canvas and being a bullet list.
@@ -109,6 +113,7 @@ class SyncService {
       // Titles that came back changed on both sides and were combined. Not
       // errors: something to mention, not something to answer.
       final merged = <String>[];
+      final pulled = <String>[];
 
       // Pushed during this sync, and so certainly on GitHub whatever the
       // listing that follows happens to say. GitHub serves listings through a
@@ -160,7 +165,10 @@ class SyncService {
         if (existing != null && existing.sha == entry.sha) continue;
 
         final file = await client.readFile(entry.path);
-        if (file == null) continue;
+        if (file == null) {
+          problems.add('Could not download ${entry.path}; the remote listing says it exists.');
+          continue;
+        }
 
         final remote = ProjectMarkdown.parse(
           file.content,
@@ -170,6 +178,7 @@ class SyncService {
 
         byslug[slug] = remote;
         await localStore.save(remote, sourceId: sourceId);
+        pulled.add(remote.title);
       }
 
       final projects = byslug.values.toList()
@@ -184,6 +193,7 @@ class SyncService {
         error: problems.isEmpty ? null : problems.join('\n'),
         pending: projects.where((p) => p.dirty).length,
         merged: merged,
+        pulled: pulled,
         layouts: layouts,
       );
     } on StoreException catch (error) {
@@ -200,8 +210,8 @@ class SyncService {
       return SyncResult(
         projects: local,
         error: config is FolderConfig
-            ? 'Could not read the folder. Your edits are saved on this device.'
-            : 'Could not reach GitHub. Your edits are saved on this device.',
+            ? 'Could not read the folder (${error.runtimeType}). Your edits are saved on this device.'
+            : 'GitHub sync failed (${error.runtimeType}). Your edits are saved on this device.',
         pending: local.where((p) => p.dirty).length,
       );
     } finally {

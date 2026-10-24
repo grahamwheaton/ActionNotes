@@ -59,6 +59,7 @@ class GitHubClient implements RemoteStore {
 
   final GitHubConfig config;
   final http.Client _client;
+  int _requestSerial = 0;
 
   Map<String, String> get _headers => {
     'Authorization': 'Bearer ${config.token}',
@@ -72,6 +73,23 @@ class GitHubClient implements RemoteStore {
       '$_base/repos/${config.owner}/${config.repo}/contents/$encoded',
     ).replace(queryParameters: withRef ? {'ref': config.branch} : null);
   }
+
+  // Polls must reach the current branch, even when an intermediary has cached
+  // an earlier Contents response. A fresh query key also avoids a cache that
+  // ignores request Cache-Control. Writes keep their ordinary URL.
+  Uri _freshContentsUri(String path) {
+    final nonce = '${DateTime.now().microsecondsSinceEpoch}-${_requestSerial++}';
+    return _contentsUri(path).replace(queryParameters: {
+      'ref': config.branch,
+      '_sync': nonce,
+    });
+  }
+
+  Map<String, String> get _freshHeaders => {
+    ..._headers,
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+  };
 
   Future<http.Response> _getRepo() async {
     final response = await _client.get(
@@ -127,8 +145,8 @@ class GitHubClient implements RemoteStore {
   @override
   Future<List<RemoteEntry>> listProjects() async {
     final response = await _client.get(
-      _contentsUri(projectsDir),
-      headers: _headers,
+      _freshContentsUri(projectsDir),
+      headers: _freshHeaders,
     );
     if (response.statusCode == 404) return const [];
     if (response.statusCode != 200) {
@@ -153,7 +171,9 @@ class GitHubClient implements RemoteStore {
 
   @override
   Future<RemoteFile?> readFile(String path) async {
-    final response = await _client.get(_contentsUri(path), headers: _headers);
+    final response = await _client.get(
+      _freshContentsUri(path), headers: _freshHeaders,
+    );
     if (response.statusCode == 404) return null;
     if (response.statusCode != 200) {
       throw GitHubException(response.statusCode, _errorMessage(response));

@@ -53,19 +53,26 @@ class _SyncStatusState extends State<SyncStatus> {
     final theme = Theme.of(context);
     final state = context.watch<AppState>();
 
-    final label = switch ((state.syncing, state.lastSynced)) {
-      (true, _) => 'Syncing...',
-      (false, null) when !state.isConfigured => 'Not connected',
-      (false, null) => 'Not synced yet',
-      (false, final DateTime at) => 'Synced ${syncAgo(at)}',
+    final label = switch ((state.syncing, state.syncError, state.lastSynced)) {
+      (true, _, _) => 'Checking GitHub...',
+      (false, final String error, _) => 'Sync failed: $error',
+      (false, null, null) when !state.isConfigured => 'Not connected',
+      (false, null, null) => 'Not synced yet',
+      (false, null, final DateTime at) => 'Last synced ${syncAgo(at)}',
     };
 
     final pending = state.pendingCount;
 
+    final pulled = state.lastPulled;
+    final details = [
+      label,
+      if (!state.syncing && state.syncError == null && pulled.isNotEmpty)
+        'Pulled ${pulled.join(', ')}',
+      if (pending > 0) '$pending ${pending == 1 ? 'edit' : 'edits'} to push',
+    ].join(' · ');
+
     return Text(
-      pending == 0
-          ? label
-          : '$label · $pending ${pending == 1 ? 'edit' : 'edits'} to push',
+      details,
       style: theme.textTheme.bodySmall?.copyWith(
         color: theme.colorScheme.onSurfaceVariant,
       ),
